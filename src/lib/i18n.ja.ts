@@ -261,6 +261,7 @@ const BASE: Record<string, string> = {
   "Rename tab": "タブの名前を変更",
   "Zoom pane": "ペインをズーム",
   "Unzoom pane": "ズームを解除",
+  "Zoom or unzoom pane": "ペインのズーム切り替え",
   "This PC's bridge does not offer this yet": "このPCのブリッジはまだこの機能に対応していません。",
   "Move failed: {reason}": "移動できませんでした: {reason}",
   "Pane swap was refused: {reason}": "ペインの入れ替えが拒否されました: {reason}",

@@ -1577,11 +1577,13 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   the same adjacent moves only while a tab has keyboard focus.
 - `PaneCanvas` draws every pane in the active tab at `layouts[].panes[].rect`, normalized to
   the layout's own area. Panes share thin, square boundaries: `--border-strong` when inactive,
-  `--accent` around the selected pane. The compact header names its pane and, on a screen that takes touch
-  (`any-pointer: coarse`), the ellipsis; a mouse opens the same menu by right-click. Keyboard users
-  tab to the pane's ellipsis, which becomes visible on keyboard focus, and press Enter.
-  Shift+F10 in the terminal goes to the terminal program, not the app menu. A lone or zoomed
-  pane is borderless; its actions live in the tab's `⋯` menu rather than a second ellipsis, on a desktop as on touch.
+  `--accent` around the selected pane. The compact header of a split pane names its pane and shows a
+  **Zoom pane** button (Maximize2) and the ellipsis, to a mouse as to touch, so zoom is found without
+  a right-click (#2037); a mouse also opens the same menu by right-click, and keyboard users tab to
+  either button and press Enter. Shift+F10 in the terminal goes to the terminal program, not the
+  app menu. A lone pane is borderless; its actions live in the tab's `⋯` menu rather than a second
+  ellipsis, on a desktop as on touch, where its floating ellipsis shows only on keyboard focus or a
+  finger's screen.
 - A left click or keyboard focus selects the actual pane. Right-click opens the clicked pane's
   menu without changing the selected pane: Rename pane, Clear pane name when named, Swap with
   focused pane when another is selected, Split right, Split down, Zoom/Unzoom pane, Recover
@@ -1619,7 +1621,15 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   herdr's layout and zoom are not changed, and a wider window draws the split again.
 - Zoom uses herdr's zoom flag and focused pane. The other panes keep their mounted terminals
   hidden, preserving attachments and drafts; unzoom restores their rectangles. Web selection
-  stays local to this browser and does not change herdr's focus in another client.
+  stays local to this browser and does not change herdr's focus in another client. Above 768px a
+  zoomed pane keeps its frame and its header above the terminal: the title, an accent **Unzoom
+  pane** pill (Minimize2) that shows every pane again in one press, and the ellipsis. This follows
+  Zed, whose zoomed pane keeps its tab bar and zoom toggle, rather than tmux's bare `Z` flag in
+  the status line: the header says the tab is zoomed where the hidden panes were. A phone draws one
+  pane at a time anyway and keeps the borderless pane; its tab menu's **Unzoom pane** frees the
+  rest. **Zoom or unzoom pane** is a rebindable shortcut with no default key (herdr's prefix+z):
+  it sends the selected pane's explicit mode, does nothing in a one-pane tab, runs once per press
+  and is named in the Zoom buttons' tooltips and the palette once bound.
 - The other way is opt-in, per device (Settings → Terminal → Follow herdr's focus, off by
   default): when herdr's own focus moves (a click in its window, `herdr tab focus`, a script's
   `herdr tab create --focus`), the server's `pane-focused` frame opens that pane here too, only
@@ -2813,7 +2823,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   `.kbd` hints resolved from this browser's shortcut settings; disabled bindings have no hint.
   With a pane selected they add herdr's **Split pane right / down**, the same **and open it**
   (herdr's `--focus`: the new pane is opened here only then) and, in a tab of several panes,
-  **Zoom pane** / **Unzoom pane**.
+  **Zoom pane** / **Unzoom pane** with the Zoom or unzoom pane binding's hint.
 - A typed query also lists Settings under a **Settings** heading: the pages, found by their name
   or the words of their settings, then the groups whose settings a page's words do not name
   (Typography, Composer, Quick replies, OpenAI API key), each with its page as the subtitle. A

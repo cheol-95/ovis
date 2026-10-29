@@ -92,12 +92,16 @@ async function checkDesktop(browser: Browser, origin: string, first: string, sec
     const secondTerm = await frame(page, second).locator(".xterm").elementHandle();
 
     // The menu remains a real Tab stop without taking Shift+F10 away from terminal programs.
+    // A split pane's head shows a mouse its Zoom button and ellipsis (#2037), both Tab stops.
     const paneButton = frame(page, first).locator(".pane-frame-menu");
-    assert.equal(await paneButton.evaluate((node) => getComputedStyle(node).opacity), "0");
+    const zoomButton = frame(page, first).locator(".pane-frame-zoom");
+    assert.equal(await paneButton.evaluate((node) => getComputedStyle(node).opacity), "1", "a split pane's ellipsis is shown to a mouse");
+    assert.equal(await zoomButton.evaluate((node) => getComputedStyle(node).opacity), "1", "a split pane's Zoom button is shown to a mouse");
     await frame(page, first).focus();
     await page.keyboard.press("Tab");
+    assert.equal(await zoomButton.evaluate((node) => node === document.activeElement), true, "Tab reaches the Zoom button");
+    await page.keyboard.press("Tab");
     assert.equal(await paneButton.evaluate((node) => node === document.activeElement), true, "Tab reaches the pane menu");
-    assert.equal(await paneButton.evaluate((node) => getComputedStyle(node).opacity), "1", "keyboard focus reveals the button");
     await screenshot(page, "keyboard-pane-button");
     await page.keyboard.press("Enter");
     const keyboardMenu = page.getByRole("menu", { name: /^Pane actions for / });
@@ -408,7 +412,7 @@ async function checkDesktop(browser: Browser, origin: string, first: string, sec
     await frame(page, first).locator(".xterm-helper-textarea").focus();
     await currentPane(page, first);
     const beforeMenuInput = input.length;
-    assert.equal(await frame(page, second).locator(".pane-frame-menu").evaluate((node) => getComputedStyle(node).opacity), "0", "the pane ellipsis stays visually hidden without keyboard focus");
+    assert.equal(await frame(page, second).locator(".pane-frame-menu").evaluate((node) => getComputedStyle(node).opacity), "1", "a split pane's ellipsis is shown without keyboard focus");
     let menu = await paneMenu(page, second);
     assert.equal(await frame(page, first).evaluate((node) => node.classList.contains("is-current")), true);
     assert.equal((await sessionSnapshot()).focused_pane_id, first, "right-click leaves native focus on the first pane");

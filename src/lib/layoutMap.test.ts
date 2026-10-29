@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { PaneLayoutSnapshot } from "../../shared/protocol.ts";
-import { layoutCells, paneNeighbors, resizeMove, zoomMode, zoomedPaneId } from "./layoutMap.ts";
+import { layoutCells, paneNeighbors, resizeMove, toggledZoomMode, zoomMode, zoomedPaneId } from "./layoutMap.ts";
 
 const rect = (x: number, y: number, width: number, height: number) => ({ x, y, width, height });
 const tab = (panes: { id: string; rect: ReturnType<typeof rect>; focused?: boolean }[], zoomed = false, area = rect(0, 0, 120, 40)): PaneLayoutSnapshot => ({
@@ -100,5 +100,17 @@ describe("zoomMode", () => {
     expect(zoomMode(zoomedOnP1, "p2")).toBe("on");
     expect(zoomMode(columns, "p1")).toBe("on");
     expect(zoomMode(columns, "p2")).toBe("on");
+  });
+});
+
+describe("toggledZoomMode", () => {
+  it("zooms a pane among several, unzooms the one shown alone, and leaves a lone pane alone", () => {
+    const zoomedOnP1 = { ...columns, zoomed: true };
+    expect(toggledZoomMode(columns, "p2")).toBe("on");
+    expect(toggledZoomMode(zoomedOnP1, "p1")).toBe("off");
+    expect(toggledZoomMode(zoomedOnP1, "p2")).toBe("on");
+    expect(toggledZoomMode(tab([{ id: "p1", rect: rect(0, 0, 120, 40) }]), "p1")).toBeNull();
+    expect(toggledZoomMode(columns, "p9")).toBeNull();
+    expect(toggledZoomMode(undefined, "p1")).toBeNull();
   });
 });

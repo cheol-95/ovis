@@ -254,6 +254,15 @@ describe("new tab and split pane", () => {
     expect(shortcutConflict("split-down", ["y"], overrides)).toBe(true);
     expect(shortcutConflict("new-tab", ["k"], {})).toBe(true);
   });
+
+  it("zooms the selected pane from a chord chosen in Settings, as herdr's prefix+z, with none by default", () => {
+    expect(shortcutKeys("zoom-pane", {})).toEqual([]);
+    expect(matchShortcut(keyEvent("z", { ctrlKey: true }), false)).toBeNull();
+    const overrides = sanitizeShortcutOverrides({ "zoom-pane": "z" });
+    expect(overrides).toEqual({ "zoom-pane": "z" });
+    expect(matchShortcut(keyEvent("Z", { ctrlKey: true }), false, overrides)).toBe("zoom-pane");
+    expect(shortcutDisplayKeys("zoom-pane", overrides)).toEqual(["Mod", "Shift", "Z"]);
+  });
 });
 
 describe("exact-modifier bindings", () => {

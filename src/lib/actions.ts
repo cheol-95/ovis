@@ -80,7 +80,8 @@ export interface AppActions {
   splitPane: ((direction: SplitPaneDirection, focus?: boolean) => void) | null;
   /**
    * herdr's prefix+z on the selected pane, with the mode the caller's item names (`zoomMode`,
-   * lib/layoutMap.ts): its tab shows it alone, or every pane again; null without a pane
+   * lib/layoutMap.ts): its tab shows it alone, or every pane again; null without a pane. With no
+   * mode (the shortcut) it is the pane's own `toggledZoomMode`, and nothing in a lone pane's tab
    */
-  zoomPane: ((mode: ZoomMode) => void) | null;
+  zoomPane: ((mode?: ZoomMode) => void) | null;
 }

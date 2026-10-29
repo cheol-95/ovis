@@ -5,6 +5,7 @@ import type { HerdrPane } from "../shared/protocol.ts";
 import { authenticate, createTab, moveTabToWorkspace, shareSeen, signOut, splitPane, swapPaneWith, zoomPane } from "./lib/api.ts";
 import { displayPaneTitle } from "./components/Sidebar.tsx";
 import { PaneCanvas } from "./components/PaneCanvas.tsx";
+import { toggledZoomMode } from "./lib/layoutMap.ts";
 import { MachineSessionsProvider } from "./lib/machineSessionContext.tsx";
 import { PaneTerminal } from "./components/PaneTerminal.tsx";
 import { paneCovered, paneContentKey, paneContentPresented } from "./lib/panePresentation.ts";
@@ -497,7 +498,12 @@ export function App() {
       zoomPane: selectedPaneId !== null ? (mode) => {
         const { machineId, paneId } = selectionRef.current;
         if (paneId === null) return;
-        void zoomPane(paneId, mode, machineId).then(() => void load()).catch((err) => layoutRefused("pane zoom failed", err));
+        // the shortcut names no mode: the pane's own, from the tab as this page last saw it
+        const shown = snapshotRef.current;
+        const tabId = shown?.panes.find((item) => item.pane_id === paneId)?.tab_id;
+        const wanted = mode ?? toggledZoomMode(shown?.layouts?.find((item) => item.tab_id === tabId), paneId);
+        if (wanted === null) return;
+        void zoomPane(paneId, wanted, machineId).then(() => void load()).catch((err) => layoutRefused("pane zoom failed", err));
       } : null,
     }),
     [selectPane, selectedPaneId, selectedMachineId, tabStripMounted, setView, view, terminalPeek, endPeek, updateSettings, resolvedTheme, canSignOut, lock, bellVisible, bell.run, enableNotifications, load, layoutRefused, moveRefused, lenses, openSidebarFilter],

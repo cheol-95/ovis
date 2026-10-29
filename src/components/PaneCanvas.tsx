@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type DragEvent, type MouseEvent, type MutableRefObject, type PointerEvent, type ReactNode } from "react";
-import { ArchiveRestore, Columns2, Ellipsis, Eraser, Maximize2, MoveHorizontal, Pencil, Rows2, ArrowLeftRight, TextWrap, X } from "lucide-react";
+import { ArchiveRestore, Columns2, Ellipsis, Eraser, Maximize2, Minimize2, MoveHorizontal, Pencil, Rows2, ArrowLeftRight, TextWrap, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import type { HerdrPane, PaneLayoutSnapshot, SessionSnapshot } from "../../shared/protocol.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
@@ -12,6 +12,7 @@ import { layoutCells, zoomMode } from "../lib/layoutMap.ts";
 import { layoutTopology, paneContextPress, paneFieldTarget, SOLO_PANE_QUERY, soloPane, splitPath, splitRatioAt } from "../lib/paneCanvas.ts";
 import { useT } from "../lib/i18n.ts";
 import { useSettings } from "../lib/settings.ts";
+import { formatKeys, shortcutDisplayKeys } from "../lib/shortcuts.ts";
 import { MIRROR_WRAP_QUERY, wideGridKey, wideGrids } from "../lib/terminalFold.ts";
 import { userErrorMessage, type UserError } from "../lib/userError.ts";
 import { useFocusTrap } from "../lib/useFocusTrap.ts";
@@ -164,6 +165,15 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
     if (inWorkspace === 1 || target.agent_status === "working" || target.agent_status === "blocked") setClosing(target);
     else run(() => api.closePane(target.pane_id));
   };
+  const zoom = (target: HerdrPane): void => run(async () => {
+    const tabId = latest.current.tabId;
+    const selection = latest.current.selection;
+    await api.zoomPane(target.pane_id, layout ? zoomMode(layout, target.pane_id) : "on");
+    if (alive.current && latest.current.tabId === tabId && latest.current.selection === selection) onSelect(target.pane_id);
+  });
+  // the zoom buttons name the Zoom or unzoom pane shortcut once one is chosen in Settings
+  const zoomKeys = formatKeys(shortcutDisplayKeys("zoom-pane", settings.shortcutOverrides));
+  const zoomTitle = (label: string): string => zoomKeys.length > 0 ? `${label} (${zoomKeys.join("+")})` : label;
   const target = menu ? snapshot?.panes.find((item) => item.pane_id === menu.paneId) : null;
   const itemsFor = (target: HerdrPane): RowMenuItem[] => [
     { id: "rename", label: t("Rename pane"), icon: Pencil, run: () => setRenaming(target) },
@@ -173,12 +183,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
     { id: "split-right", label: t("Split right"), icon: Columns2, run: () => run(() => split(target, "right")) },
     { id: "split-down", label: t("Split down"), icon: Rows2, run: () => run(() => split(target, "down")) },
     { id: "zoom", label: t(layout && zoomMode(layout, target.pane_id) === "off" ? "Unzoom pane" : "Zoom pane"), icon: Maximize2,
-      run: () => run(async () => {
-        const tabId = latest.current.tabId;
-        const selection = latest.current.selection;
-        await api.zoomPane(target.pane_id, layout ? zoomMode(layout, target.pane_id) : "on");
-        if (alive.current && latest.current.tabId === tabId && latest.current.selection === selection) onSelect(target.pane_id);
-      }) },
+      run: () => zoom(target) },
     // a mirror, or a pane watched at another device's grid, wider than the screen is folded to it
     // (lib/terminalFold.ts); a full-screen program reads better at its own width, panned sideways.
     // This device's choice, for every such pane
@@ -262,10 +267,14 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
       const offTab = cell.retained || cell.cached;
       const active = !offTab && item.pane_id === selectedPaneId;
       const hidden = offTab || (alone !== null && alone !== item.pane_id);
-      const single = offTab ? cell.width === 100 && cell.height === 100 : cells.length === 1 || alone === item.pane_id;
+      // herdr's zoom on a screen with room for the split: the pane keeps its head, which says so
+      // and unzooms in one press (a phone draws one pane at a time anyway; its tab menu unzooms)
+      const zoomed = !offTab && !narrow && layout?.zoomed === true && alone === item.pane_id && cells.length > 1;
+      const single = !zoomed && (offTab ? cell.width === 100 && cell.height === 100 : cells.length === 1 || alone === item.pane_id);
+      const splitShown = !offTab && alone === null && cells.length > 1;
       // Capture contextmenu before xterm focuses its helper textarea; the menu keeps focus on the original pane.
       return <section key={item.pane_id} data-layout-pane={item.pane_id}
-        className={`pane-frame${active ? " is-current" : ""}${single ? " is-single" : ""}${hidden ? " is-hidden" : ""}`}
+        className={`pane-frame${active ? " is-current" : ""}${single ? " is-single" : ""}${zoomed ? " is-zoomed" : ""}${hidden ? " is-hidden" : ""}`}
         aria-label={displayPaneTitle(item)} aria-current={active ? "true" : undefined} aria-hidden={hidden || undefined} inert={hidden || undefined} tabIndex={-1}
         style={!offTab && (alone === item.pane_id || stacked) ? { left: 0, top: 0, width: "100%", height: "100%" }
           : { left: `${cell.left}%`, top: `${cell.top}%`, width: `${cell.width}%`, height: `${cell.height}%` }}
@@ -321,6 +330,10 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
             event.dataTransfer.setData(PANE_DRAG_TYPE, paneDragData({ machineId, paneId: item.pane_id }));
           }}>
           <span className="pane-frame-title">{displayPaneTitle(item)}</span>
+          {zoomed && <button type="button" className="pane-frame-unzoom" title={zoomTitle(t("Unzoom pane"))}
+            onClick={() => zoom(item)}><Minimize2 aria-hidden="true" /><span>{t("Unzoom pane")}</span></button>}
+          {splitShown && <button type="button" className="icon-button pane-frame-zoom" aria-label={t("Zoom pane")} title={zoomTitle(t("Zoom pane"))}
+            onClick={() => zoom(item)}><Maximize2 aria-hidden="true" /></button>}
           <button type="button" className="icon-button pane-frame-menu" aria-label={t("Pane actions for {name}", { name: displayPaneTitle(item) })}
             onClick={(event) => showMenu(item, event.currentTarget)}><Ellipsis aria-hidden="true" /></button>
         </div>

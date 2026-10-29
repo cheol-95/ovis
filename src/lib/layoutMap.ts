@@ -56,6 +56,15 @@ export function zoomMode(layout: PaneLayoutSnapshot, paneId: string): ZoomMode {
   return zoomedPaneId(layout) === paneId ? "off" : "on";
 }
 
+/**
+ * What the zoom shortcut sends for the selected pane: its `zoomMode` where a zoom means something
+ * (a pane of a tab with several, or a zoomed tab), else null: a lone pane has nothing to hide.
+ */
+export function toggledZoomMode(layout: PaneLayoutSnapshot | undefined, paneId: string): ZoomMode | null {
+  if (!layout || !layout.panes.some((pane) => pane.pane_id === paneId)) return null;
+  return layout.zoomed || layout.panes.length > 1 ? zoomMode(layout, paneId) : null;
+}
+
 export interface PaneNeighbors {
   left: boolean;
   right: boolean;

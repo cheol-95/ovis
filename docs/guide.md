@@ -104,6 +104,9 @@ to resize it. On a touch screen, the pane header's **⋯** opens the same menu; 
 the open pane's Rename and Close, while split and zoom stay with a screen that shows panes side by
 side. **Unzoom pane** stays in the phone's tab menu when the tab is zoomed, so its other panes
 remain reachable. **Zoom pane** makes a small pane fill the screen, and **Unzoom pane** restores the split. A split opens the new pane.
+On a computer, a split pane's header also has a **Zoom pane** button beside its **⋯**, and a
+zoomed pane keeps its header with an **Unzoom pane** button, so the zoom is visible and undone in
+one click.
 Each pane keeps its own Chat/Terminal view and unsent draft.
 
 To see two panes side by side, drag a workspace row, an **Agents** row, a tab, a pane's title or
@@ -632,7 +635,8 @@ focus where it was. **Mod+Shift+E** focuses the selected pane's input in any mod
 terminal's input line and direct input; it prefers masked input while a secret prompt is open. The
 shortcut can be reassigned or disabled in Settings → Shortcuts.
 
-**New tab**, **Rename tab**, **Split pane right** and **Split pane down** have no default key:
+**New tab**, **Rename tab**, **Split pane right**, **Split pane down** and **Zoom or unzoom pane**
+have no default key:
 pick one in **Settings → Shortcuts**, and the command palette shows it beside the action.
 
 **Settings → Shortcuts** changes each app binding or turns it off: press **Record** on a row,

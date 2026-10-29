@@ -259,6 +259,7 @@ const BASE: Record<string, string> = {
   "Rename tab": "탭 이름 바꾸기",
   "Zoom pane": "패널 확대",
   "Unzoom pane": "패널 확대 해제",
+  "Zoom or unzoom pane": "패널 확대 토글",
   "This PC's bridge does not offer this yet": "이 PC의 브리지는 아직 이 기능을 제공하지 않습니다.",
   "Move failed: {reason}": "이동 실패: {reason}",
   "Pane swap was refused: {reason}": "패널 교환이 거부되었습니다: {reason}",

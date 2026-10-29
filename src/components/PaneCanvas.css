@@ -38,7 +38,27 @@
 /* a pane's title dragged over another pane's title of its tab: dropped there, the two trade places */
 .pane-frame-head.is-swap-target { color: var(--accent); background: var(--accent-tint); box-shadow: inset 0 0 0 calc(var(--hairline) * 2) var(--accent); }
 .pane-frame-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-.pane-frame-menu { flex: none; width: var(--control-h); height: var(--control-h); pointer-events: auto; }
+.pane-frame-menu, .pane-frame-zoom { flex: none; width: var(--control-h); height: var(--control-h); pointer-events: auto; }
+/* herdr's zoom, said on the zoomed pane's own head and undone from it (Zed's zoomed pane keeps its
+   tab bar and zoom toggle the same way) */
+.pane-frame-unzoom {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: calc(var(--control-h) - var(--space-2));
+  padding-inline: var(--space-2);
+  border: var(--hairline) solid var(--accent);
+  border-radius: var(--radius-pill);
+  color: var(--accent);
+  background: var(--accent-tint);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pane-frame-unzoom svg { width: 14px; height: 14px; }
+.pane-frame-unzoom:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.pane-frame-unzoom:focus-visible { outline: var(--ring); outline-offset: 1px; }
 .pane-frame-body { flex: 1; min-width: 0; min-height: 0; position: relative; }
 /* A lone pane's head floats over the terminal's top right corner, where a full-screen program may
    draw a control of its own (Claude Code's diff panel close): only its ellipsis takes a press. Under
@@ -46,11 +66,13 @@
    never under the header's own ellipsis */
 .pane-frame.is-single > .pane-frame-head { position: absolute; right: 0; top: var(--header-over, 0px); z-index: var(--z-banner); background: transparent; pointer-events: none; }
 .pane-frame.is-single .pane-frame-title { display: none; }
-/* A mouse uses right-click; keyboard users reveal the ellipsis by tabbing to it. A screen that
-   also takes touch keeps it, since a finger has no right-click there. */
+/* A split or zoomed pane's head shows its ellipsis to a mouse too, beside its zoom control. A lone
+   pane's floats over the terminal's corner: a mouse uses right-click (or the tab's menu), keyboard
+   users reveal it by tabbing to it. A screen that also takes touch keeps it, since a finger has no
+   right-click there. */
 @media (hover: hover) and (pointer: fine) and (not (any-pointer: coarse)) {
-  .pane-frame-menu { opacity: 0; pointer-events: none; }
-  .pane-frame-menu:focus-visible { opacity: 1; pointer-events: auto; }
+  .pane-frame.is-single .pane-frame-menu { opacity: 0; pointer-events: none; }
+  .pane-frame.is-single .pane-frame-menu:focus-visible { opacity: 1; pointer-events: auto; }
 }
 /* Single-pane chrome must not cover the search controls. */
 .pane-frame.is-single:has(.find-bar) > .pane-frame-head { display: none; }
@@ -78,7 +100,7 @@
 .pane-rename-form { display: flex; flex-direction: column; gap: var(--space-3); }
 @media (pointer: coarse) {
   .pane-frame-head { height: var(--touch-target); }
-  .pane-frame-menu { min-width: var(--touch-target); height: var(--touch-target); }
+  .pane-frame-menu, .pane-frame-zoom { min-width: var(--touch-target); height: var(--touch-target); }
 }
 
 .pane-canvas.is-pending { pointer-events: none; }
