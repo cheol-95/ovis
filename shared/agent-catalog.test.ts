@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { AGENT_CATALOG, CATALOG_PLATFORMS, catalogPlatform, COMMAND_TESTS, commandProblems, meetsMinVersion, parseVersion, type AgentCatalogEntry, type InstallMethod } from "./agent-catalog.ts";
+import { AGENT_CATALOG, APPROVED_COMMANDS, CATALOG_PLATFORMS, catalogPlatform, COMMAND_TESTS, commandProblems, meetsMinVersion, parseVersion, type AgentCatalogEntry, type InstallMethod } from "./agent-catalog.ts";
 import { SUPPORTED_AGENT_KINDS } from "./supported-agents.ts";
 import type { UsageProviderId } from "./usage.ts";
 
@@ -82,6 +82,17 @@ describe("agent catalog", () => {
 describe("agent catalog commands", () => {
   it("fetch only the vendor's own HTTPS addresses and install only the vendor's own packages", () => {
     expect(AGENT_CATALOG.flatMap((entry) => commandProblems(entry))).toEqual([]);
+  });
+
+  it("approve exactly the commands the catalog holds, per platform: none missing, none left over", () => {
+    const held = new Set<string>();
+    for (const entry of AGENT_CATALOG) {
+      for (const platform of CATALOG_PLATFORMS) {
+        const install = entry.install[platform];
+        if (install !== null) for (const method of [install.primary, ...install.alternatives]) held.add(`${platform}|${method.command}`);
+      }
+    }
+    expect({ unapproved: [...held].filter((command) => !APPROVED_COMMANDS.has(command)), stale: [...APPROVED_COMMANDS].filter((command) => !held.has(command)) }).toEqual({ unapproved: [], stale: [] });
   });
 
   it("accept only the catalog's own commands, byte for byte: no suffix, version, argument or whitespace added", () => {
