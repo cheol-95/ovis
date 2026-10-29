@@ -169,17 +169,16 @@ function AgentStep({ state, dispatch, onOpenTerminal, catalog, catalogError, onR
   const t = useT();
   const [others, setOthers] = useState(false);
   const signedIn = useRef(false);
-  const cardMounted = useRef(false);
+  // the step the card opens on, one per card shown: its first report (twice under StrictMode) is no move
+  const initial = useMemo(() => row === null ? null : initialStep(row), [row?.id, state.agent]); // eslint-disable-line react-hooks/exhaustive-deps
   const recommended = new Set(Object.values(PLAN_AGENT));
   const otherAgents = (catalog ?? []).filter((candidate) => candidate.kind === "harness" && !recommended.has(candidate.id) && candidate.install !== null);
   const skip = () => dispatch({ type: "skip" });
 
   if (state.agent !== null && row !== null) {
     const onStep = (step: SetupStep): void => {
-      // the first report is the step the card opened on: an agent already ready waits for Start
-      const opened = !cardMounted.current;
-      cardMounted.current = true;
-      if (opened) return;
+      // the step the card opened on: an agent already ready waits for Start
+      if (step === initial) return;
       if (step.kind === "signing-in") signedIn.current = true;
       if (step.kind === "ready") dispatch({ type: "agent-ready", signedIn: signedIn.current });
     };
@@ -187,7 +186,7 @@ function AgentStep({ state, dispatch, onOpenTerminal, catalog, catalogError, onR
       <section className="setup-step" aria-labelledby="setup-step-title">
         <h2 id="setup-step-title" tabIndex={-1} className="visually-hidden">{t("Setting up {agent}", { agent: row.name })}</h2>
         {state.plan !== null && <p className="setup-lead">{planFit(t, state.plan)}</p>}
-        <AgentSetupCard key={row.id} agent={row} initial={initialStep(row)} onOpenTerminal={onOpenTerminal} onStart={() => dispatch({ type: "agent-ready", signedIn: signedIn.current })} onStep={onStep} />
+        <AgentSetupCard key={row.id} agent={row} initial={initial ?? initialStep(row)} onOpenTerminal={onOpenTerminal} onStart={() => dispatch({ type: "agent-ready", signedIn: signedIn.current })} onStep={onStep} />
         <StepActions primary={<button type="button" className="btn btn-ghost" onClick={() => dispatch({ type: "back" })}><ArrowLeft aria-hidden="true" />{t("Back")}</button>} onSkip={skip} skipLabel={t("Skip this step")} />
       </section>
     );

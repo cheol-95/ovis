@@ -17,17 +17,16 @@ export interface SetupGuideFacts {
   /** undefined until the server's access facts and this device's role are both known; null when it sent none */
   pairingGate: "open" | "closed" | "unavailable" | null | undefined;
   watching: boolean;
-  /** the pane in front, and whether the app picked it by itself rather than the user */
-  selection: { machineId: string; paneId: string | null; auto: boolean };
 }
 
 /**
  * The setup guide's place in the app: shown by itself once on a fresh install (lib/setupGuideFlow.ts),
  * resumed where a reload left it, and opened again by Settings → Setup guide (lib/setupGuide.ts).
- * `paused`: it steps aside, still mounted, for a pane the user went to (a row, the palette, a new
- * workspace, a notification, the tab it opened itself); a pane the app picks by itself leaves it in front.
+ * `stepAside` is told of every pane picked (lib/useSelection.ts onPick: a row, the palette, a new
+ * workspace, an alert, the tab the guide opened): the guide steps aside, still mounted, for it. The
+ * app's own fallback pick of a first pane is no pick, and leaves it in front.
  */
-export function useSetupGuide({ enabled, workspaces, pairingGate, watching, selection }: SetupGuideFacts) {
+export function useSetupGuide({ enabled, workspaces, pairingGate, watching }: SetupGuideFacts) {
   // read before this page saves anything: a save made by the guide itself must not count
   const [savedSettings] = useState(() => { try { return storage()?.getItem(SETTINGS_STORAGE_KEY) != null; } catch { return true; } });
   const [record] = useState(() => { const store = storage(); return store === null ? null : readGuide(store); });
@@ -67,22 +66,20 @@ export function useSetupGuide({ enabled, workspaces, pairingGate, watching, sele
     if (guide !== null && store !== null) saveGuide(store, guide);
   }, [guide]);
 
-  const open = guide !== null;
-  const shownSelection = useRef(selection);
-  useEffect(() => {
-    const before = shownSelection.current;
-    shownSelection.current = selection;
-    if (before.machineId === selection.machineId && before.paneId === selection.paneId) return;
-    if (open && selection.paneId !== null && !selection.auto) setPaused(true);
-  }, [selection.machineId, selection.paneId, selection.auto]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const openRef = useRef(false);
+  openRef.current = guide !== null;
+  const stepAside = useCallback(() => { if (openRef.current) setPaused(true); }, []);
 
   const dispatch = useCallback((event: GuideEvent) => setGuide((current) => current === null ? null : guideStep(current, event)), []);
   const close = useCallback(() => {
+    // a pane picked right after closing (Done's first workspace) finds it closed, not open
+    openRef.current = false;
     setGuide(null);
     setPaused(false);
     const store = storage();
     if (store !== null) saveGuide(store, null);
   }, []);
   const resume = useCallback(() => setPaused(false), []);
-  return { guide, paused, dispatch, close, resume };
+  return { guide, paused, dispatch, close, resume, stepAside };
 }
