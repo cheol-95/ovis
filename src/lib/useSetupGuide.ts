@@ -38,6 +38,12 @@ export function useSetupGuide({ enabled, workspaces, pairingGate, watching }: Se
   const openedHere = useRef(false);
   // the record this tab wrote last: a close that storage no longer holds is older than it
   const lastWrite = useRef<string | null>(null);
+  // a watching device sets nothing up: no guide is restored, reopened or kept for it (the server refuses
+  // its installs and workspaces anyway, as #2330's Settings hides Install for it)
+  const watchingRef = useRef(watching);
+  watchingRef.current = watching;
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
 
   useEffect(() => {
     if (!enabled || decided.current) return;
@@ -53,7 +59,10 @@ export function useSetupGuide({ enabled, workspaces, pairingGate, watching }: Se
   }, [enabled, workspaces, sharedRevision, pairingGate, watching, savedSettings]);
 
   useEffect(() => {
-    const reopen = () => { decided.current = true; openedHere.current = true; setGuide(REOPENED); setPaused(false); };
+    const reopen = () => {
+      if (watchingRef.current || !enabledRef.current) return;
+      decided.current = true; openedHere.current = true; setGuide(REOPENED); setPaused(false);
+    };
     // closed in another tab of this browser: closed here too, read from the event itself (storage may
     // already hold this tab's own later write)
     const onStorage = (event: StorageEvent): void => {
@@ -81,7 +90,7 @@ export function useSetupGuide({ enabled, workspaces, pairingGate, watching }: Se
 
 
   const openRef = useRef(false);
-  openRef.current = guide !== null;
+  openRef.current = guide !== null && !watching;
   const stepAside = useCallback(() => { if (openRef.current) setPaused(true); }, []);
 
   const dispatch = useCallback((event: GuideEvent) => setGuide((current) => current === null ? null : guideStep(current, event)), []);
@@ -94,5 +103,8 @@ export function useSetupGuide({ enabled, workspaces, pairingGate, watching }: Se
     if (store !== null) saveGuide(store, null);
   }, []);
   const resume = useCallback(() => setPaused(false), []);
-  return { guide, paused, dispatch, close, resume, stepAside };
+  // turned into a watching device (its pairing changed): an open guide goes, without closing it for this browser
+  useEffect(() => { if (watching) { setGuide(null); setPaused(false); } }, [watching]);
+  // and the render that brings the role already shows none
+  return { guide: watching ? null : guide, paused, dispatch, close, resume, stepAside };
 }
