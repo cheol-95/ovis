@@ -14,7 +14,7 @@ import { skillSyntax } from "../../shared/skill-syntax.ts";
 import { knownStatus, STATUS_WORD } from "./status.ts";
 import { t, type Vars } from "./i18n.ts";
 import type { ActiveTrigger } from "./mentions.ts";
-import { submitNotTyped } from "../../shared/submit-outcome.ts";
+import { NO_AGENT_MESSAGE, submitNotTyped } from "../../shared/submit-outcome.ts";
 export { submitNotTyped } from "../../shared/submit-outcome.ts";
 
 /** This cap keeps one composer message inside a single WS frame. */
@@ -144,7 +144,8 @@ export function submitNote(code: string, message: string, agent?: string | null)
   if (code === "pending_input_unsupported") return t("Update this PC to send messages in the next turn. Your draft stayed here.");
   // #511: a message with comments on a reply goes only to an agent
   if (code === "agent_only_unsupported") return t("Update this PC to send comments on a reply. Your message and comments stayed here.");
-  if (code === "agent_not_ready") return t("Not sent: no agent is running in this pane. Your message stayed here.");
+  // the same code also says an agent's input state is unknown: that keeps the bridge's own words
+  if (code === "agent_not_ready" && message === NO_AGENT_MESSAGE) return t("Not sent: no agent is running in this pane. Your message stayed here.");
   if (code === "submit_timeout") return t("Not sent: it waited too long behind an earlier message, and nothing was typed. Send it again.");
   if (code === "not_transmitted") return t("Not sent: the connection dropped before this message left. Send it again.");
   if (code === "capabilities_unknown") return t("Not sent: this PC has not said yet what it supports. Send it again.");

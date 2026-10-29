@@ -158,6 +158,34 @@ try {
   try {
     const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
+      // The chat's timeline chunk arriving after the Comment layer mounted (a cold load on a slow link): its
+      // selection is still offered and saved once the replies are drawn
+      {
+        const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
+        try {
+          await context.addInitScript((id) => {
+            localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", palette: "codex" }));
+            localStorage.setItem(`ovis:view:${id}`, "chat");
+          }, PANE);
+          let release!: () => void;
+          const held = new Promise<void>((resolve) => { release = resolve; });
+          await context.route(/\/assets\/ChatTimeline-[^/]*\.js$/, async (route) => { await held; await route.continue(); });
+          const page = await context.newPage();
+          page.setDefaultTimeout(WAIT.timeout);
+          await page.goto(url);
+          await page.locator(".reply-comment-layer").waitFor({ state: "attached", ...WAIT });
+          assert.equal(await page.locator("[data-chat-row]").count(), 0, "late timeline: the action mounted before the replies were drawn");
+          release();
+          await page.getByText("Show a conflict banner", { exact: false }).waitFor(WAIT);
+          await page.locator(".chat-frame[data-pane-content]").waitFor({ state: "attached", ...WAIT });
+          await appFaces(page);
+          await frames(page);
+          await comment(page, FIRST.quote, FIRST.comment, true, 1);
+          console.log("PASS late-timeline");
+        } finally {
+          await context.close();
+        }
+      }
       const shapes = [
         { name: "desktop-1280", width: 1280, height: 800, mobile: false },
         { name: "phone-390", width: 390, height: 844, mobile: true },

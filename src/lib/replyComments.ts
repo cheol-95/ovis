@@ -41,6 +41,8 @@ export class ReplyCommentStore {
   private cache = new Map<string, { raw: string | null; list: readonly ReplyComment[] }>();
   private listeners = new Set<() => void>();
   private count = 0;
+  /** the pane ID each moved list went to (lib/paneMove.ts): a send begun under the old one settles there too */
+  private forwards = new Map<string, string>();
   constructor(
     private storage: () => CommentStorage = () => paneLifetimes.paneStorage,
     private newId: () => string = () => `${Date.now().toString(36)}-${(++this.count).toString(36)}`,
@@ -78,8 +80,29 @@ export class ReplyCommentStore {
   /** Removes the comments a sent message carried, by id: one written meanwhile stays for the next. */
   removeSent(key: string, sent: readonly ReplyComment[]): void {
     const ids = new Set(sent.map((item) => item.id));
-    const list = this.read(key);
-    if (list.some((item) => ids.has(item.id))) this.write(key, list.filter((item) => !ids.has(item.id)));
+    for (const at of this.chain(key)) {
+      const list = this.read(at);
+      if (list.some((item) => ids.has(item.id))) this.write(at, list.filter((item) => !ids.has(item.id)));
+    }
+  }
+  /** `key` and every key its list moved on to since */
+  private chain(key: string): string[] {
+    const keys = [key];
+    for (let next = this.forwards.get(key); next !== undefined && !keys.includes(next); next = this.forwards.get(next)) keys.push(next);
+    return keys;
+  }
+  /**
+   * herdr gave the pane a new ID: all its waiting comments go with it, after any the new ID holds
+   * already, and a send begun under the old ID still removes the ones it carried once it is acknowledged.
+   */
+  move(from: string, to: string): void {
+    const moving = this.read(from);
+    if (moving.length === 0 || from === to) return;
+    const there = this.read(to);
+    const held = new Set(there.map((item) => item.id));
+    if (!this.write(to, [...there, ...moving.filter((item) => !held.has(item.id))])) return;
+    this.write(from, NONE);
+    this.forwards.set(from, to);
   }
   clear(key: string): void {
     if (this.read(key).length > 0) this.write(key, NONE);

@@ -985,7 +985,8 @@ export function Composer({
         return;
       }
       // a draft puts Send where Stop was: Escape is then the Stop the agent's own input has
-      if (event.key === "Escape" && connected && agentStatus === "working" && textRef.current.trim().length > 0) {
+      // comments waiting to go are a draft too (#511): they put Send in Stop's place as well
+      if (event.key === "Escape" && connected && agentStatus === "working" && (textRef.current.trim().length > 0 || carried.length > 0)) {
         event.preventDefault();
         onAbort();
         return;
@@ -1018,7 +1019,7 @@ export function Composer({
       event.preventDefault();
       send();
     },
-    [agentStatus, choices, connected, menuDismissed, menuOpen, offered, onAbort, selectCompletion, selectedIndex, send, sendBeside, setTextAndCaret, settings.enterSends, trigger, waitingAnswer],
+    [agentStatus, carried.length, choices, connected, menuDismissed, menuOpen, offered, onAbort, selectCompletion, selectedIndex, send, sendBeside, setTextAndCaret, settings.enterSends, trigger, waitingAnswer],
   );
 
   const onPaste = useCallback(

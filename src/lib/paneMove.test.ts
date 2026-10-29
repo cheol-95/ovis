@@ -1,16 +1,17 @@
 import { expect, it } from "bun:test";
 import { paneStorageId, type Machine } from "../../shared/machines.ts";
 import { ComposerDraftStore } from "./composerDraft.ts";
+import { ReplyCommentStore } from "./replyComments.ts";
 import { paneLifetimes } from "./paneLifetime.ts";
 import { carryPaneState } from "./paneMove.ts";
 import { readTerminalDraft, setTerminalDraftSending, writeTerminalDraft } from "./terminalDraft.ts";
 function fixture() {
   const data = new Map<string, string>();
   const storage = { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => { data.set(key, value); }, removeItem: (key: string) => { data.delete(key); } };
-  return { data, drafts: new ComposerDraftStore(() => storage), storage: () => storage };
+  return { data, drafts: new ComposerDraftStore(() => storage), storage: () => storage, comments: new ReplyCommentStore(() => storage) };
 }
 it("carries the chat draft, the held terminal input and the picked lens to the pane's new ID, sending nothing", () => {
-  const { data, drafts, storage } = fixture();
+  const { data, drafts, storage, comments } = fixture();
   drafts.set("ovis:composer-draft:w1:p1", "unsent question");
   data.set("ovis:terminal-draft:w1:p1", JSON.stringify({ text: "echo held", at: 1 }));
   data.set("ovis:view:w1:p1", "terminal");
@@ -18,7 +19,7 @@ it("carries the chat draft, the held terminal input and the picked lens to the p
   // another pane's state, and the same pane ID on another PC, stay where they are
   data.set("ovis:view:w1:p2", "chat");
   drafts.set("ovis:composer-draft:remote:pc:w1%3Ap1", "other PC");
-  carryPaneState("local", "w1:p1", "w2:p4", drafts, storage);
+  carryPaneState("local", "w1:p1", "w2:p4", drafts, storage, comments);
   expect(drafts.read("ovis:composer-draft:w2:p4")).toEqual({ text: "unsent question", sending: false });
   expect(drafts.read("ovis:composer-draft:w1:p1").text).toBe("");
   expect(data.get("ovis:terminal-draft:w2:p4")).toBe(JSON.stringify({ text: "echo held", at: 1 }));
@@ -35,15 +36,34 @@ it("leaves a draft whose send is on its way, and keeps what the new ID holds alr
   expect(drafts.begin("ovis:composer-draft:w1:p1", "on its way")).toBe(true);
   data.set("ovis:view:w1:p1", "chat");
   data.set("ovis:view:w2:p4", "terminal");
-  // the comments that send carries settle under the ID it went with (#511): moved, they would go twice
-  data.set("ovis:reply-comments:w1:p1", JSON.stringify([{ id: "c1", quote: "q", comment: "c" }]));
   carryPaneState("local", "w1:p1", "w2:p4", drafts, storage);
-  expect(data.get("ovis:reply-comments:w2:p4")).toBeUndefined();
-  expect(data.has("ovis:reply-comments:w1:p1")).toBe(true);
   expect(drafts.read("ovis:composer-draft:w1:p1")).toEqual({ text: "on its way", sending: true });
   expect(drafts.read("ovis:composer-draft:w2:p4").text).toBe("");
   expect(data.get("ovis:view:w2:p4")).toBe("terminal");
   expect(data.get("ovis:view:w1:p1")).toBe("chat");
+});
+it("moves every waiting comment with the pane, and a send begun before the move removes only the ones it carried (#511)", () => {
+  const { drafts, storage, comments } = fixture();
+  const before = "ovis:reply-comments:w1:p1", after = "ovis:reply-comments:w2:p4";
+  comments.add(before, "selected first", "send this");
+  expect(drafts.begin("ovis:composer-draft:w1:p1", "go")).toBe(true);
+  const carried = comments.read(before);
+  // saved while that message is on its way: it waits for the next one
+  comments.add(before, "selected second", "save for next message");
+  carryPaneState("local", "w1:p1", "w2:p4", drafts, storage, comments);
+  expect(comments.read(after).map((item) => item.comment)).toEqual(["send this", "save for next message"]);
+  // the send is acknowledged under the ID it went with
+  comments.removeSent(before, carried);
+  expect(comments.read(after).map((item) => item.comment)).toEqual(["save for next message"]);
+  expect(comments.read(before)).toEqual([]);
+});
+it("keeps the comments a refused send carried on the moved pane, after any it held already (#511)", () => {
+  const { storage, drafts, comments } = fixture();
+  comments.add("ovis:reply-comments:w2:p4", "its own", "already here");
+  comments.add("ovis:reply-comments:w1:p1", "selected", "refused with its message");
+  expect(drafts.begin("ovis:composer-draft:w1:p1", "go")).toBe(true);
+  carryPaneState("local", "w1:p1", "w2:p4", drafts, storage, comments);
+  expect(comments.read("ovis:reply-comments:w2:p4").map((item) => item.comment)).toEqual(["already here", "refused with its message"]);
 });
 it("carries a touch screen's unsent terminal line to the new ID, and leaves one on its way", () => {
   const { drafts, storage } = fixture();
