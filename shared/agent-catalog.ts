@@ -231,6 +231,62 @@ const POWERSHELL: readonly InstallRequirement[] = [{ tool: "powershell" }];
  * a changed command no longer carries the runs of its old text. How to run one: docs/agent-catalog.md.
  */
 export const COMMAND_TESTS: Readonly<Record<string, readonly CommandTest[]>> = {
+  "windows|irm https://claude.ai/install.ps1 | iex": [
+    {
+      on: "2026-10-29",
+      where: "Windows 11 VM; elevated; Windows PowerShell 5.1; no Node",
+      result: "ok",
+      note: "2.1.312, in %USERPROFILE%\\.local\\bin, which it does not add to PATH"
+    }
+  ],
+  "windows|powershell -ExecutionPolicy ByPass -c \"irm https://chatgpt.com/codex/install.ps1 | iex\"": [
+    {
+      on: "2026-10-29",
+      where: "Windows 11 VM; elevated; Windows PowerShell 5.1; no Node",
+      result: "ok",
+      note: "0.165.0"
+    }
+  ],
+  "windows|irm https://x.ai/cli/install.ps1 | iex": [
+    {
+      on: "2026-10-29",
+      where: "Windows 11 VM; elevated; Windows PowerShell 5.1; no Node",
+      result: "ok",
+      note: "1.0.70"
+    }
+  ],
+  "windows|irm https://antigravity.google/cli/install.ps1 | iex": [
+    {
+      on: "2026-10-29",
+      where: "Windows 11 VM; elevated; Windows PowerShell 5.1; no Node",
+      result: "ok",
+      note: "1.4.10"
+    }
+  ],
+  "windows|powershell -c \"irm https://pi.dev/install.ps1 | iex\"": [
+    {
+      on: "2026-10-29",
+      where: "Windows 11 VM; elevated; Windows PowerShell 5.1; no Node",
+      result: "failed",
+      note: "no terminal and no Node: it waits at its question whether to install Node"
+    }
+  ],
+  "windows|irm https://omp.sh/install.ps1 | iex": [
+    {
+      on: "2026-10-29",
+      where: "Windows 11 VM; elevated; Windows PowerShell 5.1; no Node",
+      result: "failed",
+      note: "an older Bun (1.4.2) on PATH: it asks for Bun 1.4.4 or later"
+    }
+  ],
+  "windows|irm https://get.omo.dev/install.ps1 | iex": [
+    {
+      on: "2026-10-29",
+      where: "Windows 11 VM; elevated; Windows PowerShell 5.1; no Node",
+      result: "failed",
+      note: "refuses an elevated shell, as its docs say"
+    }
+  ],
   "linux|curl -fsSL https://claude.ai/install.sh | bash": [
     {
       on: "2026-10-29",
@@ -499,7 +555,7 @@ const CATALOG_ENTRIES: readonly AgentCatalogEntry[] = [
     url_prefixes: ["https://claude.ai/install.sh", "https://claude.ai/install.ps1", "https://claude.ai/install.cmd"],
     packages: ["brew:claude-code", "winget:Anthropic.ClaudeCode"],
     sources: [source("https://code.claude.com/docs/en/quickstart")],
-    detect: { binaries: ["claude"], version_args: ["--version"], install_dirs: { macos: ["~/.local/bin"], linux: ["~/.local/bin"] } },
+    detect: { binaries: ["claude"], version_args: ["--version"], install_dirs: { macos: ["~/.local/bin"], linux: ["~/.local/bin"], windows: ["%USERPROFILE%/.local/bin"] } },
     sign_in: { provider: "claude", command: ["claude", "auth", "login"], in_agent: "/login", api_keys: ["ANTHROPIC_API_KEY"], required: true },
     after_install: ["Open a new terminal before running it: the installer adds it to PATH for new shells."],
     min_version: { version: "2.1.284", reason: "Ultracode in New workspace" },
