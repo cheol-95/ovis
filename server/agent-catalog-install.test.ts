@@ -16,6 +16,39 @@ const WATCH_TOKEN = "w".repeat(64);
 const BRIDGE_TOKEN = "b".repeat(64);
 const claude = AGENT_CATALOG.find((entry) => entry.id === "claude")!;
 const code = async (response: Response | null) => [response!.status, ((await response!.json()) as { error: { code: string } }).error.code];
+/**
+ * Time that moves only when told to. `advance(count)` waits for the code under test to start
+ * `count` new sleeps since the last advance (it is then waiting), moves to the earliest pending one
+ * and ends it.
+ */
+type VirtualClock = ReturnType<typeof virtualClock>;
+function virtualClock() {
+  let time = 0;
+  let started = 0;
+  const timers: { at: number; wake: () => void }[] = [];
+  let changed = () => {};
+  return {
+    now: () => time,
+    pending: () => timers.length,
+    sleep(ms: number, signal?: AbortSignal): Promise<void> {
+      return new Promise((wake) => {
+        const timer = { at: time + ms, wake };
+        timers.push(timer);
+        started++;
+        signal?.addEventListener("abort", () => { const at = timers.indexOf(timer); if (at >= 0) timers.splice(at, 1); }, { once: true });
+        changed();
+      });
+    },
+    async advance(count: number): Promise<void> {
+      while (started < count) await new Promise<void>((resolve) => { changed = resolve; });
+      started = 0;
+      timers.sort((a, b) => a.at - b.at);
+      const next = timers.shift()!;
+      time = next.at;
+      next.wake();
+    },
+  };
+}
 const post = (path: string, body: unknown) => new Request(`http://127.0.0.1${path}`, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
 
 describe("POST /api/agent-catalog/install and /sign-in", () => {
@@ -84,17 +117,23 @@ describe("POST /api/agent-catalog/install and /sign-in", () => {
   });
 
   it("on Windows, gives the new tab's shell one overall deadline, not one per answer", async () => {
-    // herdr answers slowly: nothing named at first, then PowerShell after the deadline
+    const install = (clock: VirtualClock, shellWaitMs: number) => new AgentInstaller(nowhere, "windows", undefined, { shellWaitMs, clock }).handle(post("/api/agent-catalog/install", { agent: "claude" }), "/api/agent-catalog/install");
+    // herdr takes 300 ms per answer: nothing named at first, then PowerShell, which would come at 600 ms
+    const slow = virtualClock();
     let answers = 0;
-    // fixed wait: a herdr answer that takes 300 ms is what the deadline is measured against
-    info.mockImplementation(async () => { await Bun.sleep(300); return (answers++ === 0 ? null : await pwsh()) as never; });
-    expect(await code(await new AgentInstaller(nowhere, "windows", undefined, { shellWaitMs: 500 }).handle(post("/api/agent-catalog/install", { agent: "claude" }), "/api/agent-catalog/install"))).toEqual([409, "shell_unknown"]);
-    // one answer that comes after the deadline is not waited for
-    // fixed wait: one herdr answer that comes only after the deadline
-    info.mockImplementation(async () => { await Bun.sleep(800); return await pwsh(); });
-    const started = performance.now();
-    expect(await code(await new AgentInstaller(nowhere, "windows", undefined, { shellWaitMs: 300 }).handle(post("/api/agent-catalog/install", { agent: "claude" }), "/api/agent-catalog/install"))).toEqual([409, "shell_unknown"]);
-    expect(performance.now() - started).toBeLessThan(700);
+    info.mockImplementation(async () => { await slow.sleep(300); return (answers++ === 0 ? null : await pwsh()) as never; });
+    const first = install(slow, 500);
+    await slow.advance(2); // the answer (300 ms) and the deadline (500 ms) start: the answer comes first
+    await slow.advance(1); // the pause before asking again starts, and ends at the deadline
+    expect(await code(await first)).toEqual([409, "shell_unknown"]);
+    expect([slow.now(), answers]).toEqual([500, 1]);
+    // one answer that would come at 800 ms is not waited for past a 300 ms deadline
+    const late = virtualClock();
+    info.mockImplementation(async () => { await late.sleep(800); return await pwsh(); });
+    const second = install(late, 300);
+    await late.advance(2);
+    expect(await code(await second)).toEqual([409, "shell_unknown"]);
+    expect([late.now(), late.pending()]).toEqual([300, 1]);
     expect(typed).not.toHaveBeenCalled();
     expect(closed).toHaveBeenCalledTimes(2);
   });
