@@ -199,6 +199,10 @@ const expiredReport = (): UsageReport => ({
  * never for the hub's or Antigravity's; it asks the server by the account's key and hands the tab over.
  */
 export async function checkUsageSignInAgain(browser: Browser, origin: string): Promise<void> {
+  // the account order is shared through the server: whatever an earlier check on it saved (checkUsageMeters
+  // moves an account) would put its accounts first here, so this check starts from none
+  const reset = await fetch(`${origin}/api/preferences`, { method: "PUT", headers: { "content-type": "application/json", origin }, body: JSON.stringify({ settings: { usageOrder: [] } }) });
+  assert.equal(reset.status, 200, "the shared account order is cleared");
   for (const phone of [false, true]) {
     const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1280, height: 800 }, locale: "en-US", ...(phone ? { hasTouch: true, isMobile: true } : {}) });
     try {
