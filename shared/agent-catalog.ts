@@ -177,39 +177,90 @@ const PACKAGE_INSTALLS: readonly (readonly [string, RegExp])[] = [
 ];
 /** An npm spec without its version: `@opencode/cli@latest` is `@opencode/cli`. */
 const npmName = (spec: string): string => spec.startsWith("@") ? `@${spec.slice(1).split("@")[0]}` : spec.split("@")[0]!;
-/** A URL or package in a command form: no whitespace, quote, backslash or shell metacharacter. */
-const ARG = String.raw`[^\s;&|\x60$()<>"'\\]+`;
 /**
- * The only shapes a catalog command may have, matched against the whole command: each vendor's
- * own forms, with nothing before or after. Only the URL or package (ARG) varies, and it is then
- * held to the entry's url_prefixes or packages. Parsing shell is never relied on: a command with
- * anything added (`&& …`, `; …`, `$(…)`, a second line) matches no form and is refused.
+ * Every command the catalog may hold, as "platform|command", byte for byte. A command is accepted
+ * only when it is in this list exactly: nothing parses shell, so nothing can be added before or
+ * after it, and no version, argument or space can change. Changing or adding a command means
+ * changing it here too, after reading the vendor's page (docs/agent-catalog.md).
  */
-const COMMAND_FORMS: readonly RegExp[] = [
-  String.raw`curl -fsSL ${ARG} \| (?:bash|sh)`,
-  String.raw`irm ${ARG} \| iex`,
-  String.raw`iex \(irm ${ARG}\)`,
-  String.raw`powershell -ExecutionPolicy ByPass -c "irm ${ARG} \| iex"`,
-  String.raw`powershell -c "irm ${ARG} \| iex"`,
-  String.raw`curl -fsSL ${ARG} -o install\.cmd && install\.cmd && del install\.cmd`,
-  String.raw`curl -fsSL ${ARG} -o gjc-install\.sh && sh gjc-install\.sh`,
-  String.raw`Invoke-WebRequest -UseBasicParsing ${ARG} -OutFile gjc-install\.ps1; powershell -File gjc-install\.ps1`,
-  String.raw`npm (?:install|i) -g ${ARG}`,
-  String.raw`brew install (?:--cask )?${ARG}`,
-  String.raw`winget install ${ARG}`,
-  String.raw`uv tool install ${ARG}`,
-  String.raw`pipx install ${ARG}`,
-].map((form) => new RegExp(`^${form}$`));
+export const APPROVED_COMMANDS: ReadonlySet<string> = new Set([
+  "macos|curl -fsSL https://claude.ai/install.sh | bash",
+  "macos|brew install --cask claude-code",
+  "linux|curl -fsSL https://claude.ai/install.sh | bash",
+  "linux|brew install --cask claude-code",
+  "windows|irm https://claude.ai/install.ps1 | iex",
+  "windows|curl -fsSL https://claude.ai/install.cmd -o install.cmd && install.cmd && del install.cmd",
+  "windows|winget install Anthropic.ClaudeCode",
+  "macos|curl -fsSL https://chatgpt.com/codex/install.sh | sh",
+  "macos|npm install -g @openai/codex",
+  "macos|brew install --cask codex",
+  "linux|curl -fsSL https://chatgpt.com/codex/install.sh | sh",
+  "linux|npm install -g @openai/codex",
+  "windows|powershell -ExecutionPolicy ByPass -c \"irm https://chatgpt.com/codex/install.ps1 | iex\"",
+  "windows|npm install -g @openai/codex",
+  "macos|curl -fsSL https://gh.io/copilot-install | bash",
+  "macos|brew install copilot-cli",
+  "macos|npm install -g @github/copilot",
+  "linux|curl -fsSL https://gh.io/copilot-install | bash",
+  "linux|brew install copilot-cli",
+  "linux|npm install -g @github/copilot",
+  "windows|winget install GitHub.Copilot",
+  "windows|npm install -g @github/copilot",
+  "macos|curl -fsSL https://opencode.ai/v2/install | bash",
+  "macos|brew install anomalyco/tap/opencode-v2",
+  "macos|npm i -g @opencode/cli@latest",
+  "linux|curl -fsSL https://opencode.ai/v2/install | bash",
+  "linux|brew install anomalyco/tap/opencode-v2",
+  "linux|npm i -g @opencode/cli@latest",
+  "windows|npm i -g @opencode/cli@latest",
+  "macos|curl -fsSL https://cli.devin.ai/install.sh | bash",
+  "macos|brew install --cask devin-cli",
+  "linux|curl -fsSL https://cli.devin.ai/install.sh | bash",
+  "windows|irm https://static.devin.ai/cli/setup.ps1 | iex",
+  "macos|curl -fsSL https://x.ai/cli/install.sh | bash",
+  "linux|curl -fsSL https://x.ai/cli/install.sh | bash",
+  "windows|irm https://x.ai/cli/install.ps1 | iex",
+  "macos|curl -fsSL https://antigravity.google/cli/install.sh | bash",
+  "linux|curl -fsSL https://antigravity.google/cli/install.sh | bash",
+  "windows|irm https://antigravity.google/cli/install.ps1 | iex",
+  "windows|curl -fsSL https://antigravity.google/cli/install.cmd -o install.cmd && install.cmd && del install.cmd",
+  "macos|curl -fsSL https://omp.sh/install | sh",
+  "linux|curl -fsSL https://omp.sh/install | sh",
+  "windows|irm https://omp.sh/install.ps1 | iex",
+  "macos|curl -fsSL https://get.omo.dev/install.sh | bash",
+  "linux|curl -fsSL https://get.omo.dev/install.sh | bash",
+  "windows|irm https://get.omo.dev/install.ps1 | iex",
+  "macos|curl -fsSL https://raw.githubusercontent.com/Yeachan-Heo/gajae-code/v0.15.3/scripts/install.sh -o gjc-install.sh && sh gjc-install.sh",
+  "linux|curl -fsSL https://raw.githubusercontent.com/Yeachan-Heo/gajae-code/v0.15.3/scripts/install.sh -o gjc-install.sh && sh gjc-install.sh",
+  "windows|Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/Yeachan-Heo/gajae-code/v0.15.3/scripts/install.ps1 -OutFile gjc-install.ps1; powershell -File gjc-install.ps1",
+  "macos|curl -fsSL https://pi.dev/install.sh | sh",
+  "linux|curl -fsSL https://pi.dev/install.sh | sh",
+  "windows|powershell -c \"irm https://pi.dev/install.ps1 | iex\"",
+  "macos|npm install -g @letta-ai/letta-code",
+  "macos|uv tool install letta",
+  "macos|pipx install letta",
+  "linux|npm install -g @letta-ai/letta-code",
+  "linux|uv tool install letta",
+  "linux|pipx install letta",
+  "windows|npm install -g @letta-ai/letta-code",
+  "windows|uv tool install letta",
+  "macos|npm i -g command-code",
+  "linux|npm i -g command-code",
+  "windows|npm i -g command-code",
+  "macos|curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
+  "linux|curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
+  "windows|iex (irm https://hermes-agent.nousresearch.com/install.ps1)",
+]);
 
 /** An allowed address: HTTPS, a host, and a path on it, so a prefix can never stand for a whole host. */
 const PREFIX = /^https:\/\/[a-z0-9.-]+\/\S+$/;
 
 /**
  * Why an entry's commands are not the vendor's own, one line each; none when they are. Every command
- * must be exactly one of COMMAND_FORMS, whose one variable part is a URL starting with one of
- * `url_prefixes` (HTTPS) or a package in `packages`; it must not use sudo. No shell is parsed: the
- * forms are matched against the whole text. The catalog's test holds every entry to it, and the
- * install flow checks a command again before it types it.
+ * must be in APPROVED_COMMANDS for its platform, byte for byte. As a second, consistency check, every
+ * address it names must be HTTPS under one of `url_prefixes`, every package it installs must be in
+ * `packages`, and it must not use sudo. The catalog's test holds every entry to it, and the install
+ * flow checks a command again before it types it.
  */
 export function commandProblems(entry: AgentCatalogEntry): string[] {
   const problems: string[] = [];
@@ -219,7 +270,7 @@ export function commandProblems(entry: AgentCatalogEntry): string[] {
     if (install === null) continue;
     for (const { command } of [install.primary, ...install.alternatives]) {
       const at = (what: string) => problems.push(`${entry.id} ${platform}: ${what}: ${command}`);
-      if (!COMMAND_FORMS.some((form) => form.test(command))) at("is not one of the fixed command forms");
+      if (!APPROVED_COMMANDS.has(`${platform}|${command}`)) at("is not one of the approved commands, byte for byte");
       if (/\bsudo\b/.test(command)) at("asks for sudo");
       const urls = command.match(URL_IN_COMMAND) ?? [];
       for (const url of urls) {

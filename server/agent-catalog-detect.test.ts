@@ -138,12 +138,37 @@ describe.skipIf(process.platform === "win32")("AgentDetector", () => {
     }
   });
 
+  /** Whether `pid` has ended: no such process, or one that only waits to be reaped. */
+  const gone = async (pid: number): Promise<boolean> => {
+    const state = (await new Response(Bun.spawn(["ps", "-o", "stat=", "-p", String(pid)], { stdout: "pipe", stderr: "ignore" }).stdout).text()).trim();
+    return state === "" || state.startsWith("Z");
+  };
+  /** Waits for `pid` to end, for at most a second: SIGKILL is sent at once, and the kernel ends the process right after. */
+  const ends = async (pid: number): Promise<boolean> => {
+    const deadline = performance.now() + 1_000;
+    while (performance.now() < deadline) if (await gone(pid)) return true;
+    return gone(pid);
+  };
+
   it("ends a timed-out version flag with every process it started, even one still holding its output", async () => {
-    stub("holder", "sleep 30 &\nsleep 30");
+    const pidFile = join(bin, "holder.pid");
+    stub("holder", `sleep 30 &\necho $! > '${pidFile}'\nsleep 30`);
     const started = performance.now();
     const run = await runVersion(join(bin, "holder"), ["--version"], 300);
     expect(run.timedOut).toBe(true);
     expect(performance.now() - started).toBeLessThan(2_000);
+    expect(await ends(Number(readFileSync(pidFile, "utf8").trim()))).toBe(true);
+  });
+
+  it("reads the version of a flag that answers and exits at once, and ends the child it left holding the output", async () => {
+    const pidFile = join(bin, "leaver.pid");
+    stub("leaver", `sleep 30 &\necho $! > '${pidFile}'\necho 'leaver 1.2.3'\nexit 0`);
+    const started = performance.now();
+    const run = await runVersion(join(bin, "leaver"), ["--version"], 5_000);
+    expect(run.timedOut).toBe(false);
+    expect(run.output).toContain("leaver 1.2.3");
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(await ends(Number(readFileSync(pidFile, "utf8").trim()))).toBe(true);
   });
 
   it("reads at most a bounded amount of what a version flag prints", async () => {

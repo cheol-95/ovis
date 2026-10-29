@@ -84,6 +84,26 @@ describe("agent catalog commands", () => {
     expect(AGENT_CATALOG.flatMap((entry) => commandProblems(entry))).toEqual([]);
   });
 
+  it("accept only the catalog's own commands, byte for byte: no suffix, version, argument or whitespace added", () => {
+    const refused: string[] = [];
+    for (const entry of AGENT_CATALOG) {
+      for (const platform of CATALOG_PLATFORMS) {
+        const install = entry.install[platform];
+        if (install === null) continue;
+        const listed = [install.primary, ...install.alternatives];
+        listed.forEach((method, index) => {
+          const variants = [`${method.command}EXTRA`, `${method.command} --extra`, `${method.command} `, ` ${method.command}`, method.command.replace(" ", "  "), method.command.replace(" ", "\t")];
+          if (/^npm (?:install|i) -g /.test(method.command)) variants.push(`${method.command.replace(/@latest$/, "")}@0.0.1`);
+          for (const variant of variants) {
+            const mutated: AgentCatalogEntry = { ...entry, install: { ...entry.install, [platform]: { primary: index === 0 ? { ...method, command: variant } : install.primary, alternatives: install.alternatives.map((other, at) => at + 1 === index ? { ...other, command: variant } : other) } } };
+            if (commandProblems(mutated).length === 0) refused.push(`${entry.id} ${platform}: ${JSON.stringify(variant)} was accepted`);
+          }
+        });
+      }
+    }
+    expect(refused).toEqual([]);
+  });
+
   it("list no address or package that no command uses", () => {
     const stale: string[] = [];
     for (const entry of AGENT_CATALOG) {

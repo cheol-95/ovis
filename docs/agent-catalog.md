@@ -15,9 +15,9 @@ with what is installed there (see `shared/protocol.ts`).
 - **Only the vendor's own addresses and packages.** Every URL a command fetches must be HTTPS and
   start with one of the entry's `url_prefixes` (a host and a path on it, never a whole shared host
   such as `raw.githubusercontent.com`), and every npm, brew, winget, uv or pipx package it installs
-  must be in `packages`. No command uses `sudo`. Every command must also be exactly one of the fixed
-  forms in `COMMAND_FORMS` (`curl -fsSL <url> | bash`, `npm install -g <package>`, ...), matched
-  against the whole text, so nothing can be added before or after it; no shell is parsed. `commandProblems()` checks all of this, and
+  must be in `packages`. No command uses `sudo`. Every command must also be in `APPROVED_COMMANDS` for its
+  platform, byte for byte: no shell is parsed, so no suffix, version, argument or space can be added.
+  A changed or new command is changed in that list too, after reading the vendor's page. `commandProblems()` checks all of this, and
   `shared/agent-catalog.test.ts` holds every entry to it; the install flow checks a command again
   before it runs it.
 - **No command where the vendor publishes none.** That platform's `install` is `null` and

@@ -17,6 +17,8 @@ export const VERSION_TIMEOUT_MS = 5_000;
 const VERSION_OUTPUT_BYTES = 4096;
 /** Version flags run at once at most: a first read of the whole catalog starts one process per agent. */
 const PARALLEL_RUNS = 4;
+/** How long output is still read after the version flag's own process exited. */
+const EXIT_GRACE_MS = 200;
 /** How long a timed-out read stands before it is tried again: it may have been a slow first start (an npm shim's cold cache). */
 export const TIMEOUT_KEPT_MS = 60_000;
 
@@ -125,11 +127,16 @@ export const runVersion: RunVersion = async (executable, args, timeoutMs) => {
   let stopReading!: () => void;
   const stop = new Promise<void>((resolve) => { stopReading = resolve; });
   const timer = setTimeout(() => { timedOut = true; killTree(child.pid); stopReading(); }, timeoutMs);
+  // a flag that answered and exited may have left a child holding its output: what it printed is
+  // read for a moment more, then the reading stops, and the child is ended below
+  let grace: ReturnType<typeof setTimeout> | undefined;
+  const exited = child.exited.then((code) => { grace = setTimeout(stopReading, EXIT_GRACE_MS); return code; });
   try {
-    const [stdout, stderr, exitCode] = await Promise.all([readBounded(child.stdout, stop), readBounded(child.stderr, stop), Promise.race([child.exited, stop.then(() => null)])]);
+    const [stdout, stderr, exitCode] = await Promise.all([readBounded(child.stdout, stop), readBounded(child.stderr, stop), Promise.race([exited, stop.then(() => null)])]);
     return { output: `${stdout}\n${stderr}`, exitCode, timedOut };
   } finally {
     clearTimeout(timer);
+    clearTimeout(grace);
     // a version flag that answered may still have left a child behind: nothing it started outlives the read
     if (!timedOut && process.platform !== "win32") killTree(child.pid);
   }
