@@ -2109,6 +2109,17 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   the ordinary cadence without a lens switch; rejected history stays hidden meanwhile. This
   follows T3 Code's separation of [transport health and data freshness](https://github.com/pingdotgg/t3code/blob/main/docs/internals/connection-runtime.md):
   an open socket alone does not prove the conversation is current. No code or new controls are borrowed.
+  A store that writes a turn only when it ends (Letta Code's transcript) keeps its turns on screen
+  while the agent works or waits on the user, and under them a quiet `Live terminal` box
+  (`.chat-terminal-fallback.is-live`): the pane's own terminal tail, open, read every second,
+  12 rows high (8 on a phone) and following its newest line inside, so the chat around it never
+  moves. It goes in the render that adds the written turn, not when the pane's status follows.
+  Letta's own input box, the status row under it and the tip under its spinner are cut from the
+  tail by the layout Letta draws (`src/lib/lettaScreen.ts`); a screen in another shape is shown
+  as it is.
+  The Codex and Claude apps stream the running turn into the conversation; nothing written exists
+  to stream here, so this follows Zed's agent panel, which shows a running command's terminal
+  inline in the thread rather than guessing at its words.
 
 ### Work block (`.work-block`, `.work-row`)
 - One per run of work in an assistant turn, in the agent's own order as its terminal shows it:
@@ -2548,7 +2559,13 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   other than Pi, actual Enter delivery removes the pending row and refreshes the transcript. For
   a message submitted from Ovis Chat to Pi, Enter changes it to a read-only **Sent to Pi ·
   waiting for transcript** user bubble. Only a matching durable user record appended beyond the byte
-  boundary captured on that exact Pi file/session and extending its captured leaf removes it.
+  boundary captured on that exact Pi file/session and extending its captured leaf removes it, and
+  only a record Pi stamped no earlier than that capture: Pi stamps a message when it is submitted,
+  so an earlier stamp is the same text typed into Pi before Ovis's Enter, or a wall clock set back
+  in between. When only such a record has the text, the receipt becomes **transcript confirmation
+  unavailable** (dismissible) instead of confirmed or waiting for good. Pi exposes no submission
+  id, so the same text submitted elsewhere after that Enter still confirms the receipt, and so does
+  the same text typed while Pi compacts: Pi stamps what it stages then only when the stage drains.
   Bounded byte-exact tail checks assume Pi's append-only history contract, not arbitrary older
   history corruption detection; changed inode, header, anchor tail or branch fails closed. Pi may
   stage input while status says idle/done during automatic compaction, so status and screen text are
