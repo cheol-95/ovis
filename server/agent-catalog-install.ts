@@ -7,7 +7,7 @@
  * The dispatcher in index.ts runs the access gate first: a watching device cannot reach these.
  */
 import { homedir } from "node:os";
-import { AGENT_CATALOG, catalogPlatform, commandProblems, type AgentCatalogEntry, type CatalogPlatform } from "../shared/agent-catalog.ts";
+import { AGENT_CATALOG, catalogPlatform, commandProblems, type AgentCatalogEntry, type AgentTabStarted, type CatalogPlatform } from "../shared/agent-catalog.ts";
 import type { AgentDetector } from "./agent-catalog-detect.ts";
 import { paneProcessInfo, paneSendKeys, paneSendText, sessionSnapshot, tabCreate, workspaceCreate } from "./herdr/client.ts";
 import { badRequest, conflictResponse, errorResponse, jsonResponse, readJsonObject, setRequestRoute } from "./http.ts";
@@ -15,14 +15,6 @@ import { paneShell, shellCommandLine, type PaneShell } from "./shell-agent.ts";
 
 export const INSTALL_PATH = "/api/agent-catalog/install";
 export const SIGN_IN_PATH = "/api/agent-catalog/sign-in";
-
-/** What a started install or sign-in answers: its tab, and the exact text typed there. */
-export interface AgentTabStarted {
-  pane_id: string;
-  workspace_id: string;
-  command: string;
-  shell: PaneShell;
-}
 
 async function openTab(label: string, home: string): Promise<{ paneId: string; workspaceId: string }> {
   const snapshot = await sessionSnapshot();
