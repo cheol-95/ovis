@@ -819,7 +819,8 @@ export function Composer({
   const send = useCallback((clearDraft?: string, sendAnyway = false): boolean => {
     if (composingRef.current) return false;
     // read again as it goes: a send another tab began since this render carries some of them (#2356)
-    const sentComments = commentsHeld ? [] : replyComments.unreserved(replyComments.read(commentsKey));
+    // and whether they wait is the message's own: one another tab saved since still waits under a slash command
+    const sentComments = commentsWait(text, answerHint !== null) ? [] : replyComments.unreserved(replyComments.read(commentsKey));
     if (role === "observe" || !connected || uploading || roomless || sending || (text.trim().length === 0 && sentComments.length === 0)) return false;
     if (terminalTyped?.name === "resume" && onOpenHistory) { setMenuDismissed(true); onOpenHistory(); return true; }
     const message = sentComments.length > 0 ? messageWithComments(sentComments, text) : text;
@@ -863,7 +864,7 @@ export function Composer({
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
     return true;
-  }, [attachments, commentsHeld, commentsKey, connected, dictation.forget, draftKey, onOpenHistory, onSend, role, roomless, sending, t, terminalTyped, text, uploading]);
+  }, [answerHint, attachments, commentsKey, connected, dictation.forget, draftKey, onOpenHistory, onSend, role, roomless, sending, t, terminalTyped, text, uploading]);
   const sendRef = useRef(send);
   sendRef.current = send;
   const connectedRef = useRef(connected);
