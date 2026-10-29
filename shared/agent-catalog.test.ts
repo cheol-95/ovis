@@ -49,6 +49,13 @@ describe("agent catalog", () => {
     expect(problems).toEqual([]);
   });
 
+  it("marks every command that may ask for sudo or administrator rights as admin, so the install flow can say so first", () => {
+    const unmarked = AGENT_CATALOG.flatMap((entry) => methods(entry)
+      .filter(([, method]) => !method.admin && method.known_issues.some((issue) => /\b(?:asks? for sudo|may ask for sudo|administrator rights)\b/i.test(issue)))
+      .map(([platform, method]) => `${entry.id} ${platform}: ${method.command}`));
+    expect(unmarked).toEqual([]);
+  });
+
   it("keeps a clean-PC run only for a command the catalog still lists on that platform", () => {
     const listed = new Set(AGENT_CATALOG.flatMap((entry) => methods(entry).map(([platform, method]) => `${platform}|${method.command}`)));
     expect(Object.keys(COMMAND_TESTS).filter((key) => !listed.has(key))).toEqual([]);
@@ -104,5 +111,10 @@ describe("agent catalog commands", () => {
     expect(problems(codex, "npm install -g @openai/codex-helper")).not.toEqual([]);
     expect(problems(codex, "npm i -g openai-codex@latest")).not.toEqual([]);
     expect(problems(codex, "echo installed")).not.toEqual([]);
+    // anything after an approved command, in any shell's syntax, is not the vendor's command
+    for (const extra of [" && touch /tmp/unapproved", "; touch /tmp/unapproved", " | tee /tmp/x", " $(touch /tmp/x)", "\ntouch /tmp/x"]) {
+      expect(problems(claude, `curl -fsSL https://claude.ai/install.sh | bash${extra}`)).not.toEqual([]);
+      expect(problems(codex, `npm install -g @openai/codex${extra}`)).not.toEqual([]);
+    }
   });
 });

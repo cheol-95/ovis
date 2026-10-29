@@ -7,7 +7,7 @@
  */
 import { accessSync, constants, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { delimiter, isAbsolute, join } from "node:path";
 import { meetsMinVersion, parseVersion, type AgentCatalogEntry, type AgentInstallState, type CatalogPlatform } from "../shared/agent-catalog.ts";
 import { loginPathProbe, loginShell, type LoginPathProbe } from "./shell-agent.ts";
 
@@ -54,12 +54,19 @@ export function catalogLocator(options: { probe: LoginPathProbe | null; serviceP
       .finally(() => { reading = null; });
     return reading;
   };
+  // a plain GET runs what it finds: only absolute PATH entries count, never `.`, an empty or a relative
+  // one, which would make whatever is in the server's working folder an agent
+  const find = (binary: string, path: string): string | null => {
+    const absolute = path.split(delimiter).filter((entry) => entry !== "" && isAbsolute(entry)).join(delimiter);
+    if (absolute === "") return null;
+    const found = Bun.which(binary, { PATH: absolute });
+    return found !== null && isAbsolute(found) && isExecutableFile(found) ? found : null;
+  };
   return async (binary) => {
-    const own = Bun.which(binary, { PATH: servicePath() });
+    const own = find(binary, servicePath());
     if (own !== null || options.probe === null) return own;
     const path = await loginPath(options.probe);
-    const found = path === null ? null : Bun.which(binary, { PATH: path });
-    return found !== null && isAbsolute(found) && isExecutableFile(found) ? found : null;
+    return path === null ? null : find(binary, path);
   };
 }
 
@@ -78,13 +85,15 @@ export interface VersionRun {
 }
 export type RunVersion = (executable: string, args: readonly string[], timeoutMs: number) => Promise<VersionRun>;
 
-async function readBounded(stream: ReadableStream<Uint8Array>): Promise<string> {
+/** Reads at most VERSION_OUTPUT_BYTES, and nothing more once `stop` settles: a process the timeout ended may have left a child holding the pipe. */
+async function readBounded(stream: ReadableStream<Uint8Array>, stop: Promise<void>): Promise<string> {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
+  const stopped = stop.then(() => ({ done: true as const, value: undefined }));
   try {
     while (size < VERSION_OUTPUT_BYTES) {
-      const { done, value } = await reader.read();
+      const { done, value } = await Promise.race([reader.read(), stopped]);
       if (done) break;
       chunks.push(value);
       size += value.byteLength;
@@ -96,11 +105,34 @@ async function readBounded(stream: ReadableStream<Uint8Array>): Promise<string> 
   return new TextDecoder().decode(Buffer.concat(chunks).subarray(0, VERSION_OUTPUT_BYTES));
 }
 
-/** Runs `executable args` with no input and this server's environment, killed at `timeoutMs`. */
+/** Ends `pid` and every process it started: its process group off Windows, its process tree on Windows. */
+function killTree(pid: number): void {
+  if (process.platform === "win32") {
+    Bun.spawn(["taskkill", "/pid", String(pid), "/T", "/F"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    return;
+  }
+  try { process.kill(-pid, "SIGKILL"); } catch { /* the group is gone already */ }
+}
+
+/**
+ * Runs `executable args` with no input and this server's environment, in a process group of its own.
+ * At `timeoutMs` the whole group is killed and its output no longer read: a version flag that starts
+ * a child holding stdout open (an npm shim, a launcher) would otherwise outlast the timeout.
+ */
 export const runVersion: RunVersion = async (executable, args, timeoutMs) => {
-  const child = Bun.spawn([executable, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: timeoutMs, killSignal: "SIGKILL" });
-  const [stdout, stderr, exitCode] = await Promise.all([readBounded(child.stdout), readBounded(child.stderr), child.exited]);
-  return { output: `${stdout}\n${stderr}`, exitCode, timedOut: child.signalCode === "SIGKILL" };
+  const child = Bun.spawn([executable, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: process.platform !== "win32" });
+  let timedOut = false;
+  let stopReading!: () => void;
+  const stop = new Promise<void>((resolve) => { stopReading = resolve; });
+  const timer = setTimeout(() => { timedOut = true; killTree(child.pid); stopReading(); }, timeoutMs);
+  try {
+    const [stdout, stderr, exitCode] = await Promise.all([readBounded(child.stdout, stop), readBounded(child.stderr, stop), Promise.race([child.exited, stop.then(() => null)])]);
+    return { output: `${stdout}\n${stderr}`, exitCode, timedOut };
+  } finally {
+    clearTimeout(timer);
+    // a version flag that answered may still have left a child behind: nothing it started outlives the read
+    if (!timedOut && process.platform !== "win32") killTree(child.pid);
+  }
 };
 
 interface Kept {

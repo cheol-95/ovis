@@ -123,6 +123,29 @@ describe.skipIf(process.platform === "win32")("AgentDetector", () => {
     }
   });
 
+  it("never finds a binary through a relative, empty or '.' PATH entry, whatever the server's working folder", async () => {
+    const cwd = process.cwd();
+    process.chdir(bin);
+    try {
+      for (const path of [".", "", `.:${"/nonexistent"}`, "bin-relative", `:/nonexistent`]) {
+        expect(await catalogLocator({ probe: null, servicePath: () => path })("claude")).toBeNull();
+        expect(await catalogLocator({ probe: async () => ({ path }), servicePath: () => "/nonexistent" })("claude")).toBeNull();
+      }
+      // an absolute entry still counts
+      expect(await catalogLocator({ probe: null, servicePath: () => `.:${bin}` })("claude")).toBe(join(bin, "claude"));
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+
+  it("ends a timed-out version flag with every process it started, even one still holding its output", async () => {
+    stub("holder", "sleep 30 &\nsleep 30");
+    const started = performance.now();
+    const run = await runVersion(join(bin, "holder"), ["--version"], 300);
+    expect(run.timedOut).toBe(true);
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
   it("reads at most a bounded amount of what a version flag prints", async () => {
     stub("chatty", "yes 1.2.3 | head -c 1000000");
     const run = await runVersion(join(bin, "chatty"), ["--version"], 5_000);

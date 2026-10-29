@@ -40,7 +40,7 @@ export interface InstallMethod {
   /** the command as the vendor prints it (steps the vendor lists one after another are joined with && or ;) */
   command: string;
   requires: readonly InstallRequirement[];
-  /** whether it needs administrator rights or sudo on a normal run */
+  /** whether it may ask for administrator rights or sudo, on any official path (a missing prerequisite included) */
   admin: boolean;
   /** what goes wrong on a clean PC, in plain words, and what to do instead */
   known_issues: readonly string[];
@@ -177,14 +177,39 @@ const PACKAGE_INSTALLS: readonly (readonly [string, RegExp])[] = [
 ];
 /** An npm spec without its version: `@opencode/cli@latest` is `@opencode/cli`. */
 const npmName = (spec: string): string => spec.startsWith("@") ? `@${spec.slice(1).split("@")[0]}` : spec.split("@")[0]!;
+/** A URL or package in a command form: no whitespace, quote, backslash or shell metacharacter. */
+const ARG = String.raw`[^\s;&|\x60$()<>"'\\]+`;
+/**
+ * The only shapes a catalog command may have, matched against the whole command: each vendor's
+ * own forms, with nothing before or after. Only the URL or package (ARG) varies, and it is then
+ * held to the entry's url_prefixes or packages. Parsing shell is never relied on: a command with
+ * anything added (`&& …`, `; …`, `$(…)`, a second line) matches no form and is refused.
+ */
+const COMMAND_FORMS: readonly RegExp[] = [
+  String.raw`curl -fsSL ${ARG} \| (?:bash|sh)`,
+  String.raw`irm ${ARG} \| iex`,
+  String.raw`iex \(irm ${ARG}\)`,
+  String.raw`powershell -ExecutionPolicy ByPass -c "irm ${ARG} \| iex"`,
+  String.raw`powershell -c "irm ${ARG} \| iex"`,
+  String.raw`curl -fsSL ${ARG} -o install\.cmd && install\.cmd && del install\.cmd`,
+  String.raw`curl -fsSL ${ARG} -o gjc-install\.sh && sh gjc-install\.sh`,
+  String.raw`Invoke-WebRequest -UseBasicParsing ${ARG} -OutFile gjc-install\.ps1; powershell -File gjc-install\.ps1`,
+  String.raw`npm (?:install|i) -g ${ARG}`,
+  String.raw`brew install (?:--cask )?${ARG}`,
+  String.raw`winget install ${ARG}`,
+  String.raw`uv tool install ${ARG}`,
+  String.raw`pipx install ${ARG}`,
+].map((form) => new RegExp(`^${form}$`));
+
 /** An allowed address: HTTPS, a host, and a path on it, so a prefix can never stand for a whole host. */
 const PREFIX = /^https:\/\/[a-z0-9.-]+\/\S+$/;
 
 /**
- * Why an entry's commands are not the vendor's own, one line each; none when they are. Every
- * address a command fetches must be HTTPS and start with one of `url_prefixes`, every package it
- * installs must be in `packages`, it must not ask for sudo, and it must name what it installs.
- * The catalog's test holds every entry to it; the install flow checks a command again before it runs.
+ * Why an entry's commands are not the vendor's own, one line each; none when they are. Every command
+ * must be exactly one of COMMAND_FORMS, whose one variable part is a URL starting with one of
+ * `url_prefixes` (HTTPS) or a package in `packages`; it must not use sudo. No shell is parsed: the
+ * forms are matched against the whole text. The catalog's test holds every entry to it, and the
+ * install flow checks a command again before it types it.
  */
 export function commandProblems(entry: AgentCatalogEntry): string[] {
   const problems: string[] = [];
@@ -194,6 +219,7 @@ export function commandProblems(entry: AgentCatalogEntry): string[] {
     if (install === null) continue;
     for (const { command } of [install.primary, ...install.alternatives]) {
       const at = (what: string) => problems.push(`${entry.id} ${platform}: ${what}: ${command}`);
+      if (!COMMAND_FORMS.some((form) => form.test(command))) at("is not one of the fixed command forms");
       if (/\bsudo\b/.test(command)) at("asks for sudo");
       const urls = command.match(URL_IN_COMMAND) ?? [];
       for (const url of urls) {
@@ -222,6 +248,7 @@ const only = (primary: InstallMethod, ...alternatives: InstallMethod[]): Platfor
 
 const DEVIN_LOGIN = "Ends by starting a sign-in: with no browser it stops at \"Login canceled\" and exits 1, though Devin is installed.";
 const PI_NODE = "Needs Node.js 22.19 or later: without it, it asks in the terminal whether to install it, and without a terminal it stops.";
+const PI_NODE_SUDO = "Needs Node.js 22.19 or later: without it, it asks in the terminal whether to install it (which may ask for sudo), and without a terminal it stops.";
 const CURL_BASH: readonly InstallRequirement[] = [{ tool: "curl" }, { tool: "bash" }];
 const CURL_SH: readonly InstallRequirement[] = [{ tool: "curl" }, { tool: "sh" }];
 const POWERSHELL: readonly InstallRequirement[] = [{ tool: "powershell" }];
@@ -747,8 +774,8 @@ const CATALOG_ENTRIES: readonly AgentCatalogEntry[] = [
     kind: "harness",
     description: "A minimal, extensible coding agent.",
     install: {
-      macos: only(method("posix", "curl -fsSL https://pi.dev/install.sh | sh", CURL_SH, { known_issues: [PI_NODE] })),
-      linux: only(method("posix", "curl -fsSL https://pi.dev/install.sh | sh", CURL_SH, { known_issues: [PI_NODE] })),
+      macos: only(method("posix", "curl -fsSL https://pi.dev/install.sh | sh", CURL_SH, { admin: true, known_issues: [PI_NODE_SUDO] })),
+      linux: only(method("posix", "curl -fsSL https://pi.dev/install.sh | sh", CURL_SH, { admin: true, known_issues: [PI_NODE_SUDO] })),
       windows: only(method("powershell", "powershell -c \"irm https://pi.dev/install.ps1 | iex\"", POWERSHELL, { known_issues: [PI_NODE] })),
     },
     no_install: {},
@@ -837,7 +864,7 @@ const CATALOG_ENTRIES: readonly AgentCatalogEntry[] = [
     description: "An always-on assistant you message from Telegram, Discord and more.",
     install: {
       macos: only(method("posix", "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash", [{ tool: "curl" }, { tool: "bash" }, { tool: "git" }, { tool: "tar" }])),
-      linux: only(method("posix", "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash", [{ tool: "curl" }, { tool: "bash" }, { tool: "git" }, { tool: "tar" }], { known_issues: ["On a minimal Linux the Node it downloads needs libatomic1: install it first (sudo apt-get install -y libatomic1), or the installer asks for sudo to add it."] })),
+      linux: only(method("posix", "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash", [{ tool: "curl" }, { tool: "bash" }, { tool: "git" }, { tool: "tar" }], { admin: true, known_issues: ["On a minimal Linux the Node it downloads needs libatomic1: install it first (sudo apt-get install -y libatomic1), or the installer asks for sudo to add it."] })),
       windows: only(method("powershell", "iex (irm https://hermes-agent.nousresearch.com/install.ps1)", POWERSHELL)),
     },
     no_install: {},
