@@ -82,6 +82,20 @@ describe("the setup guide closed in another tab", () => {
     expect(hook.guide?.step).toBe("agent");
   });
 
+  it("closes here when the other tab closes right after this tab's own write", async () => {
+    await resumeAt({ ...WELCOME, step: "agent" });
+    const close = JSON.stringify({ status: "closed" });
+    // the other tab's close lands in storage straight after this tab writes its next step
+    const write = window.localStorage.setItem.bind(window.localStorage);
+    window.localStorage.setItem = (key: string, value: string) => { write(key, value); records.set(key, close); };
+    await act(async () => { hook.dispatch({ type: "skip" }); });
+    window.localStorage.setItem = write;
+    const event = new Event("storage");
+    Object.defineProperties(event, { key: { value: GUIDE_STORAGE_KEY }, newValue: { value: close } });
+    await act(async () => { events.dispatchEvent(event); });
+    expect(hook.guide).toBeNull();
+  });
+
   it("opens again here when Settings asks, over a close made elsewhere", async () => {
     await resumeAt({ ...WELCOME, step: "agent" });
     await otherTabWrites(JSON.stringify({ status: "closed" }));

@@ -131,9 +131,11 @@ export function readGuide(storage: Pick<Storage, "getItem">): GuideRecord | null
   return { status: "closed" };
 }
 
-/** Keeps where the guide is (a reload resumes there), or with null that it was closed. */
-export function saveGuide(storage: Pick<Storage, "setItem">, state: GuideState | null): void {
+/** Keeps where the guide is (a reload resumes there), or with null that it was closed; the record written, or null when storage refused it. */
+export function saveGuide(storage: Pick<Storage, "setItem">, state: GuideState | null): string | null {
+  const record = JSON.stringify(state === null ? { status: "closed" } : { status: "open", state });
   try {
-    storage.setItem(GUIDE_STORAGE_KEY, JSON.stringify(state === null ? { status: "closed" } : { status: "open", state }));
-  } catch { /* private mode: the guide lasts for the page */ }
+    storage.setItem(GUIDE_STORAGE_KEY, record);
+    return record;
+  } catch { return null; /* private mode: the guide lasts for the page */ }
 }

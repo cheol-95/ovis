@@ -75,8 +75,8 @@ export function useSetupGuide({ enabled, workspaces, pairingGate, watching }: Se
     // a close made in another tab wins over progress this tab has not opened afresh since
     if (!openedHere.current && readGuide(store)?.status === "closed") { setGuide(null); setPaused(false); return; }
     openedHere.current = false;
-    saveGuide(store, guide);
-    lastWrite.current = store.getItem(GUIDE_STORAGE_KEY);
+    // what this tab wrote, not what storage holds a moment later: another tab may have written since
+    lastWrite.current = saveGuide(store, guide);
   }, [guide]);
 
 
