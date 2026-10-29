@@ -372,8 +372,11 @@ function AppearancePage() {
       <SettingsRow label={t("Sidebar filter")} description={t("Show the Filter field above the sidebar's lists on this device. When off, Filter workspaces and agents in the command palette opens it.")}>
         <Toggle label={t("Sidebar filter")} checked={settings.sidebarFilter} onChange={(sidebarFilter) => update({ sidebarFilter })} />
       </SettingsRow>
-      <SettingsRow label={t("Agents order")} description={t("Activity keeps a waiting agent on top, then the one that changed last; herdr's own order is not changed")} wide>
-        <Segmented label={t("Agents order")} value={settings.agentOrder} onChange={(agentOrder) => update({ agentOrder })} options={[{ value: "workspace", label: t("Workspaces") }, { value: "activity", label: t("Activity") }]} />
+      <SettingsRow label={t("Agents order")} description={t("Activity keeps a waiting agent on top, then the one that changed last. Longest wait lists agents asking for input, then unread finishes, then ready, then working, each oldest first. herdr's own order is not changed")} wide>
+        <Segmented label={t("Agents order")} value={settings.agentOrder} onChange={(agentOrder) => update({ agentOrder })} options={[{ value: "workspace", label: t("Workspaces") }, { value: "activity", label: t("Activity") }, { value: "waiting", label: t("Longest wait") }]} />
+      </SettingsRow>
+      <SettingsRow label={t("Agent row title")} description={t("Name an agent row by its agent's title, or by its tab's name once the tab is renamed, with the agent's title under it")} wide>
+        <Segmented label={t("Agent row title")} value={settings.agentRowTitle} onChange={(agentRowTitle) => update({ agentRowTitle })} options={[{ value: "agent", label: t("Agent") }, { value: "tab", label: t("Tab name") }]} />
       </SettingsRow>
       <SettingsRow label={t("Agent logos")} description={t("Draw each agent's logo in its brand colors, or without color")} wide>
         <Segmented label={t("Agent logos")} value={settings.agentMarks} onChange={(agentMarks) => update({ agentMarks })} options={[{ value: "color", label: t("Color") }, { value: "mono", label: t("Mono") }]} />

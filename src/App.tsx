@@ -36,6 +36,7 @@ import { openPresentation } from "./lib/filePresentation.ts";
 import { MachineDialog } from "./components/MachineDialog.tsx";
 import { RowMenu, type RowMenuItem } from "./components/RowMenu.tsx";
 import { headerCrumb, showsChat } from "./lib/headerCrumb.ts";
+import { renamedTabTitle } from "./lib/sidebarAgents.ts";
 import { paneStorageId } from "../shared/machines.ts";
 import { usePairedNotices } from "./lib/usePairedNotices.ts";
 import { takeAuthTokenFromUrl } from "./lib/authLink.ts";
@@ -301,7 +302,15 @@ export function App() {
   // the herdr the header names as current: this PC's last answer only while it is still shown (through one
   // failed read, not once unavailable), though its capabilities stay in targetHerdr
   const shownHerdr = selectedMachineId === "local" ? shownHealth?.herdr : targetHerdr;
-  const selectedTitle = selectedPane ? displayPaneTitle(selectedPane) : null;
+  const paneTitleText = selectedPane ? displayPaneTitle(selectedPane) : null;
+  // Settings → Agent row title → Tab name: the header names the pane as its row does, by its renamed tab
+  const selectedTabTitle = selectedPane && settings.agentRowTitle === "tab"
+    ? renamedTabTitle(snapshot?.tabs.find((tab) => tab.tab_id === selectedPane.tab_id && tab.workspace_id === selectedPane.workspace_id),
+      snapshot?.tabs.filter((tab) => tab.workspace_id === selectedPane.workspace_id) ?? [])
+    : null;
+  const selectedTitle = selectedTabTitle ?? paneTitleText;
+  // the pane's own title, said under a tab's name when one leads, unless it says the same
+  const selectedSubtitle = selectedTabTitle !== null && paneTitleText !== selectedTabTitle ? paneTitleText : null;
   // the tab that governs the pane region, so the strip's tabs and the pane they select are
   // one thing to a screen reader (A4); null while no tab owns this pane
   const tabPanelLabel = paneTabPanelLabel(snapshot, selectedPane, t);
@@ -338,7 +347,7 @@ export function App() {
   const { bell, bellVisible, alertsOffDot } = alertsBell({ t, settings, alertsOn, notifications, pushOn, enableNotifications, disableNotifications });
   const connWord = t(connected ? "live" : outputStopped ? "disconnected" : connectedBefore ? "reconnecting" : "connecting");
   const crumb = selectedPane && selectedTitle !== null
-    ? headerCrumb({ machine: selectedMachine?.name ?? selectedMachineId, machineCount: machines.length, workspace: selectedWorkspace?.label ?? selectedPane.workspace_id, title: selectedTitle, cwd: selectedPane.cwd })
+    ? headerCrumb({ machine: selectedMachine?.name ?? selectedMachineId, machineCount: machines.length, workspace: selectedWorkspace?.label ?? selectedPane.workspace_id, title: selectedTitle, subtitle: selectedSubtitle, cwd: selectedPane.cwd })
     : null;
 
   useEffect(() => {
@@ -621,6 +630,7 @@ export function App() {
               <span className="context-title-text">{selectedTitle}</span>
             </div>
             <div className="context-sub">
+              {selectedSubtitle !== null && <><span>{selectedSubtitle}</span><span className="context-sep" aria-hidden="true">›</span></>}
               {/* one PC needs no name: the sidebar leaves it out too, and More still says it */}
               {crumb.showMachine && <><span className="machine-context-name">{crumb.machine}</span><span className="context-sep" aria-hidden="true">›</span></>}
               <span>{crumb.workspace}</span>

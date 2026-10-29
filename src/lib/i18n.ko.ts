@@ -34,6 +34,8 @@ const BASE: Record<string, string> = {
   "{current} of {total}": "{total}개 중 {current}",
   "Recent folders": "최근 폴더",
   "Dismiss": "닫기",
+  "Tab name": "탭 이름",
+  "Agent": "에이전트",
   "Input line": "입력창",
   // ---- settings ----
   "Settings": "설정",

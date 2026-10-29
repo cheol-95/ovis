@@ -10,7 +10,7 @@ import { useT } from "../lib/i18n.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { agentRoster, type AgentRow } from "../lib/agentRoster.ts";
 import { currentPaneMutes, paneMuteKey, prunePaneMutes, setPaneMutes, subscribePaneMutes, togglePaneMute } from "../lib/paneMutes.ts";
-import { agentContext, agentTabName, paneMark } from "../lib/sidebarAgents.ts";
+import { agentRowLines, agentTabName, paneMark, renamedTabTitle } from "../lib/sidebarAgents.ts";
 import { useSettings } from "../lib/settings.ts";
 import { useSidebarActivity } from "../lib/sidebarActivity.tsx";
 import { machineFilter } from "../lib/sidebarFilter.ts";
@@ -114,10 +114,10 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   // which `$name` tokens herdr's own sidebar draws, from this server's herdr config (server/herdr-sidebar.ts)
   const rowTokens = useSyncExternalStore(subscribeAgentRowTokens, currentAgentRowTokens, currentAgentRowTokens);
   const activity = useSidebarActivity();
-  // Settings → Agents order: herdr's order, or Activity within each PC (each herdr counts its own changes);
-  // the pinned rows stand first, in the order they were pinned (lib/agentRoster.ts)
-  const byActivity = settings.agentOrder === "activity";
-  const roster = useMemo(() => agentRoster(machines, { byActivity, seqs: activity.seqs, pinned }), [machines, byActivity, activity, pinned]);
+  // Settings → Agents order: herdr's order, or Activity or Longest wait within each PC (each herdr counts its own
+  // changes); the pinned rows stand first, in the order they were pinned (lib/agentRoster.ts)
+  const order = settings.agentOrder;
+  const roster = useMemo(() => agentRoster(machines, { order, seqs: activity.seqs, status: activity.status, pinned }), [machines, order, activity, pinned]);
   const allRows = useMemo(() => [...roster.pinned, ...roster.rest], [roster]);
   // the sidebar's filter (lib/sidebarFilter.ts) keeps the matched rows and the selected one, in the same
   // order and cards; the pins and their pruning go on reading every row
@@ -169,15 +169,16 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   const describe = ({ machine, entry }: AgentRow) => {
     const { pane, workspace, tab, agent, agentLabel } = entry;
     const online = machine.state === "connected";
-    const title = pane.label?.trim() || agent?.title?.trim() || pane.title?.trim() || displayPaneTitle(pane);
+    const agentTitle = pane.label?.trim() || agent?.title?.trim() || pane.title?.trim() || displayPaneTitle(pane);
     const name = agent?.name?.trim() || null;
     // the name has its own place on the line: the label beside it says the kind instead
     const kindLabel = name !== null && agentLabel === name ? entry.canonicalAgent ?? agent?.title?.trim() ?? null : agentLabel;
     const tabs = machine.snapshot?.tabs.filter((candidate) => candidate.workspace_id === workspace.workspace_id) ?? [];
     const mark = paneMark(entry);
     const markAgent = mark && hasAgentMark(mark) ? mark : null;
-    const parts = { agentLabel: kindLabel, title, markAgent, machineName: machineName(machine), workspaceLabel: workspace.label, tabName: agentTabName(tab, tabs, t) };
-    const contextParts = agentContext(parts);
+    // Settings → Agent row title → Tab name: a renamed tab's name leads, the agent's title goes under it
+    const tabTitle = settings.agentRowTitle === "tab" ? renamedTabTitle(tab, tabs) : null;
+    const { title, context: contextParts } = agentRowLines({ agentTitle, tabTitle, agentLabel: kindLabel, markAgent, machineName: machineName(machine), workspaceLabel: workspace.label, tabName: agentTabName(tab, tabs, t) });
     const context = contextParts.join(" · ");
     const kind = kindLabel?.trim() || null;
     const markKind = kind && kind !== title.trim() && !contextParts.includes(kind) ? kind : null;
