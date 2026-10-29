@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, setSystemTime } from "bun:test";
+import { SEND_LEASE_MS } from "./composerDraft.ts";
 import { commentsWait, messageWithComments, quoteBlock, ReplyCommentStore } from "./replyComments.ts";
 
 function memoryStorage() {
@@ -61,5 +62,46 @@ describe("reply comments", () => {
     expect(store.read("k")).toEqual([{ id: "x", quote: "q", comment: "c" }]);
     map.set("k", "{not json");
     expect(store.read("k")).toEqual([]);
+  });
+
+  it("gives the comments two tabs save at the same instant different ids (#2356)", () => {
+    const { storage } = memoryStorage();
+    try {
+      setSystemTime(new Date("2026-10-30T00:00:00Z"));
+      const one = new ReplyCommentStore(() => storage), other = new ReplyCommentStore(() => storage);
+      one.add("k", "quote", "from one tab");
+      other.add("k", "quote", "from another");
+      const [first, second] = one.read("k");
+      expect(first!.id).not.toBe(second!.id);
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  it("frees the comments a closed tab's send reserved once its lease runs out, and tells the composer (#2356)", () => {
+    const { storage } = memoryStorage();
+    const wakeUps: Array<{ run: () => void; ms: number }> = [];
+    const closed = new ReplyCommentStore(() => storage);
+    const other = new ReplyCommentStore(() => storage, undefined, (run, ms) => { wakeUps.push({ run, ms }); return 0; });
+    const start = Date.now();
+    try {
+      setSystemTime(start);
+      closed.add("k", "quote", "carried");
+      closed.reserve("k", closed.read("k"));
+      // the sending tab closes without settling its send
+      expect(other.unreserved(other.read("k"))).toEqual([]);
+      expect(wakeUps.length).toBe(1);
+      expect(wakeUps[0]!.ms).toBeGreaterThan(SEND_LEASE_MS - 1000);
+      let told = 0;
+      other.subscribe(() => { told += 1; });
+      const reservation = other.reservation();
+      setSystemTime(start + SEND_LEASE_MS + 1);
+      wakeUps[0]!.run();
+      expect(told).toBe(1);
+      expect(other.reservation()).not.toBe(reservation);
+      expect(other.unreserved(other.read("k")).map((item) => item.comment)).toEqual(["carried"]);
+    } finally {
+      setSystemTime();
+    }
   });
 });

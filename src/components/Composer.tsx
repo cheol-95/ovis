@@ -847,8 +847,8 @@ export function Composer({
     if (!composerDrafts.begin(draftKey, sent)) return false;
     sendId = composerDrafts.sendOf(draftKey);
     // the comments it carries are reserved for it until it settles, wherever a pane move takes them (#511)
-    replyComments.reserve(sentComments);
-    const ended = (): void => { composerDrafts.end(draftKey, sendId); replyComments.release(sentComments); };
+    replyComments.reserve(commentsKey, sentComments);
+    const ended = (): void => { composerDrafts.end(draftKey, sendId); replyComments.release(commentsKey, sentComments); };
     // a polish landing before the acknowledgement would count as an edit and keep the sent message here
     dictation.forget();
     try {

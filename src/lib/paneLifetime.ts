@@ -28,6 +28,8 @@ const LEASE_PREFIX = "ovis:composer-sending:";
 const VIEW_PREFIX = "ovis:view:";
 /** comments on a pane's replies (lib/replyComments.ts): no text of the user's own to recover, they go with the herdr whose replies they quote */
 export const REPLY_COMMENTS_PREFIX = "ovis:reply-comments:";
+/** where a pane's comments went when it moved, for a send another tab began under its old ID (#2356) */
+export const REPLY_COMMENTS_MOVED_PREFIX = "ovis:reply-comments-moved:";
 /** a message box's agent-only mark (lib/composerDraft.ts), which goes with its draft */
 const AGENT_ONLY_PREFIX = "ovis:composer-agent-only:";
 const RECORD_PREFIX = "ovis:pane-lifetime:";
@@ -42,7 +44,7 @@ export function paneStateKey(key: string): { machineId: string; paneId: string; 
   const lease = key.startsWith(LEASE_PREFIX);
   const rest = lease ? key.slice(LEASE_PREFIX.length) : key;
   const draft = KINDS.find(([prefix]) => rest.startsWith(prefix));
-  const prefix = draft?.[0] ?? (lease ? null : [VIEW_PREFIX, REPLY_COMMENTS_PREFIX, AGENT_ONLY_PREFIX].find((other) => rest.startsWith(other)) ?? null);
+  const prefix = draft?.[0] ?? (lease ? null : [VIEW_PREFIX, REPLY_COMMENTS_PREFIX, REPLY_COMMENTS_MOVED_PREFIX, AGENT_ONLY_PREFIX].find((other) => rest.startsWith(other)) ?? null);
   if (prefix === null) return null;
   const owner = rest.slice(prefix.length);
   const kind = lease || !draft ? null : draft[1];
