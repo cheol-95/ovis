@@ -153,10 +153,14 @@ export type { DevicePairedEvent, Machine, MachineEvent, MachineRoster, PaneTarge
  *  POST   /api/agent-catalog/install { agent, alternative? } -> { pane_id, workspace_id, command,
  *         shell } (opens a tab and types that agent's official command for this PC's platform into its
  *         shell: the catalog's primary, or alternatives[alternative]; the request never carries a
- *         command. 400 unknown_agent / invalid_alternative; 409 no_install_command, command_refused,
- *         shell_mismatch (Windows: the method's shell is not the tab's), platform_unsupported)
+ *         command. 400 unknown_agent / invalid_alternative / unknown_field (any other field); 409
+ *         no_install_command, command_refused, shell_mismatch (Windows: the method's shell is not the
+ *         tab's), shell_unknown (Windows: herdr names no PowerShell or cmd.exe in the tab within 10 s);
+ *         both type nothing and close the tab, install_running (one install per agent per PC, until its tab ends or the agent is
+ *         newly found), platform_unsupported)
  *  POST   /api/agent-catalog/sign-in { agent } -> the same (a tab running the agent's own sign-in
- *         command, or the agent itself when it signs in inside; 409 no_sign_in, not_installed). Both
+ *         command, or the agent itself when it signs in inside; 400 unknown_field; 409 no_sign_in,
+ *         not_installed, shell_unknown). Both
  *         are mutations: a watch device gets 403 read_only; another PC's go through the PC proxy
  *  GET    /api/integrations              -> IntegrationsResponse (herdr's `integration.list`, in
  *         herdr's order; read only: nothing here installs or removes one, Settings shows the

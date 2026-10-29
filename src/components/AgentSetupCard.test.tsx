@@ -18,6 +18,11 @@ const render = (initial: SetupStep, id = "claude"): string => {
     else Reflect.deleteProperty(navigator, "languages");
   }
 };
+/** The step the card shows (its status line's state) and where each step marker stands. */
+const states = (html: string) => ({
+  status: /class="agent-setup-status"[^>]*data-state="([^"]+)"/.exec(html)?.[1],
+  steps: [...html.matchAll(/<li(?: data-state="([^"]+)")?>/g)].map((match) => match[1] ?? "next"),
+});
 const buttons = (html: string) => [...html.matchAll(/<button[^>]*>(?:<svg[\s\S]*?<\/svg>)?([^<]*)<\/button>/g)].map((match) => match[1]);
 
 describe("AgentSetupCard", () => {
@@ -26,12 +31,17 @@ describe("AgentSetupCard", () => {
     expect(render({ kind: "idle" }, "muse")).toMatch(/<button[^>]*disabled=""[^>]*>Install<\/button>/);
   });
 
-  it("shows each step's words and only that step's actions", () => {
+  it("shows each step's state and only that step's actions", () => {
     const installing = render({ kind: "installing", tab });
-    expect(installing).toContain("Installing Claude Code…");
+    expect(states(installing)).toEqual({ status: "installing", steps: ["now", "next"] });
     expect(buttons(installing)).toEqual(["Show details", "Open terminal", "Cancel"]);
-    expect(render({ kind: "installed", version: "2.1.312", onPath: false })).toContain("Installed. New terminal tabs will find it.");
+    const notOnPath = render({ kind: "installed", version: "2.1.312", onPath: false });
+    expect(states(notOnPath)).toEqual({ status: "installed", steps: ["done", "now"] });
+    // what PATH means stays under Show details, closed until asked for
+    expect(notOnPath).not.toContain("agent-setup-note");
+    expect(buttons(notOnPath)).toEqual(["Sign in", "Skip", "Show details"]);
     expect(buttons(render({ kind: "installed", version: "2.1.312", onPath: true }))).toEqual(["Sign in", "Skip", "Show details"]);
+    expect(states(render({ kind: "failed", message: "fixture failure", after: "install" }))).toEqual({ status: "failed", steps: ["failed", "next"] });
     expect(buttons(render({ kind: "ready", version: "2.1.312" }))).toEqual(["Start Claude Code"]);
     expect(buttons(render({ kind: "failed", message: "fixture failure", after: "install" }))).toEqual(["Try again", "Show details", "Cancel"]);
   });
