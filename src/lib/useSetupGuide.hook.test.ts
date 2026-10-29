@@ -69,6 +69,19 @@ describe("the setup guide closed in another tab", () => {
     expect(JSON.parse(records.get(GUIDE_STORAGE_KEY)!)).toEqual({ status: "closed" });
   });
 
+  it("keeps a reopen made here when an older close event arrives after it", async () => {
+    await resumeAt({ ...WELCOME, step: "alerts" });
+    const close = JSON.stringify({ status: "closed" });
+    // the other tab's close is in storage, then Settings reopens it here before that close's event comes
+    records.set(GUIDE_STORAGE_KEY, close);
+    await act(async () => { window.dispatchEvent(new Event("ovis:open-setup-guide")); });
+    expect(JSON.parse(records.get(GUIDE_STORAGE_KEY)!).status).toBe("open");
+    const event = new Event("storage");
+    Object.defineProperties(event, { key: { value: GUIDE_STORAGE_KEY }, newValue: { value: close } });
+    await act(async () => { events.dispatchEvent(event); });
+    expect(hook.guide?.step).toBe("agent");
+  });
+
   it("opens again here when Settings asks, over a close made elsewhere", async () => {
     await resumeAt({ ...WELCOME, step: "agent" });
     await otherTabWrites(JSON.stringify({ status: "closed" }));

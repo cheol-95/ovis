@@ -36,6 +36,8 @@ export function useSetupGuide({ enabled, workspaces, pairingGate, watching }: Se
   const decided = useRef(record !== null);
   // this tab opened the guide itself (the welcome, or Settings): its progress may replace a closed record once
   const openedHere = useRef(false);
+  // the record this tab wrote last: a close that storage no longer holds is older than it
+  const lastWrite = useRef<string | null>(null);
 
   useEffect(() => {
     if (!enabled || decided.current) return;
@@ -56,7 +58,11 @@ export function useSetupGuide({ enabled, workspaces, pairingGate, watching }: Se
     // already hold this tab's own later write)
     const onStorage = (event: StorageEvent): void => {
       if (event.key !== GUIDE_STORAGE_KEY || event.newValue === null) return;
-      if (readGuide({ getItem: () => event.newValue })?.status === "closed") { decided.current = true; openedHere.current = false; setGuide(null); setPaused(false); }
+      if (readGuide({ getItem: () => event.newValue })?.status !== "closed") return;
+      // a close that arrives after this tab opened the guide again and wrote it is the older of the two
+      const store = storage();
+      if (store !== null && lastWrite.current !== null && store.getItem(GUIDE_STORAGE_KEY) === lastWrite.current) return;
+      decided.current = true; openedHere.current = false; setGuide(null); setPaused(false);
     };
     window.addEventListener("storage", onStorage);
     const stop = onSetupGuideRequest(reopen);
@@ -70,6 +76,7 @@ export function useSetupGuide({ enabled, workspaces, pairingGate, watching }: Se
     if (!openedHere.current && readGuide(store)?.status === "closed") { setGuide(null); setPaused(false); return; }
     openedHere.current = false;
     saveGuide(store, guide);
+    lastWrite.current = store.getItem(GUIDE_STORAGE_KEY);
   }, [guide]);
 
 
