@@ -9,6 +9,7 @@ import { FILES_JA } from "./i18n/files.ja.ts";
 import { DEVICES_JA } from "./i18n/devices.ja.ts";
 import { USAGE_JA } from "./i18n/usage.ja.ts";
 import { SETUP_JA } from "./i18n/setup.ja.ts";
+import { GUIDE_JA } from "./i18n/guide.ja.ts";
 import { UPDATES_JA } from "./i18n/updates.ja.ts";
 import { PALETTE_JA } from "./i18n/palette.ja.ts";
 
@@ -27,6 +28,7 @@ const BASE: Record<string, string> = {
   "Goal": "目標",
   "Waiting for your answer": "回答待ち",
   "Back": "戻る",
+  "Setup guide": "セットアップガイド",
   "Check again": "再確認",
   "Agents": "エージェント",
   "Installed": "インストール済み",
@@ -315,6 +317,7 @@ export const JA_PARTS: Record<string, Record<string, string>> = {
   devices: DEVICES_JA,
   usage: USAGE_JA,
   setup: SETUP_JA,
+  guide: GUIDE_JA,
   updates: UPDATES_JA,
   palette: PALETTE_JA,
 };

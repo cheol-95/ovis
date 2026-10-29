@@ -9,6 +9,7 @@ import { FILES_KO } from "./i18n/files.ko.ts";
 import { DEVICES_KO } from "./i18n/devices.ko.ts";
 import { USAGE_KO } from "./i18n/usage.ko.ts";
 import { SETUP_KO } from "./i18n/setup.ko.ts";
+import { GUIDE_KO } from "./i18n/guide.ko.ts";
 import { UPDATES_KO } from "./i18n/updates.ko.ts";
 import { PALETTE_KO } from "./i18n/palette.ko.ts";
 
@@ -25,6 +26,7 @@ const BASE: Record<string, string> = {
   "Goal": "목표",
   "Waiting for your answer": "답변을 기다리는 중",
   "Back": "뒤로",
+  "Setup guide": "설정 안내",
   "Check again": "다시 확인",
   "Agents": "에이전트",
   "Installed": "설치됨",
@@ -313,6 +315,7 @@ export const KO_PARTS: Record<string, Record<string, string>> = {
   devices: DEVICES_KO,
   usage: USAGE_KO,
   setup: SETUP_KO,
+  guide: GUIDE_KO,
   updates: UPDATES_KO,
   palette: PALETTE_KO,
 };

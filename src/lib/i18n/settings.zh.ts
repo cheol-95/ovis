@@ -334,7 +334,6 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Reachable": "可访问",
   "This request came through Tailscale Funnel, which is open to the public internet.": "此请求经由向公共互联网开放的 Tailscale Funnel 到达。",
   "The server cannot see whether a proxy, tunnel or router makes it reachable from the internet.": "服务器无法判断代理、隧道或路由器是否使其可从互联网访问。",
-  "Setup guide": "设置向导",
   "Open setup guide": "打开设置向导",
   "Where each step stands": "各步骤的状态",
   "The guide from your first visit. Run it again to add an agent, show plan usage, connect your phone or turn on alerts. Every step can be skipped, and nothing you already set up is undone.": "这是你第一次打开时看到的向导。再次打开它，可以添加代理、显示套餐用量、连接手机或打开提醒。每一步都可以跳过，已经设置好的内容不会被撤销。",

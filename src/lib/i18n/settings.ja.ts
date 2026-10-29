@@ -334,7 +334,6 @@ export const SETTINGS_JA: Record<string, string> = {
   "Reachable": "接続可能",
   "This request came through Tailscale Funnel, which is open to the public internet.": "このリクエストは公開インターネットに開かれたTailscale Funnelを経由しました。",
   "The server cannot see whether a proxy, tunnel or router makes it reachable from the internet.": "プロキシ、トンネル、ルーターによってインターネットから接続できるかどうかは、サーバーからは分かりません。",
-  "Setup guide": "セットアップガイド",
   "Open setup guide": "セットアップガイドを開く",
   "Where each step stands": "各ステップの状態",
   "The guide from your first visit. Run it again to add an agent, show plan usage, connect your phone or turn on alerts. Every step can be skipped, and nothing you already set up is undone.": "最初に開いたときのガイドです。もう一度開くと、エージェントの追加、プラン使用量の表示、スマートフォンの接続、通知の有効化ができます。どのステップもスキップでき、設定済みの内容は元に戻りません。",

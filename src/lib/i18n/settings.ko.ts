@@ -334,7 +334,6 @@ export const SETTINGS_KO: Record<string, string> = {
   "Reachable": "접속 가능",
   "This request came through Tailscale Funnel, which is open to the public internet.": "이 요청은 공개 인터넷에 열린 Tailscale Funnel을 거쳐\u00a0왔습니다.",
   "The server cannot see whether a proxy, tunnel or router makes it reachable from the internet.": "프록시, 터널 또는 라우터 때문에 인터넷에서 접속할\u00a0수\u00a0있는지 서버는 알\u00a0수\u00a0없습니다.",
-  "Setup guide": "설정 안내",
   "Open setup guide": "설정 안내 열기",
   "Where each step stands": "단계별 상태",
   "The guide from your first visit. Run it again to add an agent, show plan usage, connect your phone or turn on alerts. Every step can be skipped, and nothing you already set up is undone.": "처음 왔을 때 본 안내예요. 다시 열어 에이전트를 추가하고, 요금제 사용량을 보이게 하고, 폰을 연결하거나 알림을 켤 수 있어요. 모든 단계는 건너뛸 수 있고, 이미 해 둔 설정은 그대로 둡니다.",

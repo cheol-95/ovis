@@ -9,6 +9,7 @@ import { FILES_ZH } from "./i18n/files.zh.ts";
 import { DEVICES_ZH } from "./i18n/devices.zh.ts";
 import { USAGE_ZH } from "./i18n/usage.zh.ts";
 import { SETUP_ZH } from "./i18n/setup.zh.ts";
+import { GUIDE_ZH } from "./i18n/guide.zh.ts";
 import { UPDATES_ZH } from "./i18n/updates.zh.ts";
 import { PALETTE_ZH } from "./i18n/palette.zh.ts";
 
@@ -29,6 +30,7 @@ const BASE: Record<string, string> = {
   "Goal": "目标",
   "Waiting for your answer": "等待你的回答",
   "Back": "返回",
+  "Setup guide": "设置向导",
   "Check again": "重新检查",
   "Agents": "代理",
   "Installed": "已安装",
@@ -317,6 +319,7 @@ export const ZH_PARTS: Record<string, Record<string, string>> = {
   devices: DEVICES_ZH,
   usage: USAGE_ZH,
   setup: SETUP_ZH,
+  guide: GUIDE_ZH,
   updates: UPDATES_ZH,
   palette: PALETTE_ZH,
 };

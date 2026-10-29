@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronUp, KeyRound, LoaderCircle, Play, RotateCw, SquareTerminal, TriangleAlert } from "lucide-react";
 
 import type { AgentCatalogRow } from "../../shared/agent-catalog.ts";
@@ -21,6 +21,8 @@ export interface AgentSetupCardProps {
   onOpenTerminal: (paneId: string) => void;
   /** the agent is ready: start it */
   onStart: () => void;
+  /** told each step the card moves to (the setup guide moves on once the agent is ready) */
+  onStep?: (step: SetupStep) => void;
 }
 
 const message = (error: unknown): string => error instanceof Error ? error.message : String(error);
@@ -30,9 +32,12 @@ const message = (error: unknown): string => error instanceof Error ? error.messa
  * official command in a terminal tab the user can open, and installed is decided by reading the
  * catalog again, never by how the tab ended.
  */
-export function AgentSetupCard({ agent, machineId = "local", initial = { kind: "idle" }, onOpenTerminal, onStart }: AgentSetupCardProps) {
+export function AgentSetupCard({ agent, machineId = "local", initial = { kind: "idle" }, onOpenTerminal, onStart, onStep }: AgentSetupCardProps) {
   const t = useT();
   const [step, dispatch] = useReducer(setupStep, initial);
+  const onStepRef = useRef(onStep);
+  onStepRef.current = onStep;
+  useEffect(() => { onStepRef.current?.(step); }, [step]);
   const [details, setDetails] = useState(false);
   const { index, fraction } = setupProgress(step);
   const name = agent.name;
