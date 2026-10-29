@@ -818,11 +818,12 @@ export function Composer({
    * `sendAnyway`: the user saw the box a DraftRefusal showed and sends over it. */
   const send = useCallback((clearDraft?: string, sendAnyway = false): boolean => {
     if (composingRef.current) return false;
-    if (role === "observe" || !connected || uploading || roomless || sending || (text.trim().length === 0 && carried.length === 0)) return false;
+    // read again as it goes: a send another tab began since this render carries some of them (#2356)
+    const sentComments = commentsHeld ? [] : replyComments.unreserved(replyComments.read(commentsKey));
+    if (role === "observe" || !connected || uploading || roomless || sending || (text.trim().length === 0 && sentComments.length === 0)) return false;
     if (terminalTyped?.name === "resume" && onOpenHistory) { setMenuDismissed(true); onOpenHistory(); return true; }
-    const message = carried.length > 0 ? messageWithComments(carried, text) : text;
+    const message = sentComments.length > 0 ? messageWithComments(sentComments, text) : text;
     if (message.length > MAX_COMPOSER_CHARS) { setNote(t("Too long with the comments: remove a comment or shorten the message.")); return false; }
-    const sentComments = carried;
     const sent = text;
     const sentAttachments = attachments;
     let sendId: number | undefined;
@@ -862,7 +863,7 @@ export function Composer({
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
     return true;
-  }, [attachments, carried, commentsKey, connected, dictation.forget, draftKey, onOpenHistory, onSend, role, roomless, sending, t, terminalTyped, text, uploading]);
+  }, [attachments, commentsHeld, commentsKey, connected, dictation.forget, draftKey, onOpenHistory, onSend, role, roomless, sending, t, terminalTyped, text, uploading]);
   const sendRef = useRef(send);
   sendRef.current = send;
   const connectedRef = useRef(connected);
