@@ -145,10 +145,18 @@ try {
           counted.asked = 0;
           window.addEventListener("ovis:open-setup-guide", () => { counted.asked += 1; });
         });
+        assert.equal(await page.getByRole("region", { name: "Setup guide", exact: true }).count(), 0, `an existing user's app shows no guide by itself ${at}`);
         await press(page.getByRole("button", { name: "Open setup guide", exact: true }));
         await page.getByRole("dialog", { name: "Settings" }).waitFor({ state: "detached" });
         assert.equal(await page.evaluate(() => (window as unknown as { asked: number }).asked), 1, `Open setup guide asks for the guide once ${at}`);
-        console.log(`PASS Setup guide shows ${steps.join(" | ")} and asks for the guide once (${at})`);
+        // the first-run guide (components/SetupGuide.tsx) answers it: open again, on one of its steps
+        const guide = page.getByRole("region", { name: "Setup guide", exact: true });
+        await guide.waitFor();
+        await guide.locator("#setup-step-title").waitFor();
+        const stepTitle = (await guide.locator("#setup-step-title").textContent())?.trim() ?? "";
+        assert.ok(stepTitle !== "", `the guide opens on a step ${at}`);
+        await shot("9-guide-reopened");
+        console.log(`PASS Setup guide shows ${steps.join(" | ")}; Open setup guide opens the guide on "${stepTitle}" (${at})`);
 
         if (width === 1280) {
           // New worktree, from a repository row's menu
