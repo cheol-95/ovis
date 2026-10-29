@@ -3,11 +3,12 @@
  * components/FileViewer.tsx, components/FilesDialog.tsx, components/FileReader.tsx,
  * components/TextFileView.tsx, components/FilePathLink.tsx, components/FilePanelResizer.tsx,
  * components/HighlightedCode.tsx, components/RepoDiffViewer.tsx, components/RepoChanges.tsx,
- * components/RepoDiff.tsx, lib/repoDiff.ts, components/WebPanel.tsx.
+ * components/RepoDiff.tsx, lib/repoDiff.ts, components/WebPanel.tsx, components/MarkdownOutline.tsx.
  * Register and fixed terms follow ../i18n.zh.ts; a key another feature also uses goes there.
  */
 export const FILES_ZH: Record<string, string> = {
   "Show source": "显示源代码",
+  "Contents": "目录",
   "Resize file panel": "调整文件面板宽度",
   "Show beside the pane": "在窗格旁显示",
   "Reload page": "重新加载页面",

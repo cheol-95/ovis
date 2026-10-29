@@ -3,11 +3,12 @@
  * components/FileViewer.tsx, components/FilesDialog.tsx, components/FileReader.tsx,
  * components/TextFileView.tsx, components/FilePathLink.tsx, components/FilePanelResizer.tsx,
  * components/HighlightedCode.tsx, components/RepoDiffViewer.tsx, components/RepoChanges.tsx,
- * components/RepoDiff.tsx, lib/repoDiff.ts, components/WebPanel.tsx.
+ * components/RepoDiff.tsx, lib/repoDiff.ts, components/WebPanel.tsx, components/MarkdownOutline.tsx.
  * Register and fixed terms follow ../i18n.ko.ts; a key another feature also uses goes there.
  */
 export const FILES_KO: Record<string, string> = {
   "Show source": "소스 보기",
+  "Contents": "목차",
   "Resize file panel": "파일 패널 너비 조절",
   "Show beside the pane": "창 옆에 표시",
   "Reload page": "페이지 새로고침",

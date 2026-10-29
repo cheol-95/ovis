@@ -293,6 +293,132 @@
 .file-viewer-markdown-readable { max-width: var(--chat-w); }
 
 /*
+ * A Preview's contents (MarkdownOutline, #636), quiet by default: small dim titles on one hairline,
+ * the heading being read in the strong text color with an accent tick on that line. Beside a
+ * document with room to spare they are a rail on its right, as a documentation page's "On this
+ * page"; the document keeps the middle while the gutters allow, else it gives the rail its column.
+ */
+.file-viewer-content.has-outline-rail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, var(--chat-w)) minmax(200px, 1fr);
+  align-items: start;
+}
+
+/* a document that fills the viewer (Settings → Markdown width, Full) leaves the rail its column only */
+.file-viewer-content.has-outline-rail:not(:has(> .file-viewer-markdown-readable)) {
+  grid-template-columns: minmax(0, 1fr) 200px;
+}
+
+.has-outline-rail > .markdown {
+  grid-row: 1;
+  grid-column: 2;
+}
+
+.has-outline-rail:not(:has(> .file-viewer-markdown-readable)) > .markdown { grid-column: 1; }
+
+.markdown-outline[hidden] { display: none; }
+
+.markdown-outline-rail {
+  grid-row: 1;
+  grid-column: -2;
+  position: sticky;
+  top: var(--space-3);
+  min-width: 0;
+  max-width: 16rem;
+  padding-inline-start: var(--space-5);
+}
+
+.markdown-outline-list {
+  position: relative;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.markdown-outline-rail .markdown-outline-list {
+  max-height: calc(var(--outline-h, 100vh) - 2 * var(--space-3));
+  border-inline-start: var(--hairline) solid var(--border);
+  scrollbar-width: thin;
+}
+
+.markdown-outline-list button {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  padding-inline-start: calc(var(--space-3) + var(--outline-depth, 0) * var(--space-3));
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-xs);
+  line-height: var(--lh-tight);
+  text-align: start;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.markdown-outline-list button[aria-current="location"] {
+  color: var(--text-strong);
+  box-shadow: inset 2px 0 var(--accent);
+}
+
+.markdown-outline-list button:focus-visible { outline-offset: -2px; }
+
+@media (hover: hover) {
+  .markdown-outline-list button:hover { color: var(--text-strong); }
+}
+
+/*
+ * Without room beside the document the contents are a drawer over it, under the header's toggle:
+ * pinned to the top of the body as it scrolls, never narrowing the document. A zero-height anchor
+ * holds the place; the list lies over the text on the raised surface, as the More menu does.
+ */
+.markdown-outline-drawer {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  height: 0;
+}
+
+.markdown-outline-drawer .markdown-outline-list {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: min(20rem, 100%);
+  max-height: calc(var(--outline-h, 100vh) - 2 * var(--space-3));
+  padding: var(--space-1);
+  overscroll-behavior: contain;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+}
+
+.markdown-outline-drawer .markdown-outline-list button {
+  padding-block: var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-sm);
+}
+
+.markdown-outline-drawer .markdown-outline-list button[aria-current="location"] { background: var(--bg-hover); }
+
+@media (pointer: coarse) {
+  .markdown-outline-drawer .markdown-outline-list button { min-height: var(--touch-target); }
+}
+
+/* the toggle reads as on while its drawer is open */
+.file-viewer-outline-toggle[aria-expanded="true"] {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+/* a heading reached from the contents holds the focus without a ring for a pointer */
+.file-viewer-markdown [tabindex="-1"]:focus:not(:focus-visible) { outline: none; }
+
+/*
  * On a narrow screen the header is one row, so the file keeps the screen: the name (cut inside its
  * stem) gives way to the actions and Close beside it. The size and folder are left out there; a
  * partial-view notice is not, since it says the file is not all shown.

@@ -2029,6 +2029,22 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   header is one row: the name cut inside its stem, Show source and Copy, a **More** (Ellipsis)
   menu holding new tab, raw and download, then Close; the size and folder are left out there unless
   a partial-view notice is among them. A reader page has no Close.
+  A Markdown Preview with two or more headings that scrolls has **Contents** (`MarkdownOutline.tsx`,
+  `lib/markdownOutline.ts`, #636): every rendered heading at its level (indented from the
+  shallowest), one entry per heading so a repeated title jumps to its own place, the heading being
+  read marked (`aria-current="location"`, `--text-strong` with a 2px `--accent` tick) and kept in the
+  middle of the list, which stops at its ends. Following the reader moves only the list's own
+  scroll, never the body or the focus. An entry jumps the body to its heading, which takes the focus
+  as a link target does; the list is one Tab stop with Up, Down, Home and End inside it. Quiet by
+  default: `--fs-xs` `--text-dim` titles on one `--border` hairline. Where the viewer's content box
+  is at least 760px wide (the popup and reader page on a desktop) it is a sticky rail on the
+  document's right, which keeps the middle while the gutters allow and otherwise gives the rail a
+  200px column; narrower (a phone, the docked panel) a **Contents** (TableOfContents glyph) button
+  in the header, or the docked toolbar, opens it as a drawer on the raised surface over the
+  document, never narrowing it, opening on the heading being read; Escape (before the viewer's
+  own) or a press outside closes it. This follows documentation sites' "On this page" rail and
+  GitHub's Markdown file outline: the file surfaces of t3code and paseo, which the viewer otherwise
+  follows, offer no contents to follow.
   A file opens in the popup unless Settings → Chat → Open files is Beside the pane (`fileOpen`,
   per device), which docks text and code from 980px; the header button moves the open file either way.
   This differs from t3code's and paseo's docked file panels, whose look the docked viewer keeps: a

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
-import { Braces, Check, Code, Copy, Download, Ellipsis, ExternalLink, Link2, Maximize2, PanelRight, TriangleAlert, X } from "lucide-react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
+import { Braces, Check, Code, Copy, Download, Ellipsis, ExternalLink, Link2, Maximize2, PanelRight, TableOfContents, TriangleAlert, X } from "lucide-react";
 
 import "./FileViewer.css";
 import { DirectoryBrowser } from "./DirectoryBrowser.tsx";
@@ -8,6 +8,7 @@ import { useHighlightedLines } from "./HighlightedCode.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
 import { TextFileView } from "./TextFileView.tsx";
 import { MarkdownImageContext } from "./Markdown.tsx";
+import { MarkdownOutline } from "./MarkdownOutline.tsx";
 
 import type { FileInfo } from "../../shared/protocol.ts";
 import { ApiError } from "../lib/api.ts";
@@ -31,6 +32,7 @@ import { useSheetSwipe } from "../lib/sheets.ts";
 import { readFilePreviewText, SOURCE_PREVIEW_LINES, type FilePreviewText } from "../lib/filePreviewText.ts";
 import { readerHref } from "../lib/fileReader.ts";
 import type { FilePresentation } from "../lib/filePresentation.ts";
+import type { OutlineLayout } from "../lib/markdownOutline.ts";
 
 type Preview = { status: "none" | "pending" | "failed" } | { status: "ready"; blocks: MarkdownBlock[] };
 
@@ -163,6 +165,11 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
   const [source, setSource] = useState(false);
   // a phone's one-row header keeps new tab, raw and download in a "More" menu of its own
   const [moreOpen, setMoreOpen] = useState(false);
+  // a Preview's contents (MarkdownOutline): a rail beside the document, or a drawer the header opens
+  const outlineId = useId();
+  const [outlineLayout, setOutlineLayout] = useState<OutlineLayout | null>(null);
+  const [outlineOpen, setOutlineOpen] = useState(false);
+  useEffect(() => { if (outlineLayout !== "drawer") setOutlineOpen(false); }, [outlineLayout]);
   const moreRef = useRef<HTMLDivElement>(null);
   // Escape closes it, Tab stays in it, and the focus goes back to the row that opened it
   // (docked beside the pane, the rest of the page stays reachable: no trap)
@@ -432,7 +439,9 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
               <button type="button" className="btn btn-ghost" onClick={() => setChosen({ path, mode: "code" })}>{t("Show source")}</button>
             </div>
             : <p className="file-viewer-note" role="alert">{t("The file could not be opened.")}</p>}>
-            <MarkdownImageContext.Provider value={imagePreview}><TextFileView path={info.path} blocks={view === "markdown" && preview.status === "ready" ? preview.blocks : null} lines={code.lines} virtual={virtual} selectable={selectable} onOpen={onOpen ?? setPath} sourceRef={sourceRef} markedLine={request?.kind === "shown" ? request.line : null} /></MarkdownImageContext.Provider>
+            <MarkdownImageContext.Provider value={imagePreview}><TextFileView path={info.path} blocks={view === "markdown" && preview.status === "ready" ? preview.blocks : null} lines={code.lines} virtual={virtual} selectable={selectable} onOpen={onOpen ?? setPath} sourceRef={sourceRef} markedLine={request?.kind === "shown" ? request.line : null}
+              outline={view === "markdown" && <MarkdownOutline id={outlineId} scroller={bodyRef} open={outlineOpen} onOpenChange={setOutlineOpen} onLayout={setOutlineLayout} />}
+              outlineRail={outlineLayout === "rail"} /></MarkdownImageContext.Provider>
           </RenderBoundary>}
         </>;
       default:
@@ -479,6 +488,8 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
       </div>}
     </div>}
   </>;
+  // where the contents do not fit beside the document, the header opens them as a drawer over it
+  const outlineToggle = view === "markdown" && outlineLayout === "drawer" && <button type="button" className="icon-button file-viewer-action file-viewer-outline-toggle" aria-label={t("Contents")} title={t("Contents")} aria-expanded={outlineOpen} aria-controls={outlineId} onClick={() => setOutlineOpen((open) => !open)}><TableOfContents aria-hidden="true" /></button>;
   const closeButton = !page && <button type="button" className="icon-button file-viewer-action file-viewer-close" aria-label={t("Close file")} title={t("Close file")} onClick={onClose}><X aria-hidden="true" /></button>;
   // Docked, the header is one row (the file's glyph and name, then its actions) and the toolbar
   // under it carries the meta and the view modes, as t3code's file surface and paseo's file bar
@@ -501,6 +512,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
         {/* how the text shows: Preview or source is one choice of two, so one toggle; wrapping is a
             setting (Settings → File viewer), not an action here */}
         {textFile && previewable && <div className="file-viewer-group">
+          {outlineToggle}
           <button type="button" className="icon-button file-viewer-action" aria-pressed={mode === "code"} aria-label={t("Show source")} title={t("Show source")} onClick={() => setChosen({ path, mode: mode === "code" ? "preview" : "code" })}><Braces aria-hidden="true" /></button>
         </div>}
         <div className="file-viewer-group">{fileActions}</div>
@@ -511,6 +523,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
   // file's Preview | Source stands in for the dialog's Show source toggle)
   const toolbar = docked && directory === null && <div className="file-viewer-toolbar">
     {meta}
+    {outlineToggle}
     {textFile && previewable && <div className="segmented file-viewer-modes" role="group" aria-label={t("Show the Markdown file as")}>
       <button type="button" aria-pressed={mode === "preview"} onClick={() => setChosen({ path, mode: "preview" })}>{t("Preview")}</button>
       <button type="button" aria-pressed={mode === "code"} onClick={() => setChosen({ path, mode: "code" })}>{t("Source")}</button>
@@ -534,7 +547,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
       <section className="file-viewer file-viewer-docked">
         {header}
         {toolbar}
-        <div className={bodyClass}>{body}</div>
+        <div ref={bodyRef} className={bodyClass}>{body}</div>
       </section>
     </aside>
   );
