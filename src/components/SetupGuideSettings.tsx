@@ -8,6 +8,7 @@ import { notificationState } from "../lib/notifications.ts";
 import { useSettings } from "../lib/settings.ts";
 import { openSetupGuide } from "../lib/setupGuide.ts";
 import { SettingsGroup } from "./SettingsControls.tsx";
+import "./SetupGuideSettings.css";
 
 interface StepLine { done: boolean; text: string }
 

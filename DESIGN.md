@@ -1494,6 +1494,12 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   Code into a shell without a pick, neither disables Start nor goes with the launch
   (`lib/newSession.ts` dialogLaunch). The agent picker's rows carry a `.menu-item-hint` (**model,
   effort**) beside the agents whose launch takes them.
+- **Add another agent…** is the picker's last row (here, New tab and New worktree): a hairline above
+  it, `--text-dim`, a plus where a mark goes, never bold and never the value. It swaps the dialog's
+  body for `AddAgentPanel` (the fields keep what was typed): the catalog agents the dialog's PC lacks
+  and a picker can start, then that agent's `AgentSetupCard` without its own frame. Ready re-reads
+  the PC's agents and picks it; **Back** returns focus to the picker. Like the Codex app's model
+  menu, the way to get more sits at the end of the list it adds to, not as a separate button.
 - **First message** is a `.input` textarea (three rows, grown by hand) whose hint says where it goes.
   Codex takes it as its own positional argument behind `--` (`codex [OPTIONS] [PROMPT]`; clap matches
   a subcommand only before the separator, verified on codex 0.163.0: `codex -- logout` starts the TUI),
