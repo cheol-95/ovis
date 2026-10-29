@@ -3,13 +3,13 @@ import { ArrowLeft, Download, KeyRound, RotateCw } from "lucide-react";
 
 import type { AgentCatalogRow } from "../../shared/agent-catalog.ts";
 import { ApiError, fetchAgentCatalog } from "../lib/api.ts";
-import { agentSections, pickerStarts, setupStart, type AgentKindFilter } from "../lib/agentList.ts";
+import { agentSections, pickerStarts, setupStart } from "../lib/agentList.ts";
 import { useT } from "../lib/i18n.ts";
 import { useMachineId } from "../lib/machineContext.tsx";
 import { userErrorMessage, type UserError } from "../lib/userError.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { AgentSetupCard } from "./AgentSetupCard.tsx";
-import { Segmented, SettingsGroup } from "./SettingsControls.tsx";
+import { SettingsGroup } from "./SettingsControls.tsx";
 import "./AgentCatalogSettings.css";
 
 export interface AgentCatalogSettingsProps {
@@ -44,7 +44,6 @@ export function AgentCatalogSettings({ watching, onOpenPane, onStartAgent }: Age
   const machineId = useMachineId();
   const [rows, setRows] = useState<{ machineId: string; agents: AgentCatalogRow[] } | null>(null);
   const [error, setError] = useState<UserError | null>(null);
-  const [filter, setFilter] = useState<AgentKindFilter>("all");
   // the PC the setup began on: it stays that PC's, whatever PC is picked meanwhile
   const [setup, setSetup] = useState<{ row: AgentCatalogRow; machineId: string } | null>(null);
   const setupView = useRef<HTMLElement>(null);
@@ -84,13 +83,12 @@ export function AgentCatalogSettings({ watching, onOpenPane, onStartAgent }: Age
   const shown = rows !== null && rows.machineId === machineId ? rows.agents : null;
   const toolbar = (
     <div className="settings-agent-toolbar">
-      <Segmented label={t("Show")} value={filter} onChange={setFilter} options={[{ value: "all", label: t("All") }, { value: "harness", label: t("Coding agents") }, { value: "assistant", label: t("Assistants") }]} />
       <button type="button" className="btn btn-ghost" onClick={() => setReads((count) => count + 1)}><RotateCw aria-hidden="true" />{t("Check again")}</button>
     </div>
   );
   if (error !== null) return <><SettingsGroup title={t("Agents")} note={note}><p className="settings-item settings-hint" role="alert">{error.message}{error.detail !== null && <><br /><code>{error.detail}</code></>}</p></SettingsGroup>{toolbar}</>;
   if (shown === null) return <SettingsGroup title={t("Agents")} note={note}><p className="settings-item settings-hint" role="status">{t("Loading…")}</p></SettingsGroup>;
-  const { installed, available } = agentSections(shown, filter);
+  const { installed, available } = agentSections(shown);
   return (
     <>
       <section className="settings-section">

@@ -57,6 +57,8 @@ export interface NewSessionDialogProps {
   worktrees?: readonly string[];
   /** shows a pane of this dialog's PC in its terminal: an agent's install or sign-in tab, from Add another agent */
   onOpenPane?: (paneId: string) => void;
+  /** this device only watches: a setup types into the PC's terminal, so Add another agent is not offered */
+  watching?: boolean;
 }
 
 export interface DialogFields {
@@ -88,7 +90,7 @@ export function insertToken(text: string, at: number, token: string): { text: st
   return { text: `${head}${after}`.slice(0, MAX_COMPOSER_CHARS), caret: Math.min(head.length, MAX_COMPOSER_CHARS) };
 }
 
-export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCreated, machineName, prefill = null, onDraft, worktrees = [], onOpenPane }: NewSessionDialogProps) {
+export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCreated, machineName, prefill = null, onDraft, worktrees = [], onOpenPane, watching = false }: NewSessionDialogProps) {
   const t = useT();
   const { settings } = useSettings();
   const machineId = useMachineId();
@@ -348,12 +350,12 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
             <X aria-hidden="true" />
           </button>
         </header>
-        {adding ? <div className="modal-body">
+        {adding && !watching ? <div className="modal-body">
           <AddAgentPanel onReady={addedAgent} onOpenTerminal={(paneId) => { if (onOpenPane) onOpenPane(paneId); else onClose(); }} onBack={() => setAdding(false)} />
         </div> : <><div className="modal-body">
           <div className="field">
             <span className="field-label" id="new-session-agent">{t("Agent")}</span>
-            <AgentPicker ref={firstFieldRef} agents={agents} value={agentKind} disabled={fieldsDisabled} labelledBy="new-session-agent" hints={pickerHints} addAgent={{ label: t("Add another agent…"), onSelect: () => setAdding(true) }} onChange={pickAgent} />
+            <AgentPicker ref={firstFieldRef} agents={agents} value={agentKind} disabled={fieldsDisabled} labelledBy="new-session-agent" hints={pickerHints} addAgent={watching ? undefined : { label: t("Add another agent…"), onSelect: () => setAdding(true) }} onChange={pickAgent} />
           </div>
           {tab ? (
             <div className="field">

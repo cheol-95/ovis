@@ -37,6 +37,7 @@ export const FILES_KO: Record<string, string> = {
   "Showing the first {count} lines of this file. Download it to read the rest.": "이 파일의 처음 {count}줄만 보입니다. 나머지를 읽으려면 다운로드하세요.",
   "File source": "파일 소스",
   "Only part of this file is shown. Download it to read the rest.": "파일의 일부만 표시됩니다. 나머지는 다운로드해 확인하세요.",
+  "Show": "보기",
   "Changes": "변경 사항",
   "Changed files": "변경된 파일",
   "Compare": "비교",

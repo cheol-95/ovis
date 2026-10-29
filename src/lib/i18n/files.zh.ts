@@ -37,6 +37,7 @@ export const FILES_ZH: Record<string, string> = {
   "Showing the first {count} lines of this file. Download it to read the rest.": "仅显示此文件的前 {count} 行。请下载以阅读其余内容。",
   "File source": "文件源码",
   "Only part of this file is shown. Download it to read the rest.": "仅显示文件的一部分。请下载文件以阅读其余内容。",
+  "Show": "显示",
   "Changes": "更改",
   "Changed files": "已更改的文件",
   "Compare": "比较",

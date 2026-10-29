@@ -12,15 +12,10 @@ describe("agentSections", () => {
   const rows = [row("claude", found("2.1.312")), row("codex"), row("hermes"), row("opencode", unknown)];
 
   it("puts what the PC has under Installed and the rest under Can be installed, in the catalog's order", () => {
-    const { installed, available } = agentSections(rows, "all");
+    const { installed, available } = agentSections(rows);
     expect(installed.map((agent) => agent.id)).toEqual(["claude"]);
     // a PC that cannot tell offers the install rather than claim the agent is there
     expect(available.map((agent) => agent.id)).toEqual(["codex", "hermes", "opencode"]);
-  });
-
-  it("keeps coding agents and assistants apart when filtered", () => {
-    expect(agentSections(rows, "assistant")).toEqual({ installed: [], available: [rows[2]!] });
-    expect(agentSections(rows, "harness").available.map((agent) => agent.id)).toEqual(["codex", "opencode"]);
   });
 });
 

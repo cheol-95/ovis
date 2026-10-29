@@ -913,6 +913,7 @@ export function App() {
         onDraft={setNewFields}
         onClose={closeNewSession}
         onOpenPane={(paneId) => { closeNewSession(); selectTarget(newSessionMachineId, paneId, "terminal"); void load(); }}
+        watching={auth?.role === "watch"}
         onCreated={(paneId, agentStarted, messageWaits = false) => {
           closeNewSession();
           if (agentStarted) actions.agentStarted(newSessionMachineId, paneId);

@@ -30,8 +30,6 @@ export const SETUP_KO: Record<string, string> = {
   "Agents you can install": "설치할 수 있는 에이전트",
   "Install runs the maker's own installer in a terminal tab on this PC, where you can watch it.": "설치는 만든 곳의 공식 설치 프로그램을 이 PC의 터미널 탭에서 실행해요. 그 탭에서 진행을 지켜볼 수 있어요.",
   "All agents": "모든 에이전트",
-  "Coding agents": "코딩 에이전트",
-  "Assistants": "비서",
   "None on this PC yet.": "이 PC에는 아직 없어요.",
   "Ovis needs {version} or later.": "Ovis에는 {version} 이상이 필요해요.",
   "Can be installed": "설치 가능",

@@ -30,8 +30,6 @@ export const SETUP_JA: Record<string, string> = {
   "Agents you can install": "インストールできるエージェント",
   "Install runs the maker's own installer in a terminal tab on this PC, where you can watch it.": "インストールでは、提供元の公式インストーラーをこのPCのターミナルタブで実行します。そのタブで進み具合を見られます。",
   "All agents": "すべてのエージェント",
-  "Coding agents": "コーディングエージェント",
-  "Assistants": "アシスタント",
   "None on this PC yet.": "このPCにはまだありません。",
   "Ovis needs {version} or later.": "Ovisには{version}以降が必要です。",
   "Can be installed": "インストール可能",

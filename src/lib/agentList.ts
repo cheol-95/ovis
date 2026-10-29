@@ -2,18 +2,14 @@ import type { AgentCatalogRow } from "../../shared/agent-catalog.ts";
 import { SUPPORTED_AGENT_KINDS } from "../../shared/supported-agents.ts";
 import type { SetupStep } from "./agentSetup.ts";
 
-/** Settings → Agent integrations' filter: every agent, the coding agents, or the always-on assistants. */
-export type AgentKindFilter = "all" | AgentCatalogRow["kind"];
-
 /**
  * Settings' two lists of a PC's catalog, in the catalog's order: what it has, and the rest. A PC
  * that cannot tell (`installed: null`) lists the agent as one it can install: it never claims one.
  */
-export function agentSections(rows: readonly AgentCatalogRow[], filter: AgentKindFilter): { installed: AgentCatalogRow[]; available: AgentCatalogRow[] } {
-  const shown = rows.filter((row) => filter === "all" || row.kind === filter);
+export function agentSections(rows: readonly AgentCatalogRow[]): { installed: AgentCatalogRow[]; available: AgentCatalogRow[] } {
   return {
-    installed: shown.filter((row) => row.state.installed === true),
-    available: shown.filter((row) => row.state.installed !== true),
+    installed: rows.filter((row) => row.state.installed === true),
+    available: rows.filter((row) => row.state.installed !== true),
   };
 }
 
