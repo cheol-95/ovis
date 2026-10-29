@@ -99,3 +99,20 @@ it("carries what this page alone keeps for a PC that names no herdr, and writes 
     else Reflect.deleteProperty(globalThis, "window");
   }
 });
+it("keeps the comments a send on its way carries out of a second send from the moved pane until the first settles (#511)", () => {
+  const { drafts, storage, comments } = fixture();
+  const before = "ovis:reply-comments:w1:p1", after = "ovis:reply-comments:w2:p4";
+  comments.add(before, "quote", "carried");
+  expect(drafts.begin("ovis:composer-draft:w1:p1", "first")).toBe(true);
+  const carried = comments.read(before);
+  comments.reserve(carried);
+  carryPaneState("local", "w1:p1", "w2:p4", drafts, storage, comments);
+  // the moved pane's own next message, before the first is acknowledged, carries none of them
+  expect(drafts.read("ovis:composer-draft:w2:p4").sending).toBe(false);
+  expect(comments.unreserved(comments.read(after))).toEqual([]);
+  comments.add(after, "later", "for the next message");
+  expect(comments.unreserved(comments.read(after)).map((item) => item.comment)).toEqual(["for the next message"]);
+  // refused: they are free again, on the moved pane, none lost
+  comments.release(carried);
+  expect(comments.unreserved(comments.read(after)).map((item) => item.comment)).toEqual(["carried", "for the next message"]);
+});

@@ -301,7 +301,10 @@ export function Composer({
   const commentsKey = replyCommentsKey(paneStorageId(machineId, paneId));
   const comments = useReplyComments(commentsKey);
   const commentsHeld = comments.length > 0 && commentsWait(text, answerHint !== null);
-  const carried: readonly ReplyComment[] = commentsHeld ? [] : comments;
+  // one an earlier send still carries is that send's until it settles, after a pane move too
+  const reservation = useSyncExternalStore(replyComments.subscribe, replyComments.reservation);
+  const free = useMemo(() => replyComments.unreserved(comments), [comments, reservation]);
+  const carried: readonly ReplyComment[] = commentsHeld ? [] : free;
   const mounted = useRef(true);
   const [caret, setCaret] = useState(text.length);
   const textRef = useRef(text);
@@ -843,16 +846,19 @@ export function Composer({
     };
     if (!composerDrafts.begin(draftKey, sent)) return false;
     sendId = composerDrafts.sendOf(draftKey);
+    // the comments it carries are reserved for it until it settles, wherever a pane move takes them (#511)
+    replyComments.reserve(sentComments);
+    const ended = (): void => { composerDrafts.end(draftKey, sendId); replyComments.release(sentComments); };
     // a polish landing before the acknowledgement would count as an edit and keep the sent message here
     dictation.forget();
     try {
       // a message with comments goes only to an agent: a shell would read `> quote` as a redirect
       const agentOnly = sentComments.length > 0 || composerDrafts.isAgentOnly(draftKey);
       const result = agentOnly ? onSend(message, clearDraft, sendAnyway, true) : onSend(message, clearDraft, sendAnyway);
-      if (!(result instanceof Promise)) { settle(result); composerDrafts.end(draftKey, sendId); return true; }
-      void result.then(settle).catch(() => { if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again.")); }).finally(() => composerDrafts.end(draftKey, sendId));
+      if (!(result instanceof Promise)) { settle(result); ended(); return true; }
+      void result.then(settle).catch(() => { if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again.")); }).finally(ended);
     } catch {
-      composerDrafts.end(draftKey, sendId);
+      ended();
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
     return true;

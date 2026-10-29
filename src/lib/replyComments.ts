@@ -43,6 +43,9 @@ export class ReplyCommentStore {
   private count = 0;
   /** the pane ID each moved list went to (lib/paneMove.ts): a send begun under the old one settles there too */
   private forwards = new Map<string, string>();
+  /** the comments a send on its way carries, by id: no other send takes them until it settles, wherever they moved */
+  private reserved = new Set<string>();
+  private reservations = 0;
   constructor(
     private storage: () => CommentStorage = () => paneLifetimes.paneStorage,
     private newId: () => string = () => `${Date.now().toString(36)}-${(++this.count).toString(36)}`,
@@ -78,6 +81,25 @@ export class ReplyCommentStore {
     if (list.some((item) => item.id === id)) this.write(key, list.filter((item) => item.id !== id));
   }
   /** Removes the comments a sent message carried, by id: one written meanwhile stays for the next. */
+  /** Changes whenever a reservation does: a reader of `unreserved` reads again. */
+  reservation = (): number => this.reservations;
+  reserve(sent: readonly ReplyComment[]): void {
+    if (sent.length === 0) return;
+    for (const item of sent) this.reserved.add(item.id);
+    this.reservations++;
+    this.notify();
+  }
+  /** The send settled: what it carried is free again, here or wherever it moved (a sent one is gone already). */
+  release(sent: readonly ReplyComment[]): void {
+    let changed = false;
+    for (const item of sent) changed = this.reserved.delete(item.id) || changed;
+    if (!changed) return;
+    this.reservations++;
+    this.notify();
+  }
+  unreserved(list: readonly ReplyComment[]): readonly ReplyComment[] {
+    return list.some((item) => this.reserved.has(item.id)) ? list.filter((item) => !this.reserved.has(item.id)) : list;
+  }
   removeSent(key: string, sent: readonly ReplyComment[]): void {
     const ids = new Set(sent.map((item) => item.id));
     for (const at of this.chain(key)) {
