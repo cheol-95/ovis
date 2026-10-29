@@ -233,6 +233,11 @@ export class AgentDetector {
     return read;
   }
 
+  /** The executable `binary` would be started as on this PC: PATH first, then the installer's own folders; null where none is. */
+  async executable(binary: string, dirs: readonly string[], platform: CatalogPlatform | null): Promise<string | null> {
+    return (await this.#locate(binary)) ?? (platform === null ? null : this.#inInstallDirs(binary, dirs, platform));
+  }
+
   /**
    * Whether `entry` is on this PC: the first of its binaries found, and that one's version. Where
    * another program has the binary's name (detect.unreliable_on), nothing is looked up or run.
