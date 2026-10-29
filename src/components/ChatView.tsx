@@ -18,6 +18,7 @@ import { PromptCard } from "./PromptCard.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
 import { loadChatTimeline, loadedChatTimeline, useChatTimeline } from "./chatTimelineLoader.ts";
 import { ChatMinimap } from "./ChatMinimap.tsx";
+import { ChatSearch, type ChatSearchPick } from "./ChatSearch.tsx";
 import { minimapTurns } from "../lib/chatMinimap.ts";
 import type { LegendListRef } from "@legendapp/list/react";
 import { appendChatRowSlots, continuesHistory, createChatRowSlots, prependChatRowSlots } from "../lib/chatRows.ts";
@@ -215,7 +216,12 @@ export interface ChatViewProps {
   onRewindInTerminal?: () => void;
   /** the pane's folder: a tool card's file reads from it (`app/src/a.ts`), while its title and what it opens stay the path as written */
   cwd?: string | null;
+  /** bumped to open the conversation search (the palette's and the pane menu's Search conversation) */
+  searchRequest?: number;
 }
+
+/** The pages loaded down to a picked search hit hold as many prompts as the bridge gives one page (MAX_PAGE_PROMPTS). */
+const SEARCH_FILL_PROMPTS = 50;
 
 
 
@@ -1288,9 +1294,9 @@ export function TerminalFallback({ paneId, visible, live = false }: { paneId: st
 }
 
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
-export const ChatView = memo(function ChatView({ paneId, presentationKey, finishEpoch, finishId, active = true, visible: paneVisible = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, localSend, navigation, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered, title = null, onOpenTerminal, covered = false, peek = null, onCommandScreenClosed, onOutcomes, interactive = false, onRewindInTerminal, cwd = null }: ChatViewProps) {
+export const ChatView = memo(function ChatView({ paneId, presentationKey, finishEpoch, finishId, active = true, visible: paneVisible = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, localSend, navigation, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered, title = null, onOpenTerminal, covered = false, peek = null, onCommandScreenClosed, onOutcomes, interactive = false, onRewindInTerminal, cwd = null, searchRequest = 0 }: ChatViewProps) {
   const t = useT();
-  const { fetchPaneConversation, peekPaneConversation, fetchPanePromptState, fetchPaneTranscript } = useMachineApi();
+  const { fetchPaneConversation, peekPaneConversation, fetchPanePromptState, fetchPaneTranscript, searchPaneConversation } = useMachineApi();
   const { settings } = useSettings();
   // older turns load a page at a time; the setting decides how many prompts a page holds
   const pagePrompts = settings.historyPrompts;
@@ -1747,6 +1753,92 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       }
     });
   }, [fetchPaneConversation, olderCursor, paneId, pagePrompts, conversationRefresh]);
+
+  // The conversation search (ChatSearch): open on request, and a picked hit's turn shown once loaded.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchFocus, setSearchFocus] = useState(0);
+  const [searchPaging, setSearchPaging] = useState<"idle" | "loading" | "failed">("idle");
+  /** the turn (its index in the shown turns) to scroll to once its row is laid out */
+  const revealTurn = useRef<number | null>(null);
+  const [revealKey, setRevealKey] = useState(0);
+  const seenSearchRequest = useRef(searchRequest);
+  useEffect(() => {
+    if (seenSearchRequest.current === searchRequest) return;
+    seenSearchRequest.current = searchRequest;
+    if (searchRequest > 0 && active) { setSearchOpen(true); setSearchFocus((key) => key + 1); }
+  }, [searchRequest, active]);
+  useLayoutEffect(() => { setSearchOpen(false); setSearchPaging("idle"); revealTurn.current = null; }, [paneId, machineId]);
+  const closeSearch = useCallback(() => setSearchOpen(false), []);
+  const searchOlder = useCallback((query: string, before: string, signal: AbortSignal) =>
+    searchPaneConversation(paneId, { query, before, history_id: history.current, signal }), [searchPaneConversation, paneId]);
+
+  /**
+   * The pages before everything shown, down to `target` (a search hit's cursor), joined above the
+   * shown turns as Earlier messages joins one: `since` stops the last page exactly there, so the
+   * hit's turn is then `index` turns from the top. False when the history changed or a read failed.
+   */
+  const loadOlderTo = useCallback(async (target: string | null): Promise<boolean> => {
+    if (typeof olderCursor !== "string" || loadingOlder.current) return false;
+    const start = olderCursor;
+    const generation = olderGeneration.current;
+    loadingOlder.current = true;
+    setOlderState("loading");
+    let reached = false;
+    await conversationRefresh.page(async () => {
+      try {
+        const pages: ConversationTurn[][] = [];
+        let before = start;
+        while (before !== target) {
+          if (shownPane.current !== paneId || olderGeneration.current !== generation) return;
+          const page = await fetchPaneConversation(paneId, { before, ...(target === null ? {} : { since: target }), prompts: SEARCH_FILL_PROMPTS });
+          if (shownPane.current !== paneId || olderGeneration.current !== generation) return;
+          if (page.history_id !== history.current) {
+            dropOlder(); setState(EMPTY_STATE); setLoaded(false); signature.current = ""; lastAnswer.current = null;
+            setPollKey((key) => key + 1); return;
+          }
+          // a bridge without pages, or one that does not move back, cannot reach it
+          if (page.source === "scrollback" || page.cursor === undefined || page.cursor === before) { setOlderState("idle"); return; }
+          pages.unshift(page.turns);
+          if (page.cursor === null) break;
+          before = page.cursor;
+        }
+        if (before !== target && target !== null) { setOlderState("idle"); return; }
+        const turns = pages.flat();
+        const first = heldFrom.current === null;
+        heldFrom.current ??= start;
+        slots.current = prependChatRowSlots(slots.current, turns.length);
+        olderCount.current += turns.length;
+        setOlder((shown) => [...turns, ...shown]);
+        setOlderCursor(target);
+        setOlderState("idle");
+        if (first) setPollKey((key) => key + 1);
+        reached = true;
+      } catch (cause) {
+        if (shownPane.current !== paneId || olderGeneration.current !== generation) return;
+        if (cause instanceof ApiError && cause.status === 409) {
+          dropOlder(); setState(EMPTY_STATE); setLoaded(false); signature.current = ""; lastAnswer.current = null;
+          setPollKey((key) => key + 1);
+        }
+        else setOlderState("failed");
+      } finally {
+        if (olderGeneration.current === generation) loadingOlder.current = false;
+      }
+    });
+    return reached;
+  }, [fetchPaneConversation, olderCursor, paneId, conversationRefresh]);
+
+  const pickSearchHit = useCallback((pick: ChatSearchPick) => {
+    if (pick.loaded) {
+      revealTurn.current = pick.index; setRevealKey((key) => key + 1); setSearchOpen(false);
+      return;
+    }
+    setSearchPaging("loading");
+    void loadOlderTo(pick.cursor).then((reached) => {
+      if (!reached) { setSearchPaging("failed"); return; }
+      setSearchPaging("idle");
+      revealTurn.current = pick.index; setRevealKey((key) => key + 1); setSearchOpen(false);
+    });
+  }, [loadOlderTo]);
 
   // Reconcile the estimated prepend with the actual reader row, through the list's
   // own scroll command. No scrollHeight delta or second virtualizer owns the position.
@@ -2252,6 +2344,15 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     navigationRef.current += 1;
     void timeline.current?.scrollToIndex({ index, animated: false, viewPosition: 0 });
   }, [navigationRef]);
+  // a picked search hit: its turn's row, once the pages it sits in are laid out
+  useLayoutEffect(() => {
+    const turn = revealTurn.current;
+    if (turn === null) return;
+    const row = timelineRows.findIndex((candidate) => candidate.turn !== null && candidate.index === turn);
+    if (row < 0) return;
+    revealTurn.current = null;
+    jumpToTurn(row);
+  }, [timelineRows, revealKey, jumpToTurn]);
   // the rail scrolls the chat from outside it, where the input listeners do not see the wheel
   const minimapWheel = useCallback((deltaY: number) => { if (deltaY < 0) scrollInputAt.current = performance.now(); }, []);
   // a chip's action: the card's first control (the card is drawn into the dock, outside the
@@ -2387,6 +2488,8 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       </div>
     </div>}
     {state.source === "conversation" && <ChatMinimap turns={minimap} rowKeys={rowKeys} scroller={scroller} onJump={jumpToTurn} onWheel={minimapWheel} />}
+    {state.source === "conversation" && <ChatSearch open={searchOpen} focusRequest={searchFocus} turns={shownTurns} before={olderCursor} historyId={historyId}
+      search={searchOlder} onPick={pickSearchHit} onClose={closeSearch} paging={searchPaging} />}
     {jump}
     </div>
     </div>

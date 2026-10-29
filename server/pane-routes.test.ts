@@ -92,6 +92,39 @@ it("diagnoses fallback and recovery without changing the conversation or 304 res
   } finally { read.mockRestore(); warn.mockRestore(); }
 });
 
+it("searches the pages before the chat's, refuses a bad query and answers a replaced history with 409", async () => {
+  const pages: Record<string, { turns: { role: "user" | "assistant"; ts: string | null; parts: { kind: "text"; text: string }[] }[]; cursor: string | null }> = {
+    c2: { turns: [{ role: "user", ts: "t1", parts: [{ kind: "text", text: "rotate the deploy key" }] }], cursor: "c1" },
+    c1: { turns: [{ role: "assistant", ts: "t0", parts: [{ kind: "text", text: "The deploy key is in vault." }] }], cursor: null },
+  };
+  const asked: { before?: string; history_id?: string }[] = [];
+  const read = spyOn(conversation, "paneConversation").mockImplementation(async (_pane, _codex, page = {}) => {
+    asked.push({ before: page.before, history_id: page.history_id });
+    const answer = pages[page.before ?? ""]!;
+    return { source: "claude-transcript", turns: answer.turns, metadata: { model: null, reasoning_effort: null }, cursor: answer.cursor, history_id: "h1", version: "v" };
+  });
+  const ask = (query: string) => {
+    const url = new URL(`http://x/api/pane/conversation/search?${query}`);
+    return handlePaneRequest(new Request(url), url, "/api/pane/conversation/search", {}).then((response) => response!);
+  };
+  try {
+    const found = await ask("pane_id=w:p1&q=Deploy%20KEY&before=c2&history_id=h1");
+    expect(found.status).toBe(200);
+    expect(found.headers.get("cache-control")).toBe("no-store");
+    expect(await found.json()).toEqual({ history_id: "h1", next: null, hits: [
+      { cursor: "c1", index: 0, role: "user", ts: "t1", snippet: "rotate the deploy key", match: { start: 11, length: 10 } },
+      { cursor: null, index: 0, role: "assistant", ts: "t0", snippet: "The deploy key is in vault.", match: { start: 4, length: 10 } },
+    ] });
+    expect(asked).toEqual([{ before: "c2", history_id: "h1" }, { before: "c1", history_id: "h1" }]);
+    for (const [query, code] of [["q=x&before=c2", "missing_pane_id"], ["pane_id=w:p1&q=%20&before=c2", "invalid_query"], [`pane_id=w:p1&q=${"x".repeat(201)}&before=c2`, "invalid_query"], ["pane_id=w:p1&q=x", "missing_before"]]) {
+      const refused = await ask(query!);
+      expect([refused.status, ((await refused.json()) as { error: { code: string } }).error.code]).toEqual([400, code]);
+    }
+    const replaced = await ask("pane_id=w:p1&q=deploy&before=c2&history_id=h0");
+    expect([replaced.status, ((await replaced.json()) as { error: { code: string } }).error.code]).toEqual([409, "history_changed"]);
+  } finally { read.mockRestore(); }
+});
+
 it("diagnoses pending reads while preserving the retry response", async () => {
   const url = new URL(`http://x/api/pane/conversation?pane_id=${crypto.randomUUID()}`);
   const lines: string[] = [];

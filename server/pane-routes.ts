@@ -20,6 +20,8 @@ import { CLAUDE_REWIND_OPEN_MESSAGE } from "./dialogs/claude.ts";
 import { claudeRewindOpen } from "./prompt.ts";
 import { expandedDirectory } from "./workspace-routes.ts";
 import { ConversationDiagnostics } from "./conversation-diagnostics.ts";
+import { searchConversation } from "./conversation-search.ts";
+import { SEARCH_QUERY_MAX } from "../shared/conversation-search.ts";
 
 const conversationDiagnostics = new ConversationDiagnostics();
 
@@ -259,6 +261,30 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
       const cacheControl = ref.startsWith("codex-") || ref.startsWith("opencode:") ? "private, no-store" : "private, max-age=86400, immutable";
       return new Response(image.bytes, { headers: { "content-type": image.mediaType, "cache-control": cacheControl, "x-content-type-options": "nosniff" } });
     } catch (error) {
+      return errorResponse(error);
+    }
+  }
+
+  if (pathname === "/api/pane/conversation/search") {
+    setRequestRoute(pathname);
+    const paneId = url.searchParams.get("pane_id");
+    if (!paneId) return badRequest("missing_pane_id", "pane_id query parameter is required");
+    const query = url.searchParams.get("q") ?? "";
+    if (query.trim() === "" || query.length > SEARCH_QUERY_MAX) return badRequest("invalid_query", `q must hold 1 to ${SEARCH_QUERY_MAX} characters`);
+    // the turns the chat shows are searched in the browser: this searches what it has not loaded
+    const before = url.searchParams.get("before");
+    if (!before) return badRequest("missing_before", "before (the cursor before the turns the chat shows) is required");
+    const historyId = url.searchParams.get("history_id") ?? undefined;
+    try {
+      const answer = await searchConversation(
+        (page) => paneConversation(paneId, options.codexHome, { ...page, history_id: historyId }, options.devinDbPath, options.opencodeDb, options.hermesHome, options.grokHome, options.museData),
+        query, { before, history_id: historyId }, { signal: request.signal },
+      );
+      return jsonResponse(answer, 200, { "cache-control": "no-store" });
+    } catch (error) {
+      if (error instanceof HistoryChanged || error instanceof DevinHistoryChanged) return jsonResponse({ error: { code: "history_changed", message: error.message } }, 409);
+      if (error instanceof ConversationReadPending) return jsonResponse({ error: { code: "conversation_read_pending", message: error.message } }, 503, { "cache-control": "no-store" });
+      if (error instanceof ConversationUnavailable) return jsonResponse({ error: { code: "conversation_unavailable", message: "this pane has no conversation to search" } }, 404);
       return errorResponse(error);
     }
   }

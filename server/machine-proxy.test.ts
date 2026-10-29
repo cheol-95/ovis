@@ -20,6 +20,7 @@ const remote = Bun.serve({
     const path = new URL(request.url).pathname;
     if (path === "/api/pane/conversation/image") return new Response(new Uint8Array([137, 80, 78, 71]), { headers: { "content-type": "image/png" } });
     if (path === "/api/pane/conversation/tool-output") return new Response("complete remote output", { headers: { "content-type": "text/plain; charset=utf-8" } });
+    if (path === "/api/pane/conversation/search") return Response.json({ history_id: "h1", hits: [], next: null, q: new URL(request.url).searchParams.get("q") });
     if (path === "/api/fs/file") return new Response("%PDF-1.7", { headers: { "content-type": "application/pdf" } });
     if (path === "/api/session") return Response.json({ snapshot: { workspaces: [], tabs: [], panes: [{ pane_id: "w1:p1", workspace_id: "w1", tab_id: "t1", agent: "claude", tokens: { quota: "off · private", eta: "soon" } }], agents: [] } });
     if (path === "/api/sessions/history") {
@@ -162,6 +163,8 @@ it("forwards conversation images and complete output, while rejecting arbitrary 
   const output = await handleMachineRequest(new Request(`${base}/tool-output?pane_id=w1:p1&ref=call`), manager);
   expect(output.status).toBe(200);
   expect(await output.text()).toBe("complete remote output");
+  const search = await handleMachineRequest(new Request(`${base}/search?pane_id=w1:p1&q=deploy&before=c1`), manager);
+  expect([search.status, await search.json()]).toEqual([200, { history_id: "h1", hits: [], next: null, q: "deploy" }]);
   expect((await handleMachineRequest(new Request(`${base}/unknown`), manager)).status).toBe(404);
 });
 

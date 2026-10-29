@@ -1,0 +1,123 @@
+.chat-search {
+  position: absolute;
+  inset: var(--space-2) var(--space-2) auto;
+  z-index: var(--z-popover);
+  display: flex;
+  flex-direction: column;
+  max-height: min(70%, 520px);
+  max-width: 720px;
+  margin-inline: auto;
+  padding: var(--space-2);
+  background: var(--bg-panel);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+}
+
+.chat-search[hidden] {
+  display: none;
+}
+
+.chat-search-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.chat-search-query {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-dim);
+}
+
+.chat-search-query .input {
+  width: 100%;
+  min-width: 0;
+}
+
+.chat-search-query > svg {
+  flex: 0 0 auto;
+}
+
+.chat-search-status {
+  margin: var(--space-1) var(--space-1) 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.chat-search-status.is-error {
+  color: var(--status-blocked);
+}
+
+.chat-search-results {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: var(--space-1) 0 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.chat-search-hit {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-height: var(--touch-target);
+  padding: var(--space-2);
+  color: var(--text);
+  text-align: start;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.chat-search-hit:hover,
+.chat-search-hit:focus-visible {
+  background: var(--bg-hover);
+}
+
+.chat-search-hit:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.chat-search-meta {
+  display: flex;
+  gap: var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.chat-search-who {
+  font-weight: var(--fw-semibold);
+}
+
+.chat-search-snippet {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.chat-search-snippet mark {
+  color: inherit;
+  background: var(--accent-tint);
+  border-radius: 2px;
+}
+
+.chat-search-more {
+  align-self: center;
+  margin-top: var(--space-1);
+  min-height: var(--control-h);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}

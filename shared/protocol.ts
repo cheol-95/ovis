@@ -556,6 +556,36 @@ export interface ConversationResponse {
   abandoned?: { count: number; branches: number; summary: string | null };
 }
 
+/** One turn a conversation search found (GET /api/pane/conversation/search). */
+export interface ConversationSearchHit {
+  /**
+   * Where the page holding the turn starts (null: the conversation's beginning). The chat pages
+   * back to it with `before` + `since` (ConversationResponse.cursor), which ends exactly there.
+   */
+  cursor: string | null;
+  /** the turn's place in the turns from `cursor` on */
+  index: number;
+  role: "user" | "assistant";
+  ts: string | null;
+  /** the words around the first match, whitespace folded, cut with an ellipsis */
+  snippet: string;
+  /** where the match sits in `snippet` */
+  match: { start: number; length: number };
+}
+
+/**
+ * GET /api/pane/conversation/search?pane_id=&q=&before=&history_id=: the turns before `before`
+ * whose user text or answer text holds `q` (tool calls, output and thinking are not searched),
+ * newest first. A search ends after a bounded number of hits or time: `next` is the `before` to
+ * search on from, null once the beginning was searched. A `history_id` the transcript no longer
+ * has answers 409 `history_changed`.
+ */
+export interface ConversationSearchResponse {
+  history_id: string;
+  hits: ConversationSearchHit[];
+  next: string | null;
+}
+
 export type { PluginActionContext, PluginAction, PluginActions, PluginActionsResponse, PluginActionRequest, PluginActionResult } from "./plugins.ts";
 
 export type { DirectoryListing, CreateDirectoryRequest, DirectoryCreated } from "./directories.ts";

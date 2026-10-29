@@ -29,6 +29,7 @@ const BASE: Record<string, string> = {
   "Scroll pane up": "ペインを上にスクロール",
   "Scroll pane down": "ペインを下にスクロール",
   "Find in terminal": "ターミナル内を検索",
+  "Search conversation": "会話を検索",
   "Previous match": "前の一致",
   "Next match": "次の一致",
   "Close search": "検索を閉じる",

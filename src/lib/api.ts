@@ -9,6 +9,7 @@ import type {
   AgentRenameRequest,
   CommandOutcome,
   ConversationResponse,
+  ConversationSearchResponse,
   CreateWorktreeRequest,
   CreateTabRequest,
   CreateWorkspaceRequest,
@@ -455,6 +456,30 @@ export async function fetchPaneConversation(paneId: string, machineId = "local",
     }
   }
   return body;
+}
+
+/**
+ * GET /api/pane/conversation/search: the turns before `before` (the cursor before what the chat
+ * shows) that hold `query`, newest first, for the history the chat shows. `signal` drops a search
+ * the reader has typed past.
+ */
+export async function searchPaneConversation(paneId: string, machineId = "local", search: { query: string; before: string; history_id?: string; signal?: AbortSignal }): Promise<ConversationSearchResponse> {
+  const query = new URLSearchParams({ pane_id: paneId, q: search.query, before: search.before });
+  if (search.history_id !== undefined) query.set("history_id", search.history_id);
+  return getJson<ConversationSearchResponse>(machinePath(machineId, `pane/conversation/search?${query.toString()}`), { cache: "no-store", ...(search.signal ? { signal: search.signal } : {}) });
+}
+
+/**
+ * Whether the PC's bridge searches a conversation's older pages, asked without a pane: a bridge
+ * that has the route refuses the request (400), one from before it answers not_found (404).
+ */
+export async function conversationSearchOffered(machineId = "local"): Promise<boolean> {
+  try { await getJson(machinePath(machineId, "pane/conversation/search")); return true; }
+  catch (error) {
+    if (routeMissing(error)) return false;
+    if (error instanceof ApiError && error.status < 500) return true;
+    throw error;
+  }
 }
 
 export interface HealthInfo {
