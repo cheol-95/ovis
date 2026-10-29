@@ -32,14 +32,24 @@ const INSTALL_START_MS = 120_000;
 /** The longest one install holds its agent, whatever its tab shows. */
 const INSTALL_CAP_MS = 30 * 60_000;
 
+/** Time as the install routes read it; tests drive their own. A sleep whose signal aborts never ends. */
+export interface InstallClock { now(): number; sleep(ms: number, signal?: AbortSignal): Promise<void> }
+const realClock: InstallClock = {
+  now: () => Date.now(),
+  sleep: (ms, signal) => new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => clearTimeout(timer), { once: true });
+  }),
+};
+
 const TIMED_OUT = Symbol("timed out");
 /** `work`'s answer, or TIMED_OUT when it has not come within `ms`; a rejection before then is passed on. */
-async function within<T>(work: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
+async function within<T>(work: Promise<T>, ms: number, clock: InstallClock): Promise<T | typeof TIMED_OUT> {
+  const settled = new AbortController();
   try {
-    return await Promise.race([work, new Promise<typeof TIMED_OUT>((resolve) => { timer = setTimeout(() => resolve(TIMED_OUT), ms); })]);
+    return await Promise.race([work, clock.sleep(ms, settled.signal).then((): typeof TIMED_OUT => TIMED_OUT)]);
   } finally {
-    clearTimeout(timer);
+    settled.abort();
   }
 }
 
@@ -48,18 +58,20 @@ async function within<T>(work: Promise<T>, ms: number): Promise<T | typeof TIMED
  * it starts, or null when herdr names neither PowerShell nor cmd.exe within `waitMs` in all, slow
  * answers included. Nothing is typed into a shell that is not known.
  */
-async function shellOf(paneId: string, platform: CatalogPlatform, waitMs: number): Promise<PaneShell | null> {
+async function shellOf(paneId: string, platform: CatalogPlatform, waitMs: number, clock: InstallClock): Promise<PaneShell | null> {
   if (platform !== "windows") return "posix";
-  const deadline = Date.now() + waitMs;
+  const deadline = clock.now() + waitMs;
   for (;;) {
-    const left = deadline - Date.now();
+    const left = deadline - clock.now();
     if (left <= 0) return null;
-    const info = await within(paneProcessInfo(paneId), left);
+    const info = await within(paneProcessInfo(paneId), left, clock);
     if (info === TIMED_OUT) return null;
     const argv0 = info?.foreground_processes?.[0]?.argv?.[0];
     const shell = argv0 === undefined ? null : paneShell(argv0);
     if (shell !== null && shell !== "posix") return shell;
-    await Bun.sleep(Math.min(250, Math.max(0, deadline - Date.now())));
+    const pause = Math.min(250, deadline - clock.now());
+    if (pause <= 0) return null;
+    await clock.sleep(pause);
   }
 }
 
@@ -94,8 +106,12 @@ export class AgentInstaller {
     private readonly detector: AgentDetector,
     private readonly platform: CatalogPlatform | null = catalogPlatform(process.platform),
     private readonly home: string = homedir(),
-    private readonly options: { shellWaitMs?: number; startWindowMs?: number; capMs?: number; processTable?: () => Promise<ProcessRow[]> } = {},
+    private readonly options: { shellWaitMs?: number; startWindowMs?: number; capMs?: number; processTable?: () => Promise<ProcessRow[]>; clock?: InstallClock } = {},
   ) {}
+
+  get #clock(): InstallClock {
+    return this.options.clock ?? realClock;
+  }
 
   /**
    * Types into a tab just opened: `work` returns the response, or null when nothing may be typed
@@ -164,7 +180,7 @@ export class AgentInstaller {
   async #stillRunning(running: Running, platform: CatalogPlatform): Promise<boolean> {
     if (running.paneId === null || running.typedAt === null) return true;
     const paneId = running.paneId;
-    const age = Date.now() - running.typedAt;
+    const age = this.#clock.now() - running.typedAt;
     if (age >= (this.options.capMs ?? INSTALL_CAP_MS)) return false;
     if (!(await sessionSnapshot()).panes.some((pane) => pane.pane_id === paneId)) return false;
     const program = await this.#programRunning(paneId, platform);
@@ -199,10 +215,10 @@ export class AgentInstaller {
       running.paneId = paneId;
       let shell: PaneShell | null = null;
       return await this.#inNewTab(tabId, async () => {
-        shell = await shellOf(paneId, platform, this.options.shellWaitMs ?? SHELL_WAIT_MS);
+        shell = await shellOf(paneId, platform, this.options.shellWaitMs ?? SHELL_WAIT_MS, this.#clock);
         if (shell === null || shell !== method.shell) return null;
         await typeAndRun(paneId, method.command, shell);
-        running.typedAt = Date.now();
+        running.typedAt = this.#clock.now();
         started = true;
         return jsonResponse({ pane_id: paneId, workspace_id: workspaceId, command: method.command, shell } satisfies AgentTabStarted);
       }, () => shell === null ? shellUnknown() : conflictResponse("shell_mismatch", `This command is for ${method.shell}; the new tab runs ${shell}. Choose the other command.`));
@@ -219,7 +235,7 @@ export class AgentInstaller {
     if (executable === null) return conflictResponse("not_installed", `${entry.name} is not installed on this PC`);
     const { paneId, tabId, workspaceId } = await openTab(`Sign in to ${entry.name}`, this.home);
     return this.#inNewTab(tabId, async () => {
-      const shell = await shellOf(paneId, platform, this.options.shellWaitMs ?? SHELL_WAIT_MS);
+      const shell = await shellOf(paneId, platform, this.options.shellWaitMs ?? SHELL_WAIT_MS, this.#clock);
       if (shell === null) return null;
       const command = shellCommandLine(shell, executable, args);
       await typeAndRun(paneId, command, shell);

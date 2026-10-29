@@ -1,9 +1,10 @@
 import type { StreamSource } from "./conversation-shared.ts";
 import { claudePeerNotice, piMessage, piPromptImages } from "./transcript-records.ts";
 import type { TranscriptEntry } from "./claude-transcript.ts";
-import { claudeImages, entryHostToolResults, hostedBlocks, isCommandEntry, withoutPictureBytes } from "./claude-transcript.ts";
+import { claudeImages, isCommandEntry, senpiPrompt, withoutPictureBytes } from "./claude-transcript.ts";
 import { copilotRootRecord } from "./copilot.ts";
 import { musePrompt } from "./muse.ts";
+import { lettaPrompt } from "./letta.ts";
 
 /**
  * A Claude session's branch, followed as the file is scanned. Claude Code links each record to the
@@ -56,13 +57,18 @@ function claudeCommandEchoRecord(entry: { type?: unknown; subtype?: unknown; isM
 /** a record longer than this, its pictures' bytes left out, is not parsed for its links: it leaves the chain unknown */
 const CLAUDE_CHAIN_LINE_BYTES = 1024 * 1024;
 
-export function followClaudeBranch(branch: ClaudeBranch, line: Buffer, start: number, end: number, floor: number): void {
-  if (!line.includes('"uuid"')) return;
+/** follows the branch over one record; the record as parsed, when it was (the scan reads its settings from it) */
+export function followClaudeBranch(branch: ClaudeBranch, line: Buffer, start: number, end: number, floor: number): unknown {
+  if (!line.includes('"uuid"')) return undefined;
   const text = line.length > CLAUDE_CHAIN_LINE_BYTES ? withoutPictureBytes(line.toString("utf8")) : line.toString("utf8");
-  if (text.length > CLAUDE_CHAIN_LINE_BYTES) { branch.last = null; return; }
+  if (text.length > CLAUDE_CHAIN_LINE_BYTES) {
+    // too long to follow, but the model and effort it names still count
+    branch.last = null;
+    try { return JSON.parse(text) as unknown; } catch { return undefined; }
+  }
   let entry: TranscriptEntry & { isSidechain?: unknown; logicalParentUuid?: unknown };
-  try { entry = JSON.parse(text) as typeof entry; } catch { branch.last = null; return; }
-  if (entry === null || typeof entry !== "object" || typeof entry.uuid !== "string" || entry.isSidechain === true) return;
+  try { entry = JSON.parse(text) as typeof entry; } catch { branch.last = null; return undefined; }
+  if (entry === null || typeof entry !== "object" || typeof entry.uuid !== "string" || entry.isSidechain === true) return entry;
   // a compaction's boundary starts a chain of its own, and names the record it continues
   const parent = entry.parentUuid === null ? typeof entry.logicalParentUuid === "string" ? entry.logicalParentUuid : null
     : typeof entry.parentUuid === "string" ? entry.parentUuid : undefined;
@@ -82,6 +88,7 @@ export function followClaudeBranch(branch: ClaudeBranch, line: Buffer, start: nu
   if (entry.type === "assistant") branch.answers.push(start);
   branch.ends.set(entry.uuid, end);
   branch.last = entry.uuid;
+  return entry;
 }
 
 /** Bytes that every line opening a turn contains: a cheap filter before JSON.parse. */
@@ -92,6 +99,7 @@ const TURN_MARK: Record<StreamSource, Buffer> = {
   "grok-transcript": Buffer.from('"user_message_chunk"'),
   "agy-transcript": Buffer.from('"USER_INPUT"'),
   "muse-transcript": Buffer.from('"payload_type":"runtime.user_intent.accepted"'),
+  "letta-transcript": Buffer.from('"kind":"user"'),
   "codex-transcript": Buffer.from('"task_started"'),
   "claude-transcript": Buffer.from('"user"'),
   "omp-transcript": Buffer.from('"user"'),
@@ -117,6 +125,7 @@ function opensTurn(source: StreamSource, line: string, blobs: string | null): bo
     && typeof entry.data?.content === "string" && !!entry.data.content.trim();
   if (source === "codex-transcript") return entry.type === "event_msg" && entry.payload?.type === "task_started";
   if (source === "muse-transcript") return musePrompt(entry as Record<string, unknown>) !== null;
+  if (source === "letta-transcript") return lettaPrompt(entry as Record<string, unknown>) !== null;
   if (source !== "claude-transcript") {
     const message = piMessage(entry);
     if (message?.role !== "user") return false;
@@ -132,16 +141,16 @@ function opensTurn(source: StreamSource, line: string, blobs: string | null): bo
   const content = entry.message?.content;
   if (typeof content === "string") return !isCommandEntry(content, entry);
   if (!Array.isArray(content)) return false;
-  // senpi's host tool results answer the calls before them: only a message sent along with them is a
-  // prompt, and it stays on those calls' page
-  const hosted = hostedBlocks(entryHostToolResults(entry as Parameters<typeof entryHostToolResults>[0], content));
-  const own = hosted.size === 0 ? content : content.filter((_block: unknown, at: number) => !hosted.has(at));
+  // senpi's host tool results answer the calls before them and its notices are no one's typing: only a
+  // message sent along with them is a prompt, and with host results it stays on those calls' page
+  const sent = senpiPrompt(entry as Parameters<typeof senpiPrompt>[0], content);
+  const own = sent.own.filter((block) => block !== null) as ({ type?: unknown; text?: unknown } | null)[];
   // a prompt that is only a picture is one too, as the parser draws it; a picture beside a tool's
   // result opens nothing: the result must stay on the page of the call it answers
-  const prompt = own.some((block: { type?: unknown; text?: unknown } | null) =>
-    block?.type === "text" && typeof block.text === "string" && !isCommandEntry(block.text.trim(), entry))
+  const prompt = own.some((block) =>
+    block?.type === "text" && typeof block.text === "string" && block.text.trim().length > 0 && !isCommandEntry(block.text.trim(), entry))
     || (!content.some((block: { type?: unknown } | null) => block?.type === "tool_result") && claudeImages(entry.uuid, own).length > 0);
-  return prompt && hosted.size > 0 ? "inline" : prompt;
+  return prompt && sent.hosts.length > 0 ? "inline" : prompt;
 }
 
 /**
