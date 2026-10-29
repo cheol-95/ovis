@@ -22,6 +22,7 @@ import { PALETTE_KO } from "./i18n/palette.ko.ts";
  */
 const BASE: Record<string, string> = {
   "Goal": "목표",
+  "Attach files": "파일 첨부",
   "Waiting for your answer": "답변을 기다리는 중",
   "Back": "뒤로",
   "Scroll pane up": "패널 위로 스크롤",

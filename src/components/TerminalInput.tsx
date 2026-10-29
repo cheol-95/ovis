@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type Ref } from "react";
-import { CornerDownLeft, SendHorizontal, TextCursorInput } from "lucide-react";
+import { CornerDownLeft, Paperclip, SendHorizontal, TextCursorInput } from "lucide-react";
 
 import "./TerminalInput.css";
 import { readTerminalDraft, writeTerminalDraft, TERMINAL_LINE_LIMIT, subscribeTerminalDraft, terminalDraftSending, setTerminalDraftSending, acknowledgeTerminalDraft, terminalDraftVersion } from "../lib/terminalDraft.ts";
+import { withAttachedPaths } from "../lib/terminalAttach.ts";
 
 import { useT } from "../lib/i18n.ts";
 import { useSettings } from "../lib/settings.ts";
@@ -28,6 +29,8 @@ export interface TerminalInputProps {
   onPasting?: (active: boolean) => void;
   /** the line took the focus */
   onFocus?: () => void;
+  /** uploads the files picked for the line beside the pane: their paths, or why none could be */
+  onAttach?: (files: File[]) => Promise<readonly string[] | string>;
   ref?: Ref<TerminalInputHandle>;
 }
 
@@ -59,7 +62,7 @@ interface SendAttempt {
  * keyboard's own editing and goes to the pane whole, then Enter. Autocorrect and spell-check stay
  * off, as in the composer: they would swap a flag, path or branch name for a dictionary word.
  */
-export function TerminalInput({ owner, active = true, connected, onSend, onEnter, onInsert, pasteTarget, onPasting, onComposing, onFocus, ref }: TerminalInputProps) {
+export function TerminalInput({ owner, active = true, connected, onSend, onEnter, onInsert, pasteTarget, onPasting, onComposing, onFocus, onAttach, ref }: TerminalInputProps) {
   const t = useT();
   const text = useSyncExternalStore(subscribeTerminalDraft, () => readTerminalDraft(owner));
   const setText = useCallback((value: string | ((previous: string) => string)) => {
@@ -294,6 +297,49 @@ export function TerminalInput({ owner, active = true, connected, onSend, onEnter
     });
   }, [onPasting, owner, pasteTarget, t]);
   useImperativeHandle(ref, () => ({ paste }), [paste]);
+
+  /**
+   * Attach files: the picked files go up beside the pane, all or none (one too large and none goes),
+   * and their quoted paths join the line where its caret is when they are back, for the user to send
+   * with the rest of it; nothing is sent. A line put away meanwhile (another pane, direct typing)
+   * gets them at its end. Uploading says so under the line; a failure says why.
+   */
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [attaching, setAttaching] = useState(false);
+  const attach = useCallback((files: File[]) => {
+    if (onAttach === undefined || files.length === 0) return;
+    setAttaching(true);
+    setNote(null);
+    setPending(t(files.length === 1 ? "Uploading file…" : "Uploading files…"));
+    void onAttach(files).then((result) => {
+      if (typeof result === "string") {
+        if (mounted.current) setNote(result);
+        return;
+      }
+      const draft = readTerminalDraft(owner);
+      const element = mounted.current ? box.current : null;
+      const start = element === null ? draft.length : Math.min(element.selectionStart, draft.length);
+      const end = element === null ? draft.length : Math.min(element.selectionEnd, draft.length);
+      const next = withAttachedPaths(draft, start, end, result, TERMINAL_LINE_LIMIT);
+      if (next === null) {
+        if (mounted.current) setNote(t("Not attached: the paths do not fit in the line."));
+        return;
+      }
+      writeTerminalDraft(owner, next.text);
+      if (element === null) return;
+      const written = terminalDraftVersion(owner);
+      requestAnimationFrame(() => {
+        // the line written again before the frame: its caret is the user's now
+        if (box.current !== element || terminalDraftVersion(owner) !== written) return;
+        element.focus({ preventScroll: true });
+        element.setSelectionRange(next.caret, next.caret);
+      });
+    }).finally(() => {
+      if (!mounted.current) return;
+      setAttaching(false);
+      setPending(null);
+    });
+  }, [onAttach, owner, t]);
   // a paste that outlives the line (a pane switch, the masked input taking its place) is dropped above; the bar's Paste comes back
   const pastingCallback = useRef(onPasting);
   pastingCallback.current = onPasting;
@@ -366,6 +412,34 @@ export function TerminalInput({ owner, active = true, connected, onSend, onEnter
       />
       {dictation.shown && <MicButton dictation={dictation} className="terminal-input-mic" />}
       <span className="terminal-input-actions">
+        {onAttach && (
+          <>
+            <input
+              ref={fileInput}
+              type="file"
+              multiple
+              hidden
+              onChange={(event) => {
+                const picked = Array.from(event.currentTarget.files ?? []);
+                event.currentTarget.value = "";
+                attach(picked);
+              }}
+            />
+            {/* first of the actions, outlined as Insert is: the picker opens from this tap, and the
+                paths it brings back wait in the line */}
+            <button
+              type="button"
+              className="terminal-input-action terminal-input-attach"
+              aria-label={t("Attach files")}
+              title={t("Attach files")}
+              disabled={!connected || attaching}
+              onClick={() => fileInput.current?.click()}
+            >
+              <span className="terminal-input-caption" aria-hidden="true">{t("Attach")}</span>
+              <span className="terminal-input-face"><Paperclip aria-hidden="true" /></span>
+            </button>
+          </>
+        )}
         {/* Insert, apart from Send by its words, its outline and its name: the text goes to the
             prompt and stays there to edit. Each says what it does above its round target */}
         <button

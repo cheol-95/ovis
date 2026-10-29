@@ -100,8 +100,9 @@
   border-color: var(--accent);
 }
 
-/* the two actions, the last grid column from the label's row down: Insert first, Send last at
-   the edge, as the composer's. Each is its words over its round target, one button */
+/* the actions, the last grid column from the label's row down: Attach (on a line that can take
+   files) and Insert first, Send last at the edge, as the composer's. Each is its words over its
+   round target, one button */
 .terminal-input-actions {
   display: inline-flex;
   grid-column: -2;
@@ -149,8 +150,10 @@
 
 /* Insert is the quieter of the two: an outline on the elevated surface, so Send alone is the
    filled one. The outline is the dim text colour, which holds 3:1 against the panel in every
-   theme (the hairline border colour does not); the pressed state is the key bar's */
-.terminal-input-insert .terminal-input-face {
+   theme (the hairline border colour does not); the pressed state is the key bar's. Attach is
+   drawn the same: it fills nothing in either */
+.terminal-input-insert .terminal-input-face,
+.terminal-input-attach .terminal-input-face {
   border-color: var(--text-dim);
   background: var(--bg-elevated);
   color: var(--text);
@@ -160,12 +163,14 @@
 }
 
 @media (hover: hover) {
-  .terminal-input-insert:hover:not(:disabled) .terminal-input-face {
+  .terminal-input-insert:hover:not(:disabled) .terminal-input-face,
+  .terminal-input-attach:hover:not(:disabled) .terminal-input-face {
     background: var(--bg-hover);
   }
 }
 
-.terminal-input-insert:active:not(:disabled) .terminal-input-face {
+.terminal-input-insert:active:not(:disabled) .terminal-input-face,
+.terminal-input-attach:active:not(:disabled) .terminal-input-face {
   border-color: var(--accent);
   color: var(--text-strong);
 }

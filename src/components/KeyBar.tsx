@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, useSyncExternalStore, type MouseEvent, type PointerEvent, type ReactNode } from "react";
-import { ClipboardPaste, Keyboard, PanelBottomClose, PanelBottomOpen } from "lucide-react";
+import { ClipboardPaste, Keyboard, PanelBottomClose, PanelBottomOpen, Paperclip } from "lucide-react";
 
 import "./KeyBar.css";
 
@@ -44,6 +44,9 @@ export interface KeyBarProps {
   /** the keyboard control refuses its tap, keeping the focus and the composition a blur would end,
    * and while a paste reads the clipboard (the paste's own focus would bring a hidden keyboard back) */
   keyboardRefused?: boolean;
+  /** on a touch screen typing straight into the grid: the files picked from the system's picker,
+   * uploaded beside the pane with their paths typed into the terminal (the input line has its own) */
+  onAttach?: (files: File[]) => void;
 }
 
 /**
@@ -221,8 +224,9 @@ export const KEY_SPOKEN_NAMES: ReadonlyArray<{ key: string; label: string }> = [
  * toolbar: a toolbar promises arrow-key navigation between items, which these skip.
  * The keyboard control is no key a hardware keyboard has, so it is a Tab stop.
  */
-export function KeyBar({ onKey, modifiers, onToggleModifier, items, directTyping, onToggleDirect, directDisabled, onPaste, pasteDisabled, note, onNoteDismiss, onToggleKeyboard, keyboardDisabled, keyboardRefused, disabled, holdScope }: KeyBarProps) {
+export function KeyBar({ onKey, modifiers, onToggleModifier, items, directTyping, onToggleDirect, directDisabled, onPaste, pasteDisabled, note, onNoteDismiss, onToggleKeyboard, keyboardDisabled, keyboardRefused, onAttach, disabled, holdScope }: KeyBarProps) {
   const t = useT();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   // the keyboard control says what the viewport measured (data-keyboard), never that a tap focused
   // a field: a hardware keyboard, or an occlusion the browser cannot report, leaves it down
   const keyboardShown = useSyncExternalStore(subscribeKeyboardUp, keyboardUp, () => false);
@@ -249,6 +253,7 @@ export function KeyBar({ onKey, modifiers, onToggleModifier, items, directTyping
   const hasDirectToggle = onToggleDirect !== undefined;
   const hasPaste = onPaste !== undefined;
   const hasKeyboardToggle = onToggleKeyboard !== undefined;
+  const hasAttach = onAttach !== undefined;
   useLayoutEffect(() => {
     const bar = barRef.current;
     if (!bar) return;
@@ -272,7 +277,7 @@ export function KeyBar({ onKey, modifiers, onToggleModifier, items, directTyping
       bar.removeEventListener("scroll", schedule);
       observer.disconnect();
     };
-  }, [items, hasDirectToggle, hasPaste, hasKeyboardToggle, note]);
+  }, [items, hasDirectToggle, hasPaste, hasKeyboardToggle, hasAttach, note]);
   /** The key's name as it is said: its spoken name where its cap is notation, else its cap. */
   const spokenKey = (item: KeyBarKeyItem): string => {
     const spoken = ARROWS.find((candidate) => candidate.key === item.key)?.label ?? KEY_SPOKEN_NAMES.find((candidate) => candidate.key === item.key)?.label;
@@ -299,6 +304,26 @@ export function KeyBar({ onKey, modifiers, onToggleModifier, items, directTyping
         <Key disabled={keyboardDisabled} refused={keyboardRefused} command dataKey="keyboard" label={t(keyboardShown ? "Hide keyboard" : "Show keyboard")} pressed={keyboardShown} onPress={onToggleKeyboard}>
           {keyboardShown ? <PanelBottomClose aria-hidden="true" /> : <PanelBottomOpen aria-hidden="true" />}
         </Key>
+      )}
+      {/* last of the fixed controls, a command no hardware keyboard has: the system's file picker opens
+          from this tap (a browser opens it only inside the user's own gesture) */}
+      {onAttach && (
+        <Key disabled={disabled} command dataKey="attach" label={t("Attach files")} onPress={() => fileInputRef.current?.click()}>
+          <Paperclip aria-hidden="true" />
+        </Key>
+      )}
+      {onAttach && (
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          hidden
+          onChange={(event) => {
+            const picked = Array.from(event.currentTarget.files ?? []);
+            event.currentTarget.value = "";
+            if (picked.length > 0) onAttach(picked);
+          }}
+        />
       )}
       {note ? <p className="key-bar-note" role="status" onClick={onNoteDismiss}>{note}</p> : items.map((item) => {
         if (item.type === "modifier") {

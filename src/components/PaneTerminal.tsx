@@ -58,7 +58,8 @@ import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { MIRROR_WRAP_QUERY } from "../lib/terminalFold.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { modalOpen } from "../lib/focus.ts";
-import { connectedSockets } from "../lib/paneTerminalShared.ts";
+import { connectedSockets, plainError } from "../lib/paneTerminalShared.ts";
+import { AttachmentTooLargeError, assertAttachable } from "../lib/api.ts";
 import { useTerminalMount } from "../lib/useTerminalMount.ts";
 import { useTerminalRefits } from "../lib/useTerminalRefits.ts";
 import { usePaneAttach } from "../lib/usePaneAttach.ts";
@@ -223,6 +224,7 @@ export function PaneTerminal({
   const { answerPanePrompt, uploadPaneImage } = useMachineApi();
   const uploadFileRef = useRef(uploadPaneImage);
   uploadFileRef.current = uploadPaneImage;
+  const attachFilesRef = useRef<((files: File[]) => void) | null>(null);
   // the peek is this pane's only (App passes it to the selected pane alone; this guards a pane switch's render)
   const peek = peekProp !== null && peekProp.paneId === paneId && peekProp.machineId === machineId ? peekProp : null;
   const peekRef = useRef(peek); peekRef.current = peek;
@@ -622,7 +624,7 @@ export function PaneTerminal({
     }, 2500);
   }, []);
 
-  useTerminalMount({ activeRef, barKeyRef, baseFontRef, pinchingRef, cachedRef, cachedReleaseRef, cancelLeaveRef, cancelTouchRef, chatMountedRef, chatOutputRef, chatViewRef, clearModifiers, clipboardTimerRef, coarseRef, commitPendingText, composingRef, compositionCommitPendingRef, deferAttachRef, draftHeldForRef, draftPaneRef, endedRef, findOpenRef, fitRef, fittedRef, fixedGridRef, followCursorRef, followRef, frameGateRef, heldRef, hostRef, hyperlinksRef, keyboardHoldsRef, keyboardToggleFocusRef, leaveRef, lineScroll, machineId, machineSessions, mirroredRef, mirrorWrapRef, modifiersRef, modifyOtherKeysRef, narrowFontRef, noteClipboard, observeRef, onChatSuggestion, onInputRowFrameRef, onRoleAckRef, onServerMessageRef, openFileRef, openWebRef, osc52AllowedRef, outputTargetRef, palette, paneRef, pendingEpochRef, pendingScopeRef, pendingSubmissionsRef, pinchBadgeRef, pinchStatusRef, presentationRef, presentedRef, reassertIfStaleRef, reattachRef, redrawGreeting, releaseAwayRef, idleReleaseRef, setIdleView, releaseRef, releasedRef, retireOutputRef, secretRef, sessionRef, setChatInvalidation, setChatRefresh, setChatSent, setComposing, setConnected, setConnectedBefore, setConversationPushes, setDraft, setEnded, setHeld, setInputError, setInputReady, setObserving, setOutputError, setOutputReady, setParsedTarget, setReleased, setSecret, setSelectionQuote, setTerminal, setUnsupported, setWatching, sharedGridRef, shortcutSettings, shownRef, sizesPty, socketRef, stackRef, stalledRef, stopKeyRef, submitRetention, t, tRef, termRef, terminalFontSize, theme, updateSettings, uploadFileRef, watchingRef, wheelStateRef });
+  useTerminalMount({ activeRef, barKeyRef, baseFontRef, pinchingRef, cachedRef, cachedReleaseRef, cancelLeaveRef, cancelTouchRef, chatMountedRef, chatOutputRef, chatViewRef, clearModifiers, clipboardTimerRef, coarseRef, commitPendingText, composingRef, compositionCommitPendingRef, deferAttachRef, draftHeldForRef, draftPaneRef, endedRef, findOpenRef, fitRef, fittedRef, fixedGridRef, followCursorRef, followRef, frameGateRef, heldRef, hostRef, hyperlinksRef, keyboardHoldsRef, keyboardToggleFocusRef, leaveRef, lineScroll, machineId, machineSessions, mirroredRef, mirrorWrapRef, modifiersRef, modifyOtherKeysRef, narrowFontRef, noteClipboard, observeRef, onChatSuggestion, onInputRowFrameRef, onRoleAckRef, onServerMessageRef, openFileRef, openWebRef, osc52AllowedRef, outputTargetRef, palette, paneRef, pendingEpochRef, pendingScopeRef, pendingSubmissionsRef, pinchBadgeRef, pinchStatusRef, presentationRef, presentedRef, reassertIfStaleRef, reattachRef, redrawGreeting, releaseAwayRef, idleReleaseRef, setIdleView, releaseRef, releasedRef, retireOutputRef, secretRef, sessionRef, setChatInvalidation, setChatRefresh, setChatSent, setComposing, setConnected, setConnectedBefore, setConversationPushes, setDraft, setEnded, setHeld, setInputError, setInputReady, setObserving, setOutputError, setOutputReady, setParsedTarget, setReleased, setSecret, setSelectionQuote, setTerminal, setUnsupported, setWatching, sharedGridRef, shortcutSettings, shownRef, sizesPty, socketRef, stackRef, stalledRef, stopKeyRef, submitRetention, t, tRef, termRef, terminalFontSize, theme, updateSettings, uploadFileRef, attachFilesRef, watchingRef, wheelStateRef });
 
   useTerminalRefits({ activeRef, autoSelected, baseFontRef, pinchingRef, fontSettledRef, chatView, chatViewRef, coarseRef, findOpenRef, fitRef, fittedRef, fixedGridRef, follow, followCursorRef, keyboardHoldsRef, narrowFont, narrowFontFitted, observeRef, palette, paneRef, peekRef, sharedGridRef, shown, sizesPty, socketRef, termRef, terminalFontFamily, terminalFontSize, theme });
 
@@ -877,6 +879,20 @@ export function PaneTerminal({
 
   // Capture the owner's pane for the entire upload batch, even across a pane switch.
   const uploadImage = useCallback((file: File) => uploadPaneImage(paneId ?? "", file), [paneId]);
+  // the input line's Attach files: the batch goes beside this pane, all or none (one file too large
+  // and none is sent), as a drop's does; the line puts the paths in its draft, or says why not
+  const attachToLine = useCallback(async (files: File[]): Promise<readonly string[] | string> => {
+    try {
+      for (const file of files) assertAttachable(file);
+      const paths: string[] = [];
+      for (const file of files) paths.push(await uploadPaneImage(paneId ?? "", file));
+      return paths;
+    } catch (error) {
+      return error instanceof AttachmentTooLargeError ? error.message : plainError(error);
+    }
+  }, [paneId, uploadPaneImage]);
+  // the key bar's Attach files in direct typing: the paths are typed into the terminal, as a drop's are
+  const attachToGrid = useCallback((files: File[]) => attachFilesRef.current?.(files), []);
 
   useEffect(() => {
     if (!active || !paneId) return;
@@ -1313,14 +1329,15 @@ export function PaneTerminal({
           slot in the chat lens too (a box-less slot there, TerminalInput.css), so switching lenses
           keeps it mounted: a remount would drop what was typed and a send still on its way */}
       {((!chatView && lineSlot) || secretInput) && <div ref={setInputSlot} className={`terminal-input-slot${!chatView && lineSlot ? "" : " is-empty"}`}>
-        {secretInput ?? (!chatView && lineSlot && !secretActive && <TerminalInput key={paneId} ref={lineRef} active={active} owner={paneStorageId(machineId, paneId)} onComposing={setLineComposing} connected={connected && !held} onSend={sendTerminalLine} onEnter={pressEnter} onInsert={insertTerminalText} pasteTarget={pasteTarget} onPasting={setLinePasting} onFocus={reassertGrid} />)}
+        {secretInput ?? (!chatView && lineSlot && !secretActive && <TerminalInput key={paneId} ref={lineRef} active={active} owner={paneStorageId(machineId, paneId)} onComposing={setLineComposing} connected={connected && !held} onSend={sendTerminalLine} onEnter={pressEnter} onInsert={insertTerminalText} pasteTarget={pasteTarget} onPasting={setLinePasting} onFocus={reassertGrid} onAttach={attachToLine} />)}
       </div>}
       {presented && paneId !== null && !secretActive && !observing && !chatView && <KeyBar disabled={composing || !connected || !inputReady || held || ended} onKey={pressKey}
         holdScope={`${paneStorageId(machineId, paneId)}:${view}`}
         modifiers={modifiers} onToggleModifier={toggleModifier} items={settings.keyBarItems}
         {...(coarse ? { directTyping, onToggleDirect: toggleDirect, directDisabled: lineComposing, onPaste: pasteIntoLine, pasteDisabled: linePasting,
           note: pasteGuidance ? t("Tap Input line to paste.") : null, onNoteDismiss: dismissPasteGuidance,
-          onToggleKeyboard: toggleKeyboard, keyboardDisabled: !connected || !inputReady || held || ended, keyboardRefused: composing || lineComposing || linePasting } : {})} />}
+          onToggleKeyboard: toggleKeyboard, keyboardDisabled: !connected || !inputReady || held || ended, keyboardRefused: composing || lineComposing || linePasting,
+          ...(directTyping ? { onAttach: attachToGrid } : {}) } : {})} />}
     </div>
   );
 }

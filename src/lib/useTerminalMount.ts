@@ -10,6 +10,7 @@ import { EMPTY_DRAFT, applyToDraft, draftIsEmpty, type InputDraft } from "./draf
 import { pendingMessages } from "./pendingMessages.ts";
 import { FrameGate } from "./inputRow.ts";
 import { AttachmentTooLargeError, assertAttachable, fetchPaneScroll, fetchPaneSelection, scrollPane } from "./api.ts";
+import { quotePanePaths } from "./terminalAttach.ts";
 import { parseOsc52 } from "./osc52.ts";
 import { matchHerdrWidths } from "./terminalWidths.ts";
 import { paneStorageId } from "../../shared/machines.ts";
@@ -161,12 +162,14 @@ export interface TerminalMountDeps {
   theme: ResolvedTheme;
   updateSettings: (patch: Partial<Settings>) => void;
   uploadFileRef: RefObject<(pane: string, image: Blob) => Promise<string>>;
+  /** set while a terminal is mounted: uploads picked files and pastes their paths, as a drop does (the key bar's Attach) */
+  attachFilesRef: RefObject<((files: File[]) => void) | null>;
   watchingRef: RefObject<boolean>;
   wheelStateRef: RefObject<{ speed: number; omoQuestion: boolean; }>;
 }
 
 export function useTerminalMount(deps: TerminalMountDeps): void {
-  const { activeRef, barKeyRef, baseFontRef, pinchingRef, cachedRef, cachedReleaseRef, cancelLeaveRef, cancelTouchRef, chatMountedRef, chatOutputRef, chatViewRef, clearModifiers, clipboardTimerRef, coarseRef, commitPendingText, composingRef, compositionCommitPendingRef, deferAttachRef, draftHeldForRef, draftPaneRef, endedRef, findOpenRef, fitRef, fittedRef, fixedGridRef, followCursorRef, followRef, frameGateRef, heldRef, hostRef, hyperlinksRef, keyboardHoldsRef, keyboardToggleFocusRef, leaveRef, lineScroll, machineId, machineSessions, mirroredRef, mirrorWrapRef, modifiersRef, modifyOtherKeysRef, narrowFontRef, noteClipboard, observeRef, onChatSuggestion, onInputRowFrameRef, onRoleAckRef, onServerMessageRef, openFileRef, openWebRef, osc52AllowedRef, outputTargetRef, palette, paneRef, pendingEpochRef, pendingScopeRef, pendingSubmissionsRef, pinchBadgeRef, pinchStatusRef, presentationRef, presentedRef, reassertIfStaleRef, reattachRef, redrawGreeting, releaseAwayRef, idleReleaseRef, setIdleView, releaseRef, releasedRef, retireOutputRef, secretRef, sessionRef, setChatInvalidation, setChatRefresh, setChatSent, setComposing, setConnected, setConnectedBefore, setConversationPushes, setDraft, setEnded, setHeld, setInputError, setInputReady, setObserving, setOutputError, setOutputReady, setParsedTarget, setReleased, setSecret, setSelectionQuote, setTerminal, setUnsupported, setWatching, sharedGridRef, shortcutSettings, shownRef, sizesPty, socketRef, stackRef, stalledRef, stopKeyRef, submitRetention, t, tRef, termRef, terminalFontSize, theme, updateSettings, uploadFileRef, watchingRef, wheelStateRef } = deps;
+  const { activeRef, barKeyRef, baseFontRef, pinchingRef, cachedRef, cachedReleaseRef, cancelLeaveRef, cancelTouchRef, chatMountedRef, chatOutputRef, chatViewRef, clearModifiers, clipboardTimerRef, coarseRef, commitPendingText, composingRef, compositionCommitPendingRef, deferAttachRef, draftHeldForRef, draftPaneRef, endedRef, findOpenRef, fitRef, fittedRef, fixedGridRef, followCursorRef, followRef, frameGateRef, heldRef, hostRef, hyperlinksRef, keyboardHoldsRef, keyboardToggleFocusRef, leaveRef, lineScroll, machineId, machineSessions, mirroredRef, mirrorWrapRef, modifiersRef, modifyOtherKeysRef, narrowFontRef, noteClipboard, observeRef, onChatSuggestion, onInputRowFrameRef, onRoleAckRef, onServerMessageRef, openFileRef, openWebRef, osc52AllowedRef, outputTargetRef, palette, paneRef, pendingEpochRef, pendingScopeRef, pendingSubmissionsRef, pinchBadgeRef, pinchStatusRef, presentationRef, presentedRef, reassertIfStaleRef, reattachRef, redrawGreeting, releaseAwayRef, idleReleaseRef, setIdleView, releaseRef, releasedRef, retireOutputRef, secretRef, sessionRef, setChatInvalidation, setChatRefresh, setChatSent, setComposing, setConnected, setConnectedBefore, setConversationPushes, setDraft, setEnded, setHeld, setInputError, setInputReady, setObserving, setOutputError, setOutputReady, setParsedTarget, setReleased, setSecret, setSelectionQuote, setTerminal, setUnsupported, setWatching, sharedGridRef, shortcutSettings, shownRef, sizesPty, socketRef, stackRef, stalledRef, stopKeyRef, submitRetention, t, tRef, termRef, terminalFontSize, theme, updateSettings, uploadFileRef, attachFilesRef, watchingRef, wheelStateRef } = deps;
 
     // Where this terminal is: its pane, and whether it is active, presented, shown and not the chat view.
     // Counted on every commit that changes it: an explicit copy still waiting for herdr's text is
@@ -1530,11 +1533,12 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         try {
           // the paths of a batch are pasted together: one file too large and none is uploaded
           for (const file of files) assertAttachable(file);
+          noteClipboard(tRef.current(files.length === 1 ? "Uploading file…" : "Uploading files…"));
           const paths: string[] = [];
           for (const file of files) paths.push(await uploadFileRef.current(pane, file));
           // An upload can finish after the user has switched panes or lost input access.
           if (paneRef.current !== pane || !activeRef.current || chatViewRef.current || !socket.connected || term.options.disableStdin) return;
-          pasteText(paths.map((path) => `'${path.replaceAll("'", "'\\''")}'`).join(" ") + " ");
+          pasteText(quotePanePaths(paths) + " ");
           if (activeRef.current && !findOpenRef.current) term.focus();
         } catch (error) {
           // a file over the limit already says which file and the limit, in the UI language
@@ -1574,6 +1578,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
       host.addEventListener("paste", onFilePaste, { capture: true });
       host.addEventListener("dragover", onDragOver);
       host.addEventListener("drop", onDrop);
+      attachFilesRef.current = uploadFiles;
 
       // Dragging a window edge fires this every frame. Each resize of the pty makes herdr
       // reflow the pane and the program in it redraw (Claude Code repaints its whole
@@ -2222,6 +2227,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         host.removeEventListener("paste", onFilePaste, { capture: true });
         host.removeEventListener("dragover", onDragOver);
         host.removeEventListener("drop", onDrop);
+        if (attachFilesRef.current === uploadFiles) attachFilesRef.current = null;
         offDisconnect();
         editor?.removeEventListener("input", noteRefusedText, true);
         // frames still waiting are a retired terminal's: nothing writes or acknowledges them

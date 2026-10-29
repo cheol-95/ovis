@@ -3257,6 +3257,22 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   draft with a separate no-Enter insert; agent-of-empires' compose sheet has Insert beside Send but
   clears its draft on a synchronous boolean, which this design rejects: the draft is cleared on the
   bridge's acknowledgement, as Send's is, and nothing typed is queued across a disconnect.
+- On a touch screen the terminal lens takes files from the system's picker (`<input type="file"
+  multiple>`, opened from the tap itself), in rows it already has, so no height is added. The input
+  line has **Attach files** (`.terminal-input-attach`, lucide paperclip, its words "Attach") first
+  of its actions, drawn as Insert is; in direct typing the key bar has it (`[data-key="attach"]`)
+  after the keyboard control, a Tab stop like that control. The files go up one after another
+  through `POST /api/pane/image`, the route a drop and a file paste use, so they are stored beside
+  the pane (`<cwd>/.ovis`), size-checked before any is read (one file too large and none of the
+  pick goes) and behind the same sign-in. In the line their single-quoted paths join the draft at
+  its caret (in place of a selection), a space on either side where there is none, for the user to
+  send with the rest of the line; nothing is sent, and paths that would pass the line's limit are
+  not put in (a cut path names another file). In direct typing they are typed into the terminal
+  with a trailing space and no Enter, exactly as a drop is. "Uploading files…" stands under the
+  line (its dim `.is-pending` note) or in the terminal's banner while they go, and a failure says
+  why there. This follows the app's own composer **Attach files** and the upload action mobile SSH
+  clients keep beside their terminal input; it differs in what comes back: paths in the line or
+  the terminal, not tiles, since a terminal program reads a path and nothing else.
 
 ### In-app alert
 - While the app is on screen, a pane that needs input, finishes a turn (by the device's Finished
