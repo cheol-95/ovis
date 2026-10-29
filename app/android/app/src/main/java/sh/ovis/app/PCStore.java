@@ -15,6 +15,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -197,6 +198,32 @@ final class PCStore {
             else if (https || publicHttp(hop)) return hop;
         }
         return null;
+    }
+
+    /**
+     * Whether a redirect of the address being opened (`from`) to `target`, an origin that did not answer
+     * as Ovis, may open in the WebView as a sign-in in front of the PC (Cloudflare Access, oauth2-proxy
+     * and the like): not over public plain http or from https to http, as insecureHop decides for a
+     * way to Ovis.
+     */
+    static boolean signInAllowed(String from, String target) {
+        String place = origin(target);
+        return place != null && insecureHop(from, Collections.singletonList(place)) == null;
+    }
+
+    /**
+     * Whether a main-frame navigation to `url` stays in the WebView while a sign-in in front of the PC
+     * runs: an http or https page of any host but the app's own (`appHost`), whose addresses Capacitor
+     * serves itself, with the bridge, and keeps for its own decision.
+     */
+    static boolean staysWhileSigningIn(String url, String appHost) {
+        if (origin(url) == null) return false;
+        try {
+            String host = new URI(url).getHost();
+            return host != null && !host.equalsIgnoreCase(appHost);
+        } catch (URISyntaxException e) {
+            return false;
+        }
     }
 
     private static final Pattern IPV4 = Pattern.compile("^(0|[1-9]\\d{0,2})\\.(0|[1-9]\\d{0,2})\\.(0|[1-9]\\d{0,2})\\.(0|[1-9]\\d{0,2})$");

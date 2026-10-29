@@ -205,8 +205,12 @@ What is there:
   more, which is what a phone with Tailscale off sees for a `.ts.net` address, and while that
   connection hangs it did not paint the error page either). When a Tailscale address fails to
   load, `error.html` (on Android too) adds the same note. A redirect of the address being opened
-  to another origin is handled as on Android (see [The Android app](#the-android-app)), where
-  Capacitor would send another host to Safari.
+  to another origin is handled as on Android (see [The Android app](#the-android-app)), a sign-in
+  in front of the PC included, where Capacitor would send another host to Safari. Capacitor's iOS
+  bridge script runs in every main frame and its `bridge` message handler answers any page, so
+  `BridgeOriginGate` takes that handler's place and passes on only the messages of a main frame
+  on the PC's origin or the app's own (`capacitor://localhost`, the connect and error pages): a
+  sign-in page, or another port of the PC's host, gets no answer, as on Android.
   WebKit has no public mark for a redirect, so until the first page commits,
   `NavigationFailureProxy` takes any main-frame action to another origin that comes while the
   main frame's navigation has not committed for one. Its question to `/api/health` is a
@@ -410,11 +414,24 @@ pieces are the Java twins of the iOS ones, in `app/android/app/src/main/java/sh/
   lookup, which Android cannot cut short, can add a few). An origin that answers as Ovis
   (http to https, an IP address to the PC's name, another port) becomes the PC and opens again as
   the first page, with the bridge: it gets nothing the address's own page would not have had.
-  Anything else, such as a sign-in page, another site or a loop, gets no bridge and is not saved,
-  and the error page names where the address led. After five PCs in a row made this way, the next
-  redirect ends on the error page too. Once the first page shows, Capacitor decides on redirects
-  as before: one could then come from a link to a page that is not the PC's (another port on its
-  host), which must not choose the PC.
+  Anything else is taken for a sign-in in front of the PC: Cloudflare Access, oauth2-proxy,
+  Authelia, Pomerium and the like redirect there until their cookie is set. It opens in the
+  WebView without the bridge, is never saved and never becomes the PC, and until a page of the PC
+  shows, every main-frame http or https navigation stays in the WebView (`PCStore.staysWhileSigningIn`):
+  the sign-in's own pages, an identity provider's and the way back to the PC. In the browser
+  Capacitor would hand them to, signing in would not help, as the WebView does not share its
+  cookies; in the WebView the sign-in cookie lands in the store the PC's page then uses, which
+  `onPause` flushes. The app's own host stays Capacitor's to decide (its pages have the bridge),
+  and so do other schemes. A sign-in reached over public plain http or from https to http
+  (`PCStore.signInAllowed`), and a WebView without `WEB_MESSAGE_LISTENER` (where Capacitor would
+  give its bridge to every page), end on the error page, which names where the address led, as does
+  the next redirect after five PCs in a row made this way. Identity providers that refuse an
+  embedded web view (Google answers `disallowed_useragent`) still fail; Access's one-time PIN,
+  GitHub and most others work. A sign-in that ends on another Ovis origin than the one opened (an
+  `http` address the proxy moves to `https`) loads there without the bridge and is not saved: open
+  that address itself. Once the first page shows, Capacitor decides on redirects as before: one
+  could then come from a link to a page that is not the PC's (another port on its host), which must
+  not choose the PC.
 - `file_paths.xml` shares only the app's external Pictures folder, where Capacitor puts a photo
   taken for a file input.
 - `build-web.ts` leaves out the client build's `.gz` and `.br` sidecars. The app reads files

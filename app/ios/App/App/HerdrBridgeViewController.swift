@@ -112,6 +112,42 @@ enum PCStore {
         return url.port.map { "\(scheme)://\(shownHost):\($0)" } ?? "\(scheme)://\(shownHost)"
     }
 
+    /// Whether a redirect of the address being opened (`from`) to `target`, an origin that did not
+    /// answer as Ovis, may open in the web view as a sign-in in front of the PC (Cloudflare Access,
+    /// oauth2-proxy and the like): not over public plain http or from https to http, as `insecureHop`
+    /// decides for a way to Ovis.
+    static func signInAllowed(from: String?, target: URL) -> Bool {
+        guard let place = origin(of: target) else { return false }
+        return insecureHop(from: from, path: [place]) == nil
+    }
+
+    /// Whether a main-frame navigation to `url` stays in the web view while a sign-in in front of the
+    /// PC runs: an http or https page. The app's own pages (`capacitor://`) stay Capacitor's to decide.
+    static func staysWhileSigningIn(_ url: URL) -> Bool {
+        origin(of: url) != nil
+    }
+
+    /// `scheme://host[:port]` of a page's security origin, written as `origin(of:)` writes one; WebKit
+    /// gives 0 for a scheme's default port.
+    static func origin(scheme: String, host: String, port: Int) -> String {
+        let bare = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        let shownHost = bare.contains(":") ? "[\(bare)]" : bare
+        return port == 0 ? "\(scheme.lowercased())://\(shownHost)" : "\(scheme.lowercased())://\(shownHost):\(port)"
+    }
+
+    /// Whether `a` and `b` are one origin, a scheme's default port written or left out.
+    static func sameOrigin(_ a: String, _ b: String) -> Bool {
+        guard let first = canonical(a), let second = canonical(b) else { return false }
+        return first == second
+    }
+
+    private static func canonical(_ origin: String) -> String? {
+        guard let url = URL(string: origin), let scheme = url.scheme?.lowercased(),
+              let host = url.host?.lowercased(), !host.isEmpty else { return nil }
+        let port = url.port.flatMap { (scheme == "http" && $0 == 80) || (scheme == "https" && $0 == 443) ? nil : $0 }
+        return Self.origin(scheme: scheme, host: host, port: port ?? 0)
+    }
+
     /// The origin of the Ovis server that `target` leads to, or nil. Asks `/api/health?scope=bridge`,
     /// which Ovis answers to anyone so a client can find its gate, and follows at most `maxRedirects`
     /// redirects of that request: a sign-in page, another site, a loop or no answer is not Ovis. Only
@@ -406,6 +442,13 @@ class HerdrBridgeViewController: CAPBridgeViewController {
             }
             failureProxy = proxy
             webView.navigationDelegate = proxy
+            // Capacitor injects its bridge into every main frame and answers any page's message: a
+            // sign-in in front of the PC, or another port of its host, would get the PC's plugins
+            if let capacitor = proxy.innerMessageHandler, let current = PCStore.current, let local = bridge?.config.localURL {
+                let controller = webView.configuration.userContentController
+                controller.removeScriptMessageHandler(forName: BridgeOriginGate.name)
+                controller.add(BridgeOriginGate(inner: capacitor, origins: [current, local.absoluteString]), name: BridgeOriginGate.name)
+            }
         }
         super.viewDidLoad()
         if let webView = webView, let origin = PCStore.current {
@@ -556,6 +599,28 @@ private final class WebViewWithoutFormBar: WKWebView {
     override var inputAccessoryView: UIView? { nil }
 }
 
+/// Capacitor's bridge for the pages of `origins` only (the PC's and the app's own, the connect and
+/// error pages), in their main frame, as Android's bridge takes the PC's origin alone. Any other page
+/// the web view shows, such as a sign-in in front of the PC, gets no answer.
+final class BridgeOriginGate: NSObject, WKScriptMessageHandler {
+    /// The message handler Capacitor's bridge script posts to.
+    static let name = "bridge"
+    private weak var inner: WKScriptMessageHandler?
+    private let origins: [String]
+
+    init(inner: WKScriptMessageHandler, origins: [String]) {
+        self.inner = inner
+        self.origins = origins
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        let frame = message.frameInfo
+        let page = PCStore.origin(scheme: frame.securityOrigin.protocol, host: frame.securityOrigin.host, port: frame.securityOrigin.port)
+        guard frame.isMainFrame, origins.contains(where: { PCStore.sameOrigin($0, page) }) else { return }
+        inner?.userContentController(userContentController, didReceive: message)
+    }
+}
+
 /// Passes every navigation callback to Capacitor's own delegate and reports a main-frame load
 /// that failed, such as a PC that is off or one that answers with an HTTP error, with its reason.
 /// A load cancelled on purpose (a link handed to Safari, a new navigation) is not a failure.
@@ -582,11 +647,17 @@ final class NavigationFailureProxy: NSObject, WKNavigationDelegate {
     /// Whether the main frame's first page has committed: from then on a user could have followed a
     /// link from it.
     private var pageShown = false
+    /// Whether a sign-in in front of the PC (Cloudflare Access and the like) is open, until a page of
+    /// the PC commits: its pages stay in the web view.
+    private var signingIn = false
 
     init(inner: WKNavigationDelegate?, onFailure: @escaping (WKWebView, String) -> Void) {
         self.inner = inner
         self.onFailure = onFailure
     }
+
+    /// Capacitor's delegate, which also takes its bridge's messages.
+    var innerMessageHandler: WKScriptMessageHandler? { inner as? WKScriptMessageHandler }
 
     override func responds(to aSelector: Selector!) -> Bool {
         super.responds(to: aSelector) || (inner?.responds(to: aSelector) ?? false)
@@ -619,6 +690,15 @@ final class NavigationFailureProxy: NSObject, WKNavigationDelegate {
     /// as a link could lead to a page that is not the PC's (another port on its host), which must not
     /// choose the PC.
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        // A sign-in in front of the PC goes on in the web view, where its cookie lands in the store the
+        // PC's page then uses: its own pages, an identity provider's and the way back to the PC.
+        // Capacitor would hand Safari every other host, whose cookies the web view does not share.
+        // BridgeOriginGate keeps the bridge from them.
+        if signingIn, navigationAction.targetFrame?.isMainFrame == true,
+           let url = navigationAction.request.url, PCStore.staysWhileSigningIn(url) {
+            decisionHandler(.allow)
+            return
+        }
         if !pageShown, provisional, navigationAction.targetFrame?.isMainFrame == true,
            let current = PCStore.current, let url = navigationAction.request.url,
            let next = PCStore.origin(of: url), next != current {
@@ -635,10 +715,11 @@ final class NavigationFailureProxy: NSObject, WKNavigationDelegate {
 
     /// A redirect of the address being opened to another origin: when that origin answers as Ovis it
     /// becomes the PC and opens as the first page (http to https, an IP address to the PC's name,
-    /// another port). Anything else, such as a sign-in page, gets no bridge and the error page names
-    /// it: a PC address that leads elsewhere is not a PC. A way that goes over public plain http, or
-    /// from https to http, does not switch on its own: the connect screen warns before a public http
-    /// address.
+    /// another port). Anything else is taken for a sign-in in front of the PC (Cloudflare Access,
+    /// oauth2-proxy and the like): it opens in the web view without the bridge, is never saved and
+    /// never becomes the PC, and its pages stay in the web view until a page of the PC commits. A way
+    /// that goes over public plain http, or from https to http, does not switch on its own, to Ovis or
+    /// to a sign-in: the connect screen warns before a public http address.
     private func follow(_ target: URL, from: String, in webView: WKWebView) {
         let tooMany = PCStore.redirects >= PCStore.maxRedirects
         Task { @MainActor [weak self, weak webView] in
@@ -654,9 +735,12 @@ final class NavigationFailureProxy: NSObject, WKNavigationDelegate {
                 PCStore.last = ovis
                 PCStore.pendingStart = PCStore.start(on: ovis, for: target)
                 HerdrBridgeViewController.reopen()
+            } else if !tooMany, PCStore.signInAllowed(from: from, target: target) {
+                self.signingIn = true
+                webView.load(URLRequest(url: target))
             } else {
                 let place = PCStore.origin(of: target) ?? target.absoluteString
-                let reason = tooMany ? "Too many redirects" : "It redirected to \(place), which did not answer as Ovis. If that is your PC, open \(place) itself."
+                let reason = tooMany ? "Too many redirects" : "It redirected over plain http to \(place), which the app does not follow on its own."
                 self.onFailure(webView, reason)
             }
         }
@@ -670,6 +754,11 @@ final class NavigationFailureProxy: NSObject, WKNavigationDelegate {
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         provisional = false
         pageShown = true
+        // a page of the PC ends a sign-in in front of it: Capacitor decides on other hosts again
+        if let url = webView.url, let origin = PCStore.origin(of: url), let current = PCStore.current,
+           PCStore.sameOrigin(origin, current) {
+            signingIn = false
+        }
         inner?.webView?(webView, didCommit: navigation)
     }
 

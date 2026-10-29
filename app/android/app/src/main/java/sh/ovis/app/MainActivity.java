@@ -63,6 +63,12 @@ public class MainActivity extends BridgeActivity {
     /** Whether a page has shown in this activity: from then on a user could have followed a link from it. */
     private boolean pageShown;
 
+    /**
+     * Whether a sign-in in front of the PC (Cloudflare Access and the like) is open, until a page of the
+     * PC shows: its pages stay in the WebView, without the bridge.
+     */
+    private boolean signingIn;
+
     /** The page's theme-color the system bars took, put back after a configuration change. */
     private Integer barColor;
 
@@ -148,6 +154,13 @@ public class MainActivity extends BridgeActivity {
                                 return true;
                             }
                         }
+                        // A sign-in in front of the PC goes on in the WebView, where its cookie lands in the
+                        // store the PC's page then uses: its own pages, an identity provider's and the way
+                        // back to the PC. Capacitor would give the browser every other host, whose cookies
+                        // the WebView does not share. The bridge stays with the PC's origin.
+                        if (signingIn && request.isForMainFrame() && PCStore.staysWhileSigningIn(url.toString(), bridge.getHost())) {
+                            return false;
+                        }
                         // Capacitor gives the browser any other host or scheme, redirects included. Until the
                         // first page shows, a redirect can only come from the address being opened
                         if (!pageShown && request.isForMainFrame() && request.isRedirect()) {
@@ -197,6 +210,8 @@ public class MainActivity extends BridgeActivity {
                     public void onPageCommitVisible(WebView webView, String url) {
                         // the main frame's first page is on screen, before its pictures or scripts finish
                         pageShown = true;
+                        // a page of the PC ends a sign-in in front of it: Capacitor decides on other hosts again
+                        if (origin.equals(PCStore.origin(url))) signingIn = false;
                     }
 
                     @Override
@@ -311,13 +326,16 @@ public class MainActivity extends BridgeActivity {
     /**
      * A redirect of the address being opened to another origin, held back: when that origin answers as
      * Ovis it becomes the PC and opens as the first page, with the bridge (http to https, an IP address
-     * to the PC's name, another port). Anything else, such as a sign-in page, gets no bridge and the
-     * error page names it: a PC address that leads elsewhere is not a PC. The address's own page would
-     * get the bridge too, so the place it leads to gets nothing more. Once the first page shows,
+     * to the PC's name, another port). Anything else is taken for a sign-in in front of the PC
+     * (Cloudflare Access, oauth2-proxy and the like): it opens in the WebView without the bridge, is
+     * never saved and never becomes the PC, and its pages stay in the WebView until a page of the PC
+     * shows. A WebView without WEB_MESSAGE_LISTENER would hand Capacitor's bridge to every page, so
+     * there the error page names where the address led instead. The address's own page would get the
+     * bridge too, so the place it leads to gets nothing more. Once the first page shows,
      * Capacitor decides on redirects again: one could then come from a link to a page that is not the
      * PC's (another port on its host), which must not choose the PC. A way that goes over public plain
-     * http, or from https to http, does not switch on its own: the connect screen warns before a
-     * public http address.
+     * http, or from https to http, does not switch on its own, to Ovis or to a sign-in: the connect
+     * screen warns before a public http address.
      */
     private void followRedirect(String from, String target) {
         boolean tooMany = PCStore.redirects >= PCStore.MAX_REDIRECTS;
@@ -334,9 +352,18 @@ public class MainActivity extends BridgeActivity {
                     PCStore.redirects++;
                     PCStore.open(this, ovis, PCStore.startOn(ovis, target));
                     reopen();
+                } else if (
+                    !tooMany &&
+                    PCStore.signInAllowed(from, target) &&
+                    WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)
+                ) {
+                    signingIn = true;
+                    bridge.getWebView().loadUrl(target);
                 } else {
                     String place = PCStore.origin(target);
-                    PCStore.failure = tooMany ? "Too many redirects" : "It redirected to " + place + ", which did not answer as Ovis. If that is your PC, open " + place + " itself.";
+                    if (tooMany) PCStore.failure = "Too many redirects";
+                    else if (!PCStore.signInAllowed(from, target)) PCStore.failure = "It redirected over plain http to " + place + ", which the app does not follow on its own.";
+                    else PCStore.failure = "It redirected to " + place + ", which did not answer as Ovis. If that is your PC, open " + place + " itself.";
                     bridge.getWebView().loadUrl(bridge.getErrorUrl());
                 }
             });

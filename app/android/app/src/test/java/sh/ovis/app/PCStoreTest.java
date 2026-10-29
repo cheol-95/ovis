@@ -189,6 +189,35 @@ public class PCStoreTest {
     }
 
     @Test
+    public void aSignInInFrontOfThePcOpensUnlessItsWayGoesOverPublicHttpOrFromHttpsToHttp() {
+        assertTrue(PCStore.signInAllowed("https://ovis.example.com", "https://team.cloudflareaccess.com/cdn-cgi/access/login/ovis.example.com?kid=1&redirect_url=%2F"));
+        assertTrue(PCStore.signInAllowed("http://10.0.2.2:7491", "http://127.0.0.1:7492/login"));
+        assertTrue(PCStore.signInAllowed("http://100.64.0.1", "http://auth.tail1234.ts.net/"));
+        assertTrue(PCStore.signInAllowed("http://100.64.0.1", "https://auth.example.com/"));
+        // from https to http, or to a public http address
+        assertFalse(PCStore.signInAllowed("https://ovis.example.com", "http://auth.example.com/login"));
+        assertFalse(PCStore.signInAllowed("https://pc.tail1234.ts.net", "http://100.64.0.2/login"));
+        assertFalse(PCStore.signInAllowed("http://100.64.0.1", "http://auth.example.com/login"));
+        // not a web address at all
+        assertFalse(PCStore.signInAllowed("https://ovis.example.com", "intent://scan/#Intent;scheme=zxing;end"));
+        assertFalse(PCStore.signInAllowed("https://ovis.example.com", "https://"));
+    }
+
+    @Test
+    public void whileSigningInOnlyWebPagesOfAnotherHostThanTheAppsStay() {
+        assertTrue(PCStore.staysWhileSigningIn("https://github.com/login/oauth/authorize?client_id=x", "localhost"));
+        assertTrue(PCStore.staysWhileSigningIn("https://team.cloudflareaccess.com/cdn-cgi/access/callback?code=1", "localhost"));
+        assertTrue(PCStore.staysWhileSigningIn("http://127.0.0.1:7493/approve", "localhost"));
+        // the app's own host, which Capacitor serves with the bridge (its http proxy included)
+        assertFalse(PCStore.staysWhileSigningIn("https://localhost/_capacitor_http_interceptor_?u=https%3A%2F%2Fevil.example", "localhost"));
+        assertFalse(PCStore.staysWhileSigningIn("http://LOCALHOST:8080/", "localhost"));
+        // another scheme: an app, a store, mail
+        assertFalse(PCStore.staysWhileSigningIn("intent://scan/#Intent;scheme=zxing;end", "localhost"));
+        assertFalse(PCStore.staysWhileSigningIn("market://details?id=com.example", "localhost"));
+        assertFalse(PCStore.staysWhileSigningIn("mailto:someone@example.com", "localhost"));
+    }
+
+    @Test
     public void publicHttpIsWhatTheConnectScreenWarnsAbout() {
         // a number in any form but a plain dotted quad is some IPv4 address to the web view, never judged private
         for (String warned : new String[] {"http://8.8.8.8", "http://172.15.0.1", "http://100.128.0.1", "http://[2001:db8::1]", "http://pc.example.com", "http://134744072:7421", "http://010.0.0.1", "http://0x8.8.8.8", "http://10.0.0.256", "http://134217729", "http://0x08000001"}) {
