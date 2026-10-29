@@ -241,10 +241,13 @@ export function App() {
   const setupGuide = useSetupGuide({
     enabled: locked === false,
     workspaces: machineRosterLoaded && localSnapshot !== null ? localSnapshot.workspaces.length : null,
-    pairingGate: security.state === "loading" ? undefined : security.state === "known" ? security.summary.pairing_gate : null,
+    // undefined holds the decision until the access facts and this device's role are in: a failed read decides nothing
+    pairingGate: security.state === "loading" || security.state === "error" || auth === null ? undefined : security.state === "known" ? security.summary.pairing_gate : null,
     watching: auth?.role === "watch",
+    selection: { machineId: selectedMachineId, paneId: selectedPaneId, auto: autoSelected },
   });
   const guideShown = setupGuide.guide !== null && !setupGuide.paused;
+
 
   const unlock = useCallback(() => {
     setLocked(false);
@@ -287,12 +290,6 @@ export function App() {
   const { selectedMachineRef, selectTarget, selectTargetRef, picks } = useSelectTarget({ selectedMachineId, setConnected, setConnectedBefore, setSelectedMachineId, setSelectedPaneId, setAutoSelected, setDrawerOpen, setOutputStopped, setNotificationViewTarget, setTerminalPeek, pendingLink, pendingFile, setLinkLanded, selectionHint, selectionSince, rosterSeq, snapshot, selectedMachine, selectedPaneId, setHeaderNote, linkTick, movingPanes });
 
   const { selectPane } = useSelectPane({ pendingLink, pendingFile, setLinkLanded, selectionHint, setSelectedPaneId, setNotificationViewTarget, setTerminalPeek, setAutoSelected, setDrawerOpen });
-
-  // a row picked in the sidebar or the palette is the user's to see: the setup guide steps aside for it
-  const selectFromList: typeof selectTarget = (...args) => {
-    if (setupGuide.guide !== null) setupGuide.pause();
-    return selectTarget(...args);
-  };
 
   const layoutRefused = useLayoutRefused(setLayoutNotice, t);
   const moveRefused = useMoveRefused(setLayoutNotice, t);
@@ -734,7 +731,7 @@ export function App() {
           {/* a sidebar that cannot be drawn leaves the panes working */}
           <RenderBoundary resetKey={null} fallback={(retry) => <RegionCrash message={t("The sidebar can't be shown.")} retry={retry} />}>
             <CrashProbe region="sidebar" />
-            <ReorderContext.Provider value={reorderCoordinator}><MachineSidebar machines={sidebarMachines} hiddenCount={machines.length - sidebarMachines.length} watching={auth?.role === "watch"} drawerOpen={drawerOpen} filterRequest={sidebarFilterRequest} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} activity={activity} actions={actions} onSelect={selectFromList} onUsageLogin={(paneId) => { selectTarget("local", paneId, "terminal"); void load(); }} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} /></ReorderContext.Provider>
+            <ReorderContext.Provider value={reorderCoordinator}><MachineSidebar machines={sidebarMachines} hiddenCount={machines.length - sidebarMachines.length} watching={auth?.role === "watch"} drawerOpen={drawerOpen} filterRequest={sidebarFilterRequest} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} activity={activity} actions={actions} onSelect={selectTarget} onUsageLogin={(paneId) => { selectTarget("local", paneId, "terminal"); void load(); }} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} /></ReorderContext.Provider>
           </RenderBoundary>
           <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />
         </aside>
@@ -757,9 +754,12 @@ export function App() {
         {pairedNotices.length > 0 && <DevicePairedNotice events={pairedNotices} onDismiss={dismissPairedNotice} onOpen={(event) => { dismissPairedNotice(event); setSettingsLinkPage("devices"); setSettingsOpen(true); }} />}
         {/* the pane's tab, or two tabs side by side (lib/split.ts): a tab dragged down out of its strip,
             or a sidebar row dragged over this area, opens its pane in the half it is dropped on */}
-        {guideShown ? <SetupGuide state={setupGuide.guide!} dispatch={setupGuide.dispatch} onClose={setupGuide.close} onEnableNotifications={enableNotifications}
-          onOpenTerminal={(paneId) => { setupGuide.pause(); selectTarget("local", paneId, "terminal"); void load(); }}
-          onOpened={(paneId, agentStarted) => { setupGuide.close(); if (agentStarted) actions.agentStarted("local", paneId); selectTarget("local", paneId); void load(); }} /> :
+        {/* kept mounted while it steps aside, so a sign-in or a workspace being made goes on where it was; it is this PC's setup */}
+        {setupGuide.guide !== null && <MachineContext.Provider value="local"><SetupGuide hidden={setupGuide.paused} state={setupGuide.guide} dispatch={setupGuide.dispatch} onClose={setupGuide.close} onEnableNotifications={enableNotifications}
+          // the tab was just made: picked before the roster has it, the pick would be released as a closed pane
+          onOpenTerminal={(paneId) => { void load().finally(() => selectTarget("local", paneId, "terminal")); }}
+          onOpened={(paneId, agentStarted) => { setupGuide.close(); if (agentStarted) actions.agentStarted("local", paneId); selectTarget("local", paneId); void load(); }} /></MachineContext.Provider>}
+        {guideShown ? null :
         <div ref={paneAreaRef} className={`pane-split${splitOn ? " is-split" : ""}`} onDragEnterCapture={paneDragOver} onDragOverCapture={paneDragOver} onDragLeave={paneDragLeave} onDropCapture={paneDrop}>
           {(["a", "b"] as const).map((slot) => {
             // one pane: the solo slot, or a split's active half where the window is too narrow for both
@@ -992,7 +992,7 @@ export function App() {
         <FileViewer key={viewing.path} path={viewing.path} paneId={viewing.paneId} onClose={closeFile} onOpen={(path) => openFile({ ...viewing, path, presentation })} onKind={reportFileKind} onTogglePresentation={toggleFilePresentation} keyboardActive={!settingsOpen} />
       </MachineContext.Provider>}
       {unsentFor && <UnsentTextDialog machines={machines} canRecover={unsentFor.pane.agent != null} onClose={closeUnsent} onRecover={recover} />}
-      <CommandPalette key={selectedMachineId} machines={sidebarMachines} onSelect={selectFromList} open={paletteOpen} initialQuery={paletteQuery} onClose={() => setPaletteOpen(false)} snapshot={snapshot} online={selectedMachine?.state === "connected"} selectedPaneId={selectedPaneId}
+      <CommandPalette key={selectedMachineId} machines={sidebarMachines} onSelect={selectTarget} open={paletteOpen} initialQuery={paletteQuery} onClose={() => setPaletteOpen(false)} snapshot={snapshot} online={selectedMachine?.state === "connected"} selectedPaneId={selectedPaneId}
         // a peek shows the terminal: its toggle says Switch to chat, which ends the peek
         view={terminalPeek !== null ? "terminal" : view} actions={actions} watching={auth?.role === "watch"} />
       <MarkdownLinkMenu />

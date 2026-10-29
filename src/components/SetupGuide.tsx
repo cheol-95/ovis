@@ -39,6 +39,8 @@ const FOLDERS_SHOWN = 3;
 
 export interface SetupGuideProps {
   state: GuideState;
+  /** stepped aside for a pane the user went to: kept mounted, so what runs goes on */
+  hidden?: boolean;
   dispatch: (event: GuideEvent) => void;
   /** I've used Ovis before, Skip setup, or the first workspace opened */
   onClose: () => void;
@@ -52,7 +54,7 @@ export interface SetupGuideProps {
 const basename = (path: string): string => path.replace(/\\/g, "/").replace(/\/+$/, "").split("/").pop() || path;
 
 export function SetupGuide(props: SetupGuideProps) {
-  const { state, onClose } = props;
+  const { state, onClose, hidden = false } = props;
   const t = useT();
   const [catalog, setCatalog] = useState<AgentCatalogRow[] | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -63,9 +65,14 @@ export function SetupGuide(props: SetupGuideProps) {
   useEffect(loadCatalog, []);
   const row = catalog?.find((candidate) => candidate.id === state.agent) ?? null;
 
-  if (state.step === "welcome") return <Welcome dispatch={props.dispatch} onClose={onClose} />;
+  const step = state.step;
+  useEffect(() => {
+    if (step !== "welcome" && !hidden) document.getElementById("setup-step-title")?.focus({ preventScroll: true });
+  }, [step, hidden]);
+
+  if (state.step === "welcome") return <Welcome dispatch={props.dispatch} onClose={onClose} hidden={hidden} />;
   return (
-    <div className="setup-guide" role="region" aria-label={t("Setup guide")}>
+    <div className="setup-guide" role="region" aria-label={t("Setup guide")} hidden={hidden}>
       <div className="setup-guide-inner">
         <Progress state={state} onClose={onClose} />
         {state.step === "agent" && <AgentStep {...props} catalog={catalog} catalogError={catalogError} onReload={loadCatalog} row={row} />}
@@ -78,10 +85,10 @@ export function SetupGuide(props: SetupGuideProps) {
   );
 }
 
-function Welcome({ dispatch, onClose }: Pick<SetupGuideProps, "dispatch" | "onClose">) {
+function Welcome({ dispatch, onClose, hidden }: Pick<SetupGuideProps, "dispatch" | "onClose" | "hidden">) {
   const t = useT();
   return (
-    <div className="setup-guide" role="region" aria-label={t("Setup guide")}>
+    <div className="setup-guide" role="region" aria-label={t("Setup guide")} hidden={hidden}>
       <div className="setup-guide-inner setup-welcome">
         <img src="/icons/icon-192.png?v=sheep1" alt="" width="72" height="72" className="setup-welcome-mark" />
         <h2>{t("Welcome to Ovis")}</h2>
@@ -162,21 +169,25 @@ function AgentStep({ state, dispatch, onOpenTerminal, catalog, catalogError, onR
   const t = useT();
   const [others, setOthers] = useState(false);
   const signedIn = useRef(false);
+  const cardMounted = useRef(false);
   const recommended = new Set(Object.values(PLAN_AGENT));
   const otherAgents = (catalog ?? []).filter((candidate) => candidate.kind === "harness" && !recommended.has(candidate.id) && candidate.install !== null);
   const skip = () => dispatch({ type: "skip" });
 
   if (state.agent !== null && row !== null) {
     const onStep = (step: SetupStep): void => {
+      // the first report is the step the card opened on: an agent already ready waits for Start
+      const opened = !cardMounted.current;
+      cardMounted.current = true;
+      if (opened) return;
       if (step.kind === "signing-in") signedIn.current = true;
       if (step.kind === "ready") dispatch({ type: "agent-ready", signedIn: signedIn.current });
     };
     return (
       <section className="setup-step" aria-labelledby="setup-step-title">
-        <h2 id="setup-step-title" className="visually-hidden">{t("Setting up {agent}", { agent: row.name })}</h2>
+        <h2 id="setup-step-title" tabIndex={-1} className="visually-hidden">{t("Setting up {agent}", { agent: row.name })}</h2>
         {state.plan !== null && <p className="setup-lead">{planFit(t, state.plan)}</p>}
         <AgentSetupCard key={row.id} agent={row} initial={initialStep(row)} onOpenTerminal={onOpenTerminal} onStart={() => dispatch({ type: "agent-ready", signedIn: signedIn.current })} onStep={onStep} />
-        <p className="setup-note"><ShieldCheck aria-hidden="true" />{t("Uses {vendor}'s official installer, on this PC. You can see every step under Show details.", { vendor: row.vendor })}</p>
         <StepActions primary={<button type="button" className="btn btn-ghost" onClick={() => dispatch({ type: "back" })}><ArrowLeft aria-hidden="true" />{t("Back")}</button>} onSkip={skip} skipLabel={t("Skip this step")} />
       </section>
     );
@@ -189,7 +200,7 @@ function AgentStep({ state, dispatch, onOpenTerminal, catalog, catalogError, onR
   ];
   return (
     <section className="setup-step" aria-labelledby="setup-step-title">
-      <h2 id="setup-step-title">{t("Which AI do you already pay for?")}</h2>
+      <h2 id="setup-step-title" tabIndex={-1}>{t("Which AI do you already pay for?")}</h2>
       <p className="setup-lead">{t("We'll install the coding helper that works with it and sign you in.")}</p>
       {catalogError !== null && <p className="setup-error" role="alert">{catalogError}</p>}
       <div className="setup-choices">
@@ -246,7 +257,7 @@ function UsageStep({ state, dispatch, row }: { state: GuideState; dispatch: (eve
   };
   return (
     <section className="setup-step setup-card" aria-labelledby="setup-step-title">
-      <h2 id="setup-step-title">{t("Show how much of your plan is left?")}</h2>
+      <h2 id="setup-step-title" tabIndex={-1}>{t("Show how much of your plan is left?")}</h2>
       <p className="setup-lead">{name === null
         ? t("Paid plans limit how much you can use them every few hours and every week. Ovis can show what's left, so you're not cut off by surprise.")
         : t("{name} limits how much you can use it every few hours and every week. Ovis can show what's left, so you're not cut off by surprise.", { name })}</p>
@@ -284,7 +295,7 @@ function PhoneStep({ dispatch, agentName }: { dispatch: (event: GuideEvent) => v
   const continueButton = <button type="button" className="btn btn-primary" onClick={() => dispatch({ type: "complete" })}>{t("Continue")}</button>;
   return (
     <section className="setup-step setup-card" aria-labelledby="setup-step-title">
-      <h2 id="setup-step-title">{t("Use Ovis on your phone too")}</h2>
+      <h2 id="setup-step-title" tabIndex={-1}>{t("Use Ovis on your phone too")}</h2>
       <p className="setup-lead">{agentName === null ? t("Check on your agents and answer them from anywhere. Optional.") : t("Check on {agent} and answer it from anywhere. Optional.", { agent: agentName })}</p>
       {phone ? (
         <div className="setup-phone-here">
@@ -319,12 +330,12 @@ function AlertsStep({ dispatch, agentName, agentId, onEnable }: { dispatch: (eve
     setBusy(true);
     update({ alertInput: asks, alertDone: finishes ? settings.alertDone === "off" ? "long" : settings.alertDone : "off" });
     // in-app alerts are on whatever the browser answers; the browser's own answer is kept by Settings → Alerts
-    try { await onEnable(); } finally { setBusy(false); }
+    try { await onEnable(); } catch { /* in-app alerts are on; Settings → Alerts says what the browser refused */ } finally { setBusy(false); }
     dispatch({ type: "complete" });
   };
   return (
     <section className="setup-step setup-card" aria-labelledby="setup-step-title">
-      <h2 id="setup-step-title">{agentName === null ? t("Get a nudge when an agent needs you") : t("Get a nudge when {agent} needs you", { agent: agentName })}</h2>
+      <h2 id="setup-step-title" tabIndex={-1}>{agentName === null ? t("Get a nudge when an agent needs you") : t("Get a nudge when {agent} needs you", { agent: agentName })}</h2>
       <p className="setup-lead">{t("So you can walk away while it works. It looks like this:")}</p>
       <div className="setup-sample" aria-hidden="true">
         <AgentMark agent={agentId ?? "claude"} size={22} />
@@ -353,7 +364,11 @@ function DoneStep({ state, row, onOpened }: { state: GuideState; row: AgentCatal
   const [browsing, setBrowsing] = useState(recent.length === 0);
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const agent = row !== null && state.agent !== null && state.outcomes.agent === "done" ? row : null;
+  // the agent set up is the saved choice; the catalog, which may still be loading, only lends its name
+  const agentId = state.outcomes.agent === "done" ? state.agent : null;
+  const agent = agentId === null ? null : { id: agentId, name: row?.name ?? agentId };
+  // the workspace made, when the agent did not start in it: opening it shows why, in its terminal
+  const [madeWithout, setMadeWithout] = useState<string | null>(null);
   const lines: { id: string; done: boolean; text: string; later: string }[] = [
     { id: "agent", done: agent !== null, text: agent !== null ? t("{agent} is set up", { agent: agent.name }) : t("Agent skipped"), later: t("Settings → Setup guide") },
     { id: "usage", done: state.outcomes.usage === "done" && settings.showUsage, text: state.outcomes.usage === "done" && settings.showUsage ? t("Plan usage shown in the sidebar") : t("Plan usage skipped"), later: t("Settings → Subscription usage") },
@@ -361,6 +376,7 @@ function DoneStep({ state, row, onOpened }: { state: GuideState; row: AgentCatal
     { id: "alerts", done: state.outcomes.alerts === "done", text: state.outcomes.alerts === "done" ? t("Alerts on") : t("Alerts skipped"), later: t("Settings → Alerts") },
   ];
   const open = async (): Promise<void> => {
+    if (madeWithout !== null) { onOpened(madeWithout, false); return; }
     if (folder === null || opening) return;
     setOpening(true);
     setError(null);
@@ -369,7 +385,13 @@ function DoneStep({ state, row, onOpened }: { state: GuideState; row: AgentCatal
     try {
       const result = await createWorkspace(createRequest({ tab: null, directory: folder, name: "" }, launch, null));
       recentDirectories.remember("local", [folder], true);
-      onOpened(result.pane_id, agent !== null && result.agent_started !== false);
+      if (agent !== null && result.agent_started === false) {
+        setOpening(false);
+        setMadeWithout(result.pane_id);
+        setError(t("The workspace opened, but {agent} did not start. Open it to see why in its terminal.", { agent: agent.name }) + (result.error?.message ? ` (${result.error.message})` : ""));
+        return;
+      }
+      onOpened(result.pane_id, agent !== null);
     } catch (reason: unknown) {
       setOpening(false);
       setError(userErrorMessage(reason).message);
@@ -380,7 +402,7 @@ function DoneStep({ state, row, onOpened }: { state: GuideState; row: AgentCatal
       <div className="setup-done-head">
         <Check aria-hidden="true" />
         <div>
-          <h2 id="setup-step-title">{t("You're all set")}</h2>
+          <h2 id="setup-step-title" tabIndex={-1}>{t("You're all set")}</h2>
           <p className="setup-lead">{agent !== null ? t("Pick a project and {agent} opens in it.", { agent: agent.name }) : t("Pick a project to open.")}</p>
         </div>
       </div>
@@ -405,8 +427,8 @@ function DoneStep({ state, row, onOpened }: { state: GuideState; row: AgentCatal
       {browsing && <div className="setup-browser"><DirectoryBrowser start={folder ?? ""} onPick={() => setBrowsing(false)} onFolder={(path) => setFolder(path)} /></div>}
       {error !== null && <p className="setup-error" role="alert">{error}</p>}
       <div className="setup-actions">
-        <button type="button" className="btn btn-primary" disabled={folder === null || opening} onClick={() => void open()}>
-          <Play aria-hidden="true" />{folder === null ? t("Choose a project folder") : agent !== null ? t("Open {folder} with {agent}", { folder: basename(folder), agent: agent.name }) : t("Open {folder}", { folder: basename(folder) })}
+        <button type="button" className="btn btn-primary" disabled={(folder === null && madeWithout === null) || opening} onClick={() => void open()}>
+          <Play aria-hidden="true" />{madeWithout !== null ? t("Open the workspace") : folder === null ? t("Choose a project folder") : agent !== null ? t("Open {folder} with {agent}", { folder: basename(folder), agent: agent.name }) : t("Open {folder}", { folder: basename(folder) })}
         </button>
       </div>
       <p className="setup-note"><Info aria-hidden="true" />{t("Open this guide again any time: Settings → Setup guide.")}</p>
@@ -418,7 +440,7 @@ function DoneStep({ state, row, onOpened }: { state: GuideState; row: AgentCatal
 export function SetupGuideResume({ onResume }: { onResume: () => void }) {
   const t = useT();
   return (
-    <p className="pane-notice setup-resume" role="status">
+    <p className="setup-resume" role="status">
       <span>{t("The setup guide is waiting for you.")}</span>
       <button type="button" className="btn btn-ghost" onClick={onResume}>{t("Back to setup")}</button>
     </p>

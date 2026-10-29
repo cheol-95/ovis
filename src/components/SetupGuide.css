@@ -24,6 +24,11 @@
   line-height: var(--lh-tight);
 }
 
+/* the heading takes focus as its step opens, for a screen reader; no ring for that */
+.setup-guide h2:focus {
+  outline: none;
+}
+
 .setup-lead {
   margin: 0;
   color: var(--text-dim);
@@ -593,10 +598,17 @@
   border-radius: var(--radius-md);
 }
 
+/* over the pane while the guide stands aside: a quiet line, not an alert */
 .setup-resume {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
+  border-bottom: var(--hairline) solid var(--border);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
 }
 
 @media (max-width: 768px) {

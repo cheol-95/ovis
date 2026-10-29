@@ -24,7 +24,6 @@ export const GUIDE_KO: Record<string, string> = {
   "Works with your ChatGPT plan. Writes and fixes code in your projects.": "ChatGPT 요금제로 써요. 프로젝트의 코드를 쓰고 고쳐요.",
   "Free to start. Comes with free AI models, no account needed.": "무료로 시작해요. 무료 AI 모델이 들어 있어 계정이 없어도 돼요.",
   "Setting up {agent}": "{agent} 설정",
-  "Uses {vendor}'s official installer, on this PC. You can see every step under Show details.": "이 PC에 {vendor}의 공식 설치 프로그램을 써요. 모든 과정은 \"자세히 보기\"에서 볼 수 있어요.",
   "Pro or Max plan": "Pro 또는 Max 요금제",
   "Plus or Pro plan": "Plus 또는 Pro 요금제",
   "Neither": "둘 다 없어요",
@@ -91,4 +90,6 @@ export const GUIDE_KO: Record<string, string> = {
   "Open this guide again any time: Settings → Setup guide.": "이 안내는 설정 → 설정 안내에서 언제든 다시 열 수 있어요.",
   "The setup guide is waiting for you.": "설정 안내가 기다리고 있어요.",
   "Back to setup": "설정 안내로 돌아가기",
+  "The workspace opened, but {agent} did not start. Open it to see why in its terminal.": "워크스페이스는 열었지만 {agent}가 시작되지 않았어요. 열어서 터미널에서 이유를 확인하세요.",
+  "Open the workspace": "워크스페이스 열기",
 };

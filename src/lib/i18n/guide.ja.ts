@@ -24,7 +24,6 @@ export const GUIDE_JA: Record<string, string> = {
   "Works with your ChatGPT plan. Writes and fixes code in your projects.": "ChatGPT のプランで使えます。プロジェクトのコードを書いて直します。",
   "Free to start. Comes with free AI models, no account needed.": "無料で始められます。無料の AI モデル付きで、アカウントは不要です。",
   "Setting up {agent}": "{agent} のセットアップ",
-  "Uses {vendor}'s official installer, on this PC. You can see every step under Show details.": "この PC で {vendor} の公式インストーラーを使います。すべての手順は「詳細を表示」で確認できます。",
   "Pro or Max plan": "Pro または Max プラン",
   "Plus or Pro plan": "Plus または Pro プラン",
   "Neither": "どちらもない",
@@ -91,4 +90,6 @@ export const GUIDE_JA: Record<string, string> = {
   "Open this guide again any time: Settings → Setup guide.": "このガイドは 設定 → セットアップガイド からいつでも開き直せます。",
   "The setup guide is waiting for you.": "セットアップガイドが待っています。",
   "Back to setup": "セットアップに戻る",
+  "The workspace opened, but {agent} did not start. Open it to see why in its terminal.": "ワークスペースは開きましたが、{agent} が起動しませんでした。開いてターミナルで理由を確認してください。",
+  "Open the workspace": "ワークスペースを開く",
 };

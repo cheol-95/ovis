@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
-import { autoOpen, guideProgress, guideStep, readGuide, REOPENED, saveGuide, usageOnByDefault, WELCOME, type FreshFacts, type GuideState } from "./setupGuideFlow.ts";
+import { onSetupGuideRequest, openSetupGuide } from "./setupGuide.ts";
+import { autoOpen, guideProgress, guideStep, readGuide, saveGuide, usageOnByDefault, WELCOME, type FreshFacts, type GuideState } from "./setupGuideFlow.ts";
 
 const FRESH: FreshFacts = { workspaces: 0, savedSettings: false, sharedRevision: 0, pairingGate: "open", watching: false };
 
@@ -100,8 +101,23 @@ describe("readGuide and saveGuide", () => {
     }
   });
 
-  it("opens again at the first step when asked", () => {
-    expect(REOPENED.step).toBe("agent");
-    expect(REOPENED.outcomes).toEqual({});
+});
+
+describe("openSetupGuide", () => {
+  it("reaches every listener until it unsubscribes", () => {
+    const saved = Object.getOwnPropertyDescriptor(globalThis, "window");
+    Object.defineProperty(globalThis, "window", { configurable: true, value: new EventTarget() });
+    try {
+      let calls = 0;
+      const stop = onSetupGuideRequest(() => { calls += 1; });
+      openSetupGuide();
+      expect(calls).toBe(1);
+      stop();
+      openSetupGuide();
+      expect(calls).toBe(1);
+    } finally {
+      if (saved) Object.defineProperty(globalThis, "window", saved);
+      else Reflect.deleteProperty(globalThis, "window");
+    }
   });
 });

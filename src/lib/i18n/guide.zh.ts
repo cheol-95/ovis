@@ -24,7 +24,6 @@ export const GUIDE_ZH: Record<string, string> = {
   "Works with your ChatGPT plan. Writes and fixes code in your projects.": "使用你的 ChatGPT 套餐。在你的项目里编写和修复代码。",
   "Free to start. Comes with free AI models, no account needed.": "免费开始。自带免费 AI 模型,无需账号。",
   "Setting up {agent}": "设置 {agent}",
-  "Uses {vendor}'s official installer, on this PC. You can see every step under Show details.": "在这台电脑上使用 {vendor} 的官方安装程序。每一步都可以在“显示详情”中查看。",
   "Pro or Max plan": "Pro 或 Max 套餐",
   "Plus or Pro plan": "Plus 或 Pro 套餐",
   "Neither": "都没有",
@@ -91,4 +90,6 @@ export const GUIDE_ZH: Record<string, string> = {
   "Open this guide again any time: Settings → Setup guide.": "随时可以在 设置 → 设置向导 再次打开本向导。",
   "The setup guide is waiting for you.": "设置向导正在等你。",
   "Back to setup": "返回设置向导",
+  "The workspace opened, but {agent} did not start. Open it to see why in its terminal.": "工作区已打开,但 {agent} 没有启动。打开它,在终端里查看原因。",
+  "Open the workspace": "打开工作区",
 };
