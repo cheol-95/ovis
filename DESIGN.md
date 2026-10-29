@@ -2283,6 +2283,22 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   subagent's transcript; agent-of-empires's background-agents panel (MIT) suggested the
   interaction of opening prompt, tool and result from the row, and nothing of it is copied.
 
+### Session line (`.session-line`)
+- One folded hairline row (`--radius-lg`, dim `--fs-sm`) pinned above the conversation, outside
+  the scrolling list, on every chat whose server reports the session (#1170, #2017). It says what
+  the whole transcript records, not the loaded page: omo's goal (the target icon, `Goal`, the
+  objective ellipsized and its status word in the Goal row's colors), `Waiting` with an hourglass
+  in `--status-working` while omo rests on background work, the time worked (a timer icon) and
+  the transcript's size (a file icon; hidden at 480px and below, where it stays in the opened
+  row). Without a goal the row reads `Session`.
+- Opened, a two-column list: the full objective with its status and time and tokens used; what
+  omo waits on (`2 tasks, 1 monitor`) and `The goal continues at about 15:39` while its timer is
+  ahead and the goal active; the time worked with how it was counted (the sum of the turn times
+  the transcript records, or `unknown` when the agent records none); the size.
+- It follows the Codex app, which keeps a thread's active goal above the conversation rather
+  than on the turn that set it. No code is borrowed. No setting turns it off: folded, it is one
+  line.
+
 ### Background tasks ended (`.chat-task-results`)
 - Where OmO reports background tasks that ended, or a Claude Code subagent ends (its
   `<task-notification>`, drawn once however many records carry it), the transcript shows one `--bg-elevated` card

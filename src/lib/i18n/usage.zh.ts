@@ -72,7 +72,6 @@ export const USAGE_ZH: Record<string, string> = {
   "Remaining": "剩余",
   "Cursor models": "Cursor 模型",
   "Show plan limits": "显示套餐限额",
-  "Session": "会话",
   "Daily": "每日",
   "Weekly": "每周",
   "Monthly": "每月",

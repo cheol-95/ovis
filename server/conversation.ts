@@ -64,6 +64,7 @@ import { LettaUnavailable, lettaToolOutput, parseLettaTranscript } from "./letta
 import { resolveLettaTranscript } from "./letta-store.ts";
 import { withinRetentionBudget } from "./retention-budget.ts";
 import { forgetAllPiIndexes, forgetPiIndex, piAbandonedTurns, piBranchRecords, piBranchSegments } from "./pi-tree.ts";
+import { forgetSessionFacts, sessionFacts } from "./session-facts.ts";
 import { copilotOffsetOutput, copilotOutput, copilotRootRecord, parseCopilotTranscript } from "./copilot.ts";
 import { copilotExplicitResume, copilotHandoffSession, copilotProcessSession, copilotTranscriptFile, copilotUnwrittenSession, openCopilotFile } from "./copilot-store.ts";
 import { claudeSetting, parseConversationMetadata } from "./conversation-metadata.ts";
@@ -855,6 +856,7 @@ export function forgetTranscriptState(): void {
   forgetAgyState();
   forgetDevinState();
   forgetHermesTranscriptState();
+  forgetSessionFacts();
 }
 
 /**
@@ -1919,8 +1921,11 @@ function transcriptPageRead(source: StreamSource, path: string, page: Conversati
   const cached = cache.get(key);
   // the answer is a function of the page asked for and the file's state, so they name it
   const version = answerVersion(key, signature);
+  // the whole file's account of the session goes with the newest page, read on from the last
+  // append; its every change changes the file, so the newest page's signature covers it
+  const session = page.before === undefined ? { session: sessionFacts(source, path, stat) } : {};
   if (cached?.signature === signature) {
-    return { source, turns: cached.turns, metadata: cached.metadata, cursor: cached.cursor, abandoned: cached.abandoned, history_id: stream.id, version };
+    return { source, turns: cached.turns, metadata: cached.metadata, cursor: cached.cursor, abandoned: cached.abandoned, history_id: stream.id, version, ...session };
   }
 
   let start: number;
@@ -1973,7 +1978,7 @@ function transcriptPageRead(source: StreamSource, path: string, page: Conversati
   // straight line answers { count: 0 }, which is most sessions and costs the client nothing
   const abandoned = (source === "pi-transcript" || source === "cmd-transcript") ? piAbandonedTurns(path, stat.size) ?? undefined : undefined;
   rememberPage(cache, key, { source, signature, turns, metadata, cursor, abandoned }, 32);
-  return { source, turns, metadata, cursor, abandoned, history_id: stream.id, version };
+  return { source, turns, metadata, cursor, abandoned, history_id: stream.id, version, ...session };
 }
 
 /**

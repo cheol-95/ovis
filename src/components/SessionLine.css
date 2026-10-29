@@ -1,0 +1,57 @@
+/* the session line: one quiet row above the conversation, its facts on request */
+.session-line {
+  flex: 0 0 auto;
+  margin: var(--space-2) var(--space-3) 0;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  min-width: 0;
+}
+
+.session-line > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+  list-style: none;
+  white-space: nowrap;
+}
+
+.session-line > summary::-webkit-details-marker { display: none; }
+.session-line > summary svg { width: 14px; height: 14px; flex-shrink: 0; }
+.session-line-label { flex-shrink: 0; color: var(--text); font-weight: var(--fw-medium); }
+.session-line-grow { flex: 1 1 auto; }
+.session-line-objective { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.session-line-status { flex-shrink: 0; }
+.session-line.is-active > summary > svg:first-child, .session-line.is-active .session-line-status { color: var(--status-working); }
+.session-line.is-complete > summary > svg:first-child, .session-line.is-complete .session-line-status { color: var(--status-done); }
+.session-line.is-blocked .session-line-status, .session-line.is-budget_limited .session-line-status { color: var(--status-blocked); }
+.session-line-waiting, .session-line-fact { display: inline-flex; align-items: center; gap: var(--space-1); flex-shrink: 0; }
+.session-line-waiting { color: var(--status-working); }
+.session-line-caret { transition: transform var(--dur-fast) var(--ease-out); }
+.session-line[open] .session-line-caret { transform: rotate(180deg); }
+.session-line[open] .session-line-objective { visibility: hidden; }
+
+.session-line-detail {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  padding: 0 var(--space-2) var(--space-2);
+  overflow-wrap: anywhere;
+}
+
+.session-line-detail dt { color: var(--text); font-weight: var(--fw-medium); }
+.session-line-detail dd { margin: 0; }
+.session-line-detail p { margin: 0; }
+.session-line-detail p + p { margin-top: var(--space-1); }
+.session-line-goal-text { color: var(--text); white-space: pre-wrap; max-height: 12em; overflow-y: auto; }
+.session-line-note { color: var(--text-dim); }
+
+/* a phone keeps the goal and the time worked: the size is in the opened line */
+@media (max-width: 480px) {
+  .session-line-size { display: none; }
+}

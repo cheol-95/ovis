@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import * as darwinProcess from "./darwin-process.ts";
 import { Database } from "bun:sqlite";
-import { appendFileSync, copyFileSync, linkSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, linkSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import * as fs from "node:fs";
@@ -1781,6 +1781,23 @@ describe("transcript pages", () => {
     appendFileSync(path, `${omoWake("2026-10-05T00:20:00.000Z", [completion({ task_id: "st_1", name: "st_1", status: "completed", agent_type: "explore", final_response: "done" })])}\n`);
     return endedTitles(transcriptPage("omo-transcript", path));
   };
+
+  it("answers the newest page with the session's goal and size even after the page moved past the goal call (#1170, #2017)", () => {
+    const path = join(temp(), "omo.jsonl");
+    const goal = { goal: { objective: "Ship the session line", status: "active", tokensUsed: 10, timeUsedSeconds: 5 } };
+    writeFileSync(path, `${[
+      omoUser("2026-10-05T00:00:00.000Z", "set a goal"),
+      JSON.stringify({ type: "message", timestamp: "2026-10-05T00:00:01.000Z", message: { role: "assistant", content: [{ type: "toolCall", id: "g1", name: "create_goal", arguments: { objective: "Ship the session line" } }] } }),
+      JSON.stringify({ type: "message", timestamp: "2026-10-05T00:00:02.000Z", message: { role: "toolResult", toolCallId: "g1", toolName: "create_goal", content: [{ type: "text", text: JSON.stringify(goal) }], details: goal } }),
+      ...Array.from({ length: MAX_TURNS + 4 }, (_, n) => omoUser(`2026-10-05T01:${String(Math.floor(n / 60)).padStart(2, "0")}:${String(n % 60).padStart(2, "0")}.000Z`, `prompt ${n}`)),
+    ].join("\n")}\n`);
+    const newest = transcriptPage("omo-transcript", path);
+    expect(newest.turns.some((turn) => turn.parts.some((part) => part.kind === "tool" && part.name === "create_goal"))).toBe(false);
+    expect(newest.session).toEqual({ transcript_bytes: statSync(path).size, worked_ms: 2000, goal: { objective: "Ship the session line", status: "active", tokensUsed: 10, timeUsedSeconds: 5, blockedReason: null } });
+    // the page cache answers the same newest page: the session still goes with it
+    expect(transcriptPage("omo-transcript", path).session?.goal?.objective).toBe("Ship the session line");
+    expect(transcriptPage("omo-transcript", path, { before: newest.cursor! }).session).toBeUndefined();
+  });
 
   it("keeps a task's title when the newest page moves past the turn that started it, while the file is watched", () => {
     const path = join(temp(), "omo.jsonl");

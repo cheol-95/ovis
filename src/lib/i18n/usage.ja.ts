@@ -72,7 +72,6 @@ export const USAGE_JA: Record<string, string> = {
   "Remaining": "残量",
   "Cursor models": "Cursor のモデル",
   "Show plan limits": "プランの上限を表示",
-  "Session": "セッション",
   "Daily": "日次",
   "Weekly": "週次",
   "Monthly": "月次",

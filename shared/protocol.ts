@@ -32,6 +32,7 @@ export type {
 } from "./herdr-api.generated.ts";
 
 import type { AgentStatus, PaneInfo, SessionSnapshot as HerdrSnapshot, TabInfo, WorkspaceInfo } from "./herdr-api.generated.ts";
+import type { GoalState } from "./goal.ts";
 
 /** GET /api/herdr-ui: the herdr client preferences of the PC serving the web UI, never the rest of its config. */
 export interface HerdrUiConfig {
@@ -503,6 +504,35 @@ export interface ConversationMetadata {
   context?: { used: number; window: number | null };
 }
 
+/**
+ * What the whole transcript records of the session, beside the page of turns (#1170, #2017). Read
+ * from the transcript file alone, once per append. Absent from older servers, from agents whose
+ * store is not one file, and from pages older than the newest.
+ */
+export interface ConversationSession {
+  /** the transcript file's size in bytes */
+  transcript_bytes: number;
+  /**
+   * The sum of the session's turn times, in ms: Claude's `turn_duration` and Codex's
+   * `task_complete` durations, and for omo, pi, omp and gjc each turn from its start to its last
+   * recorded activity. null when the agent records no turn time or no turn has one yet.
+   */
+  worked_ms: number | null;
+  /** omo's goal as its last goal call left it, null when there is none; absent for other agents */
+  goal?: GoalState | null;
+  /**
+   * omo rests on background work it waits for (its last `session-lifecycle` record says
+   * waiting_children or waiting_background); absent while it runs or rests with nothing pending.
+   * `tasks`: the `task` children; `background`: the rest, by omo's own source name
+   * (`terminal-monitors`, `terminal-background-sessions`, `senpi-codemode`, `omo-dag`, …);
+   * `resumes_at`: when the goal's continuation timer is due (its last `goal-cache-warmup` was
+   * scheduled and has not resumed).
+   */
+  waiting?: { since: string | null; tasks: number; background: { source: string; count: number }[]; resumes_at: string | null };
+}
+
+export type { GoalState, GoalStatus } from "./goal.ts";
+
 export type { OmoTask, OmoRunNode, OmoRun, OmoActivity, PaneBackgroundAgentDetail } from "./tasks.ts";
 
 export type { PlanStep, PanePlan } from "./plans.ts";
@@ -554,6 +584,8 @@ export interface ConversationResponse {
    * agent that keeps no entry tree.
    */
   abandoned?: { count: number; branches: number; summary: string | null };
+  /** the session as its whole transcript records it; on the newest page only */
+  session?: ConversationSession;
 }
 
 export type { PluginActionContext, PluginAction, PluginActions, PluginActionsResponse, PluginActionRequest, PluginActionResult } from "./plugins.ts";

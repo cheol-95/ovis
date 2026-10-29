@@ -72,7 +72,6 @@ export const USAGE_KO: Record<string, string> = {
   "Remaining": "남은 양",
   "Cursor models": "Cursor 모델",
   "Show plan limits": "요금제 한도 표시",
-  "Session": "세션",
   "Daily": "일간",
   "Weekly": "주간",
   "Monthly": "월간",

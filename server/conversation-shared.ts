@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import type { ConversationMetadata, ConversationTurn } from "../shared/protocol.ts";
+import type { ConversationMetadata, ConversationSession, ConversationTurn } from "../shared/protocol.ts";
 
 /**
  * A transcript is read a page at a time, the newest page re-read on every append
@@ -66,6 +66,8 @@ export type RecognizedConversation = {
    * anything, so the chat would otherwise drop those turns with no sign they were ever there.
    */
   abandoned?: { count: number; branches: number; summary: string | null };
+  /** the session as the whole transcript file records it (session-facts.ts); newest page only */
+  session?: ConversationSession;
   history_id: string;
   /** changes whenever the answer could: the route's ETag, so an unchanged poll costs no body */
   version: string;

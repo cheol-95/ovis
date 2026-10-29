@@ -14,7 +14,7 @@
  * a chat gets a demo answer.
  * What does not: files, images, push and remote PCs, which need a real machine.
  */
-import type { AgentIntegration, AgentStatus, CommandForm, CommandOutcome, ConversationTurn, DevicePairedEvent, DevicesRevokedAll, HealthAuth, IntegrationsResponse, Machine, MachineEvent, OmoActivity, OmoTask, PairedDevice, PairingCode, PaneBackgroundAgentDetail, PaneDirection, PaneFindMatch, PaneFindRequest, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanStep, PluginActionResult, PluginActions, PluginActionsResponse, PortalStatus, SecuritySummary, ServerMessage, SessionSnapshot, SlashCommand, TabMoved, TabMovedToWorkspace, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
+import type { AgentIntegration, AgentStatus, CommandForm, CommandOutcome, ConversationSession, ConversationTurn, DevicePairedEvent, DevicesRevokedAll, HealthAuth, IntegrationsResponse, Machine, MachineEvent, OmoActivity, OmoTask, PairedDevice, PairingCode, PaneBackgroundAgentDetail, PaneDirection, PaneFindMatch, PaneFindRequest, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanStep, PluginActionResult, PluginActions, PluginActionsResponse, PortalStatus, SecuritySummary, ServerMessage, SessionSnapshot, SlashCommand, TabMoved, TabMovedToWorkspace, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
 import type { PushSubscriptionStatus, RepoBranchComparison, RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch, RepoDiffRefs, RepoDiffRepository, RepoDiffScope, SessionHistoryAgent, SessionHistoryResponse, SessionResumeResponse } from "../../shared/protocol.ts";
 import { normalizeThemeChange, sharedPreferencesBody, type SharedPreferences } from "../../shared/preferences.ts";
 import { VOICE_DEFAULTS, type VoiceStatus } from "../../shared/voice.ts";
@@ -94,6 +94,16 @@ for (const machine of machines) if (machine.snapshot) {
 }
 /** pane id -> fixture key ("api", "web", …) */
 const keyOfPane = new Map<string, string>(Object.entries(panesFixture as Record<string, string>).map(([key, paneId]) => [paneId, key]));
+/**
+ * The session line's facts as a transcript of these turns would give them: the turns' own times and
+ * their size as one record a line. Hermes and Devin keep a database, which reports neither.
+ */
+function demoSession(source: string, turns: readonly ConversationTurn[]): { session?: ConversationSession } {
+  if (source === "hermes-transcript" || source === "devin-transcript") return {};
+  const spans = turns.flatMap((turn) => turn.role === "assistant" && turn.ts && turn.end_ts ? [Date.parse(turn.end_ts) - Date.parse(turn.ts)] : []);
+  const bytes = new TextEncoder().encode(turns.map((turn) => `${JSON.stringify(turn)}\n`).join("")).length;
+  return { session: { transcript_bytes: bytes, worked_ms: spans.length === 0 ? null : spans.reduce((sum, ms) => sum + Math.max(0, ms), 0) } };
+}
 const chats = new Map<string, { turns: ConversationTurn[]; metadata: { model: string; reasoning_effort: string } }>(
   Object.entries(CHATS).map(([key, chat]) => [key, structuredClone(chat)]),
 );
@@ -1335,7 +1345,7 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     if (!chat) return json({ source: "scrollback", turns: [] });
     const source = agent === "claude" ? "claude-transcript" : agent === "codex" ? "codex-transcript" : agent === "gjc" ? "gjc-transcript" : agent === "omo" ? "omo-transcript" : agent === "pi" ? "pi-transcript" : agent === "cmd" ? "cmd-transcript" : agent === "devin" ? "devin-transcript" : agent === "hermes" ? "hermes-transcript" : "omp-transcript";
     // These demo fixtures have no native Grok/Agy lifecycle: omit optional activity.
-    return json({ source, turns: chat.turns, metadata: chat.metadata, cursor: null });
+    return json({ source, turns: chat.turns, metadata: chat.metadata, cursor: null, ...demoSession(source, chat.turns) });
   }
   if (path === "/api/pane/plan") {
     if (method !== "GET") return error("method_not_allowed", "use GET", 400);
