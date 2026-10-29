@@ -25,7 +25,7 @@ import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { userErrorMessage } from "../lib/userError.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { AgentSetupCard } from "./AgentSetupCard.tsx";
-import { DirectoryBrowser } from "./DirectoryBrowser.tsx";
+import { DirectoryBrowser, homeRelative } from "./DirectoryBrowser.tsx";
 import { PhonePanel } from "./PhonePanel.tsx";
 import { QrCode } from "./QrCode.tsx";
 import { Toggle } from "./SettingsControls.tsx";
@@ -361,6 +361,10 @@ function DoneStep({ state, row, onOpened }: { state: GuideState; row: AgentCatal
   const [recent] = useState(() => recentDirectories.read("local").slice(0, FOLDERS_SHOWN));
   const [folder, setFolder] = useState<string | null>(recent[0] ?? null);
   const [browsing, setBrowsing] = useState(recent.length === 0);
+  // the folder the browser last said it shows, and how its Use this folder names it: the pick keeps the
+  // absolute path for it; any other pick (a home it fell back to, the folder asked for gone) is taken as given
+  const shownFolder = useRef<string | null>(null);
+  const shownPicked = useRef<string | null>(null);
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // the agent set up is the saved choice; the catalog, which may still be loading, only lends its name
@@ -423,7 +427,7 @@ function DoneStep({ state, row, onOpened }: { state: GuideState; row: AgentCatal
         ))}
         <button type="button" className="setup-folder" aria-pressed={browsing} onClick={() => setBrowsing(true)}><FolderOpen aria-hidden="true" />{t("Choose another…")}</button>
       </div>
-      {browsing && <div className="setup-browser"><DirectoryBrowser start={folder ?? ""} onPick={() => setBrowsing(false)} onFolder={(path) => setFolder(path)} /></div>}
+      {browsing && <div className="setup-browser"><DirectoryBrowser start={folder ?? ""} onPick={(picked) => { setFolder((shown) => shown !== null && shownFolder.current === shown && picked === shownPicked.current ? shown : picked); setBrowsing(false); }} onFolder={(path, home) => { shownFolder.current = path; shownPicked.current = homeRelative(path, home); setFolder(path); }} /></div>}
       {error !== null && <p className="setup-error" role="alert">{error}</p>}
       <div className="setup-actions">
         <button type="button" className="btn btn-primary" disabled={(folder === null && madeWithout === null) || opening} onClick={() => void open()}>

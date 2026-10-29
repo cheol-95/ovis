@@ -34,6 +34,8 @@ export function useSetupGuide({ enabled, workspaces, pairingGate, watching }: Se
   const [paused, setPaused] = useState(false);
   const [sharedRevision, setSharedRevision] = useState<number | null>(null);
   const decided = useRef(record !== null);
+  // this tab opened the guide itself (the welcome, or Settings): its progress may replace a closed record once
+  const openedHere = useRef(false);
 
   useEffect(() => {
     if (!enabled || decided.current) return;
@@ -45,16 +47,16 @@ export function useSetupGuide({ enabled, workspaces, pairingGate, watching }: Se
     if (decided.current || !enabled || pairingGate === undefined) return;
     if (workspaces === null || sharedRevision === null) return;
     decided.current = true;
-    if (autoOpen({ workspaces, savedSettings, sharedRevision, pairingGate, watching })) setGuide(WELCOME);
+    if (autoOpen({ workspaces, savedSettings, sharedRevision, pairingGate, watching })) { openedHere.current = true; setGuide(WELCOME); }
   }, [enabled, workspaces, sharedRevision, pairingGate, watching, savedSettings]);
 
   useEffect(() => {
-    const reopen = () => { decided.current = true; setGuide(REOPENED); setPaused(false); };
-    // closed in another tab of this browser: closed here too, so this tab's next step cannot reopen it
+    const reopen = () => { decided.current = true; openedHere.current = true; setGuide(REOPENED); setPaused(false); };
+    // closed in another tab of this browser: closed here too, read from the event itself (storage may
+    // already hold this tab's own later write)
     const onStorage = (event: StorageEvent): void => {
       if (event.key !== GUIDE_STORAGE_KEY || event.newValue === null) return;
-      const store = storage();
-      if (store !== null && readGuide(store)?.status === "closed") { decided.current = true; setGuide(null); setPaused(false); }
+      if (readGuide({ getItem: () => event.newValue })?.status === "closed") { decided.current = true; openedHere.current = false; setGuide(null); setPaused(false); }
     };
     window.addEventListener("storage", onStorage);
     const stop = onSetupGuideRequest(reopen);
@@ -63,7 +65,11 @@ export function useSetupGuide({ enabled, workspaces, pairingGate, watching }: Se
 
   useEffect(() => {
     const store = storage();
-    if (guide !== null && store !== null) saveGuide(store, guide);
+    if (guide === null || store === null) return;
+    // a close made in another tab wins over progress this tab has not opened afresh since
+    if (!openedHere.current && readGuide(store)?.status === "closed") { setGuide(null); setPaused(false); return; }
+    openedHere.current = false;
+    saveGuide(store, guide);
   }, [guide]);
 
 
