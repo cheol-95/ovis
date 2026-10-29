@@ -10,6 +10,8 @@
  * rotate refresh tokens, so a refresh the CLI did not make logs the CLI out. An expired token is
  * reported as `expired` instead; the CLI refreshes its own file the next time it runs.
  * Antigravity uses its official CLI only when HTTP omits Gemini quotas; the CLI owns its authentication.
+ * Claude and Codex accounts signed in through GJC are read from GJC's own store the same way: GJC
+ * refreshes them, so one that expired or is refused is left out rather than offered a sign-in here.
  *
  * Nothing runs in the background: a provider is asked only when a client asks this server, at
  * most every FRESH_MS unless the client forces it, which is still limited to one ask per
@@ -71,6 +73,11 @@ interface SignIn {
   cliOnly?: boolean;
   /** Copilot: named editor accounts to match when an older CLI cannot identify its token */
   editorAccounts?: string[];
+  /**
+   * GJC's: another program renews it and no CLI here signs in to it again, so an expired or refused
+   * one is left out instead of reported `expired`
+   */
+  managed?: boolean;
 }
 
 /**
@@ -267,6 +274,45 @@ async function fromKeychain(ctx: UsageContext, service: string, accounts: Array<
   return null;
 }
 
+// ---- GJC: the Claude and Codex sign-ins in its own store, <GJC_CODING_AGENT_DIR or ~/.gjc/agent>/agent.db ----
+
+/** GJC writes its store while it runs; a read waits this long, never more. */
+const GJC_DB_BUSY_TIMEOUT_MS = 250;
+
+/**
+ * The OAuth sign-ins GJC (gajae-code) keeps for `provider` in its `auth_credentials` table, each
+ * `{ access, refresh, expires, accountId?, email? }`: the enabled ones (`disabled_cause` null), as
+ * GJC itself uses them. Only the access token is read; GJC refreshes it. A row past MAX_READ_BYTES is
+ * not read, as for the files, and a store that is missing, not GJC's or will not answer holds none.
+ * `source` is the row: GJC replaces a sign-in with a new row.
+ */
+function gjcCredentials(ctx: UsageContext, provider: "anthropic" | "openai-codex"): Array<{ source: string; data: Json }> {
+  const path = join(ctx.env["GJC_CODING_AGENT_DIR"] || join(ctx.home, ".gjc", "agent"), "agent.db");
+  let db: Database | undefined;
+  try {
+    db = new Database(path, { readonly: true, create: false });
+    db.exec(`PRAGMA busy_timeout = ${GJC_DB_BUSY_TIMEOUT_MS}`);
+    const rows = db.query(`select id, case when length(cast(data as blob)) <= ? then data end as data from auth_credentials
+      where provider = ? and credential_type = 'oauth' and disabled_cause is null order by id`).all(MAX_READ_BYTES, provider) as Array<{ id: number; data: unknown }>;
+    return rows.map((row) => ({ source: `${path}#${row.id}`, data: record(parseJson(text(row.data))) }));
+  } catch {
+    return [];
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * The CLI's own sign-ins, then GJC's of other accounts: one of an account a CLI sign-in here can
+ * read is left out, so one account is not asked twice; one whose CLI sign-in is expired or locked
+ * stays, and the list shows whichever reads.
+ */
+function besideGjc(ctx: UsageContext, native: Found[], gjc: Found[]): Found[] {
+  const now = ctx.now();
+  const readable = new Set(native.flatMap((found) => "locked" in found || !found.account || (found.expiresAt !== null && found.expiresAt <= now) ? [] : [found.account.id]));
+  return [...native, ...gjc.filter((found) => !found.account || !readable.has(found.account.id))];
+}
+
 // ---- Claude Code: keychain `Claude Code-credentials` on macOS, else ~/.claude/.credentials.json ----
 
 /** the account a Claude Code config file says is signed in: `oauthAccount` in .claude.json */
@@ -317,7 +363,13 @@ const claude: UsageProvider = {
       const file = claudeSignIn(readText(join(home.dir, ".credentials.json")));
       return keychainOrFile(keychain, file, home.source, account).map((found) => ({ ...found, home: home.home }));
     }));
-    return found.flat();
+    // GJC's `accountId` is Claude's account UUID, as `oauthAccount` names it in .claude.json
+    const gjc = gjcCredentials(ctx, "anthropic").flatMap(({ source, data }): Found[] => {
+      const token = text(data["access"]);
+      const id = text(data["accountId"]);
+      return token ? [{ token, expiresAt: number(data["expires"]), account: id ? { id, label: text(data["email"]) } : null, managed: true, source }] : [];
+    });
+    return besideGjc(ctx, found.flat(), gjc);
   },
   async read(ctx, signIn) {
     const body = await requestJson(ctx, "https://api.anthropic.com/api/oauth/usage", {
@@ -344,12 +396,16 @@ const claude: UsageProvider = {
 
 function codexSignIn(source: string | null): SignIn | null {
   const tokens = record(record(parseJson(source))["tokens"]);
-  const token = text(tokens["access_token"]);
+  return codexTokenSignIn(text(tokens["access_token"]), text(tokens["account_id"]), text(jwtClaims(text(tokens["id_token"]) ?? "")["email"]));
+}
+
+/** A Codex access token, the ChatGPT workspace stored beside it and an email for a token that names none. */
+function codexTokenSignIn(token: string | null, account: string | null, fallbackEmail: string | null): SignIn | null {
   if (!token) return null;
   const claims = jwtClaims(token);
   const auth = record(claims["https://api.openai.com/auth"]);
-  const workspace = text(tokens["account_id"]) ?? text(auth["chatgpt_account_id"]);
-  const email = text(record(claims["https://api.openai.com/profile"])["email"]) ?? text(jwtClaims(text(tokens["id_token"]) ?? "")["email"]);
+  const workspace = account ?? text(auth["chatgpt_account_id"]);
+  const email = text(record(claims["https://api.openai.com/profile"])["email"]) ?? fallbackEmail;
   // limits are per person in a workspace: the same email in a team workspace is another plan
   const user = text(auth["chatgpt_user_id"]) ?? text(auth["user_id"]);
   const id = text(auth["chatgpt_account_user_id"]) ?? (user || workspace ? [user, workspace].filter(Boolean).join("__") : email);
@@ -376,8 +432,14 @@ const codex: UsageProvider = {
       const signIn = codexSignIn(readText(join(home, "auth.json")));
       if (signIn) found.push({ ...signIn, source: home, home: { kind: "dir", dir: home } });
     }
-    return found.length ? found : keychainFound(await fromKeychain(ctx, "Codex Auth", [undefined], codexSignIn), "keychain")
+    const native = found.length ? found : keychainFound(await fromKeychain(ctx, "Codex Auth", [undefined], codexSignIn), "keychain")
       .map((found): Found => ({ ...found, home: { kind: "default" } }));
+    // GJC's `accountId` is the ChatGPT workspace auth.json keeps as `account_id`
+    const gjc = gjcCredentials(ctx, "openai-codex").flatMap(({ source, data }): Found[] => {
+      const signIn = codexTokenSignIn(text(data["access"]), text(data["accountId"]), text(data["email"]));
+      return signIn ? [{ ...signIn, expiresAt: signIn.expiresAt ?? number(data["expires"]), managed: true, source }] : [];
+    });
+    return besideGjc(ctx, native, gjc);
   },
   async read(ctx, signIn) {
     const body = await requestJson(ctx, "https://chatgpt.com/backend-api/wham/usage", {
@@ -1036,7 +1098,8 @@ export class UsageService {
     }, wait);
     if ("locked" in found) return keep("locked", null, FRESH_MS);
     const signIn: SignIn = found;
-    if (signIn.expiresAt !== null && signIn.expiresAt <= now) return keep("expired", signIn.plan ?? null, RETRY_MS);
+    // GJC renews its own sign-ins: until it does, one of them is no account this PC can show or renew
+    if (signIn.expiresAt !== null && signIn.expiresAt <= now) return signIn.managed ? settle(null, RETRY_MS) : keep("expired", signIn.plan ?? null, RETRY_MS);
     // a 429 holds for the account, not the place: a sign-in moved or copied elsewhere waits too
     const backoff = found.account ? `${provider.id}:${found.account.id}` : `${provider.id}#${createHash("sha256").update(signIn.token).digest("hex")}`;
     const until = this.backoffs.get(backoff);
@@ -1049,7 +1112,9 @@ export class UsageService {
         id: provider.id, ...identity(reading.account), plan: reading.plan ?? signIn.plan ?? null, windows: reading.windows, problem: null, checked_at: new Date(now).toISOString(),
       }, FRESH_MS);
     } catch (error) {
-      if (error instanceof UsageHttpError && (error.status === 401 || error.status === 403)) return keep("expired", signIn.plan ?? null, RETRY_MS);
+      if (error instanceof UsageHttpError && (error.status === 401 || error.status === 403)) {
+        return signIn.managed ? settle(null, RETRY_MS) : keep("expired", signIn.plan ?? null, RETRY_MS);
+      }
       if (error instanceof UsageHttpError && error.status === 429) {
         const wait = Math.max(RETRY_MS, error.retryAfterMs ?? FRESH_MS);
         this.backoffs.set(backoff, now + wait);
@@ -1081,6 +1146,8 @@ export async function localSignInPlace(ctx: UsageContext, key: string): Promise<
     // the same token in two places is one sign-in, as the list counts it
     const tokens = new Set<string>();
     const places = (await provider.signIns(ctx))
+      // GJC's sign-ins have no home a CLI signs in to: GJC renews them
+      .filter((found) => found.home !== undefined)
       .filter((found) => "locked" in found || (!tokens.has(found.token) && Boolean(tokens.add(found.token))))
       .filter((found) => accountKey(id, found.account, found.source) === key);
     if (places.length > 1) return { provider: id, ambiguous: true };

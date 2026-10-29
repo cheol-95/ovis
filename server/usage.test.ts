@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { UsageReport } from "../shared/protocol.ts";
-import { FRESH_MS, handleUsageRequest, MAX_READ_BYTES, MIN_REFRESH_MS, RETRY_MS, runCommand, USAGE_PROVIDERS, UsageHttpError, UsageService, type KeychainRead, type UsageContext, type UsageProvider } from "./usage.ts";
+import { FRESH_MS, handleUsageRequest, localSignInPlace, MAX_READ_BYTES, MIN_REFRESH_MS, RETRY_MS, runCommand, USAGE_PROVIDERS, UsageHttpError, UsageService, type KeychainRead, type UsageContext, type UsageProvider } from "./usage.ts";
 
 const NOW = Date.parse("2026-09-29T12:00:00Z");
 const HOUR = 3600_000;
@@ -695,6 +695,109 @@ describe("providers", () => {
     const report = await new UsageService(context("linux"), only("opencode")).report();
     expect(requests).toHaveLength(1);
     expect(report.providers).toEqual([]);
+  });
+});
+
+describe("GJC sign-ins", () => {
+  const CLAUDE_USAGE = "https://api.anthropic.com/api/oauth/usage";
+  const claudeAndCodex = () => USAGE_PROVIDERS.filter((provider) => provider.id === "claude" || provider.id === "codex");
+  const auth = (index: number) => (requests[index]!.init.headers as Record<string, string>)["authorization"];
+  const codexToken = (user = "user-1", exp = NOW / 1000 + HOUR / 1000) => jwt({ exp, "https://api.openai.com/auth": { chatgpt_account_user_id: `${user}__acct-1` }, "https://api.openai.com/profile": { email: "gjc@example.com" } });
+
+  /** GJC's own store, as gjc 0.18 lays it out: `auth_credentials` in <agent dir>/agent.db */
+  function gjcStore(rows: Array<{ provider: string; type?: string; data: unknown; disabled?: string }>, dir = join(home, ".gjc", "agent")) {
+    mkdirSync(dir, { recursive: true });
+    const db = new Database(join(dir, "agent.db"));
+    db.exec(`create table auth_credentials (id integer primary key autoincrement, provider text not null, credential_type text not null, data text not null,
+      disabled_cause text default null, identity_key text default null, created_at integer not null default 0, updated_at integer not null default 0, revision integer not null default 1)`);
+    const insert = db.query("insert into auth_credentials (provider, credential_type, data, disabled_cause) values (?, ?, ?, ?)");
+    for (const row of rows) insert.run(row.provider, row.type ?? "oauth", typeof row.data === "string" ? row.data : JSON.stringify(row.data), row.disabled ?? null);
+    db.close();
+  }
+
+  it("reads the Claude and Codex accounts GJC signed in to, from its enabled OAuth sign-ins only, and never sends a refresh token", async () => {
+    gjcStore([
+      { provider: "anthropic", data: { access: "gjc-claude", refresh: "gjc-refresh", expires: NOW + HOUR, accountId: "uuid-9", email: "gjc@example.com" } },
+      { provider: "anthropic", data: { access: "removed", refresh: "r", expires: NOW + HOUR, accountId: "uuid-8" }, disabled: "deleted by user" },
+      { provider: "anthropic", type: "api_key", data: { key: "sk-ant-key" } },
+      { provider: "openai-codex", data: { access: codexToken(), refresh: "gjc-refresh", expires: NOW + HOUR, accountId: "acct-1", email: "gjc@example.com" } },
+      { provider: "perplexity", data: { access: "other", refresh: "r", expires: NOW + HOUR } },
+    ]);
+    replies.set(CLAUDE_USAGE, { body: { five_hour: { utilization: 42, resets_at: null } } });
+    replies.set(CODEX_USAGE, codexReply());
+    const report = await new UsageService(context(), claudeAndCodex()).report();
+    expect(report.providers.map((usage) => [usage.key, usage.account, usage.problem])).toEqual([
+      ["claude:uuid-9", "gjc@example.com", null],
+      ["codex:user-1__acct-1", "gjc@example.com", null],
+    ]);
+    // providers are asked at once: each request by its endpoint
+    const headers = (url: string) => requests.filter((request) => request.url === url).map((request) => request.init.headers as Record<string, string>);
+    expect(requests).toHaveLength(2);
+    expect(headers(CLAUDE_USAGE).map((sent) => sent["authorization"])).toEqual(["Bearer gjc-claude"]);
+    expect(headers(CODEX_USAGE).map((sent) => [sent["authorization"], sent["chatgpt-account-id"]])).toEqual([[`Bearer ${codexToken()}`, "acct-1"]]);
+  });
+
+  it("leaves out a GJC sign-in that expired or is refused, which only GJC can renew", async () => {
+    gjcStore([
+      { provider: "anthropic", data: { access: "stale", refresh: "r", expires: NOW - 1, accountId: "uuid-9" } },
+      { provider: "openai-codex", data: { access: codexToken(), refresh: "r", expires: NOW + HOUR, accountId: "acct-1" } },
+    ]);
+    replies.set(CODEX_USAGE, { status: 401 });
+    const report = await new UsageService(context(), claudeAndCodex()).report();
+    expect(report.providers).toEqual([]);
+    expect(requests.map((request) => request.url)).toEqual([CODEX_USAGE]);
+  });
+
+  it("lists an account signed in both in Claude Code and in GJC once, asking with Claude Code's sign-in", async () => {
+    write(join(home, ".claude", ".credentials.json"), { claudeAiOauth: { accessToken: "native", expiresAt: NOW + HOUR } });
+    write(join(home, ".claude.json"), { oauthAccount: { accountUuid: "uuid-1", emailAddress: "me@example.com" } });
+    gjcStore([{ provider: "anthropic", data: { access: "gjc", refresh: "r", expires: NOW + HOUR, accountId: "uuid-1", email: "me@example.com" } }]);
+    replies.set(CLAUDE_USAGE, { body: { five_hour: { utilization: 1, resets_at: null } } });
+    const report = await new UsageService(context(), only("claude")).report();
+    expect(report.providers.map((usage) => [usage.key, usage.problem])).toEqual([["claude:uuid-1", null]]);
+    expect(requests.map((_, index) => auth(index))).toEqual(["Bearer native"]);
+  });
+
+  it("reads GJC's sign-in of an account whose Claude Code sign-in expired, and still renews only Claude Code's home", async () => {
+    write(join(home, ".claude", ".credentials.json"), { claudeAiOauth: { accessToken: "native", expiresAt: NOW - HOUR } });
+    write(join(home, ".claude.json"), { oauthAccount: { accountUuid: "uuid-1", emailAddress: "me@example.com" } });
+    gjcStore([
+      { provider: "anthropic", data: { access: "gjc", refresh: "r", expires: NOW + HOUR, accountId: "uuid-1", email: "me@example.com" } },
+      { provider: "anthropic", data: { access: "gjc-only", refresh: "r", expires: NOW + HOUR, accountId: "uuid-2" } },
+    ]);
+    replies.set(CLAUDE_USAGE, { body: { five_hour: { utilization: 1, resets_at: null } } });
+    const report = await new UsageService(context(), only("claude")).report();
+    expect(report.providers.map((usage) => [usage.key, usage.problem])).toEqual([["claude:uuid-1", null], ["claude:uuid-2", null]]);
+    expect(requests.map((_, index) => auth(index))).toEqual(["Bearer gjc", "Bearer gjc-only"]);
+    // Sign in again opens Claude Code in its own home; GJC's sign-ins are GJC's to renew
+    expect(await localSignInPlace(context(), "claude:uuid-1")).toEqual({ provider: "claude", home: { kind: "default" } });
+    expect(await localSignInPlace(context(), "claude:uuid-2")).toBeNull();
+  });
+
+  it("reads GJC's store from GJC_CODING_AGENT_DIR", async () => {
+    const dir = join(home, "gjc-elsewhere");
+    gjcStore([{ provider: "anthropic", data: { access: "moved", refresh: "r", expires: NOW + HOUR, accountId: "uuid-9" } }], dir);
+    replies.set(CLAUDE_USAGE, { body: { five_hour: { utilization: 1, resets_at: null } } });
+    const ctx = context();
+    const report = await new UsageService({ ...ctx, env: { ...ctx.env, GJC_CODING_AGENT_DIR: dir } }, only("claude")).report();
+    expect(report.providers.map((usage) => usage.key)).toEqual(["claude:uuid-9"]);
+    expect(auth(0)).toBe("Bearer moved");
+  });
+
+  it("finds no GJC sign-in in a store that is missing, not GJC's, not a database, or over MAX_READ_BYTES", async () => {
+    const service = () => new UsageService(context(), only("claude"));
+    expect((await service().report()).providers).toEqual([]);
+    gjcStore([{ provider: "anthropic", data: { access: "big", refresh: "r", expires: NOW + HOUR, accountId: "uuid-9", pad: "x".repeat(MAX_READ_BYTES) } }]);
+    expect((await service().report()).providers).toEqual([]);
+    rmSync(join(home, ".gjc"), { recursive: true });
+    const db = new Database(join(home, "agent.db"));
+    db.exec("create table other (id integer)");
+    db.close();
+    write(join(home, ".gjc", "agent", "agent.db"), "not a database");
+    expect((await service().report()).providers).toEqual([]);
+    const ctx = context();
+    expect((await new UsageService({ ...ctx, env: { ...ctx.env, GJC_CODING_AGENT_DIR: home } }, only("claude")).report()).providers).toEqual([]);
+    expect(requests).toEqual([]);
   });
 });
 

@@ -311,15 +311,17 @@ The strip beside the **Settings** gear shows the plan limits of the AI tools sig
 
 | Provider | Sign-in it reads |
 | --- | --- |
-| Claude | Claude Code: the macOS keychain item `Claude Code-credentials`, else `~/.claude/.credentials.json`; the same for each config directory in `CLAUDE_CONFIG_DIR` or `~/.claude-*`. The email from its `.claude.json` |
-| Codex | `auth.json` in `CODEX_HOME`, `~/.config/codex`, `~/.codex` and each `~/.codex-*`, else the macOS keychain item `Codex Auth`. The email in its token |
+| Claude | Claude Code: the macOS keychain item `Claude Code-credentials`, else `~/.claude/.credentials.json`; the same for each config directory in `CLAUDE_CONFIG_DIR` or `~/.claude-*`. The email from its `.claude.json`. Then each Claude account signed in through GJC (see below) |
+| Codex | `auth.json` in `CODEX_HOME`, `~/.config/codex`, `~/.codex` and each `~/.codex-*`, else the macOS keychain item `Codex Auth`. The email in its token. Then each Codex account signed in through GJC (see below) |
 | Cursor | The Cursor app's `state.vscdb` and the `cursor-agent` CLI's macOS keychain item, once when both are one account. Its monthly share, and within it Cursor's own models and the rest |
 | Copilot | `~/.config/github-copilot/apps.json` or `hosts.json`, then every account the GitHub CLI holds (`gh auth status`): per GitHub login, the first token that finds a plan |
 | Grok | Every account in `~/.grok/auth.json` |
 | Antigravity | The macOS keychain item Antigravity signs in with (Gemini and other-model quota) |
 | OpenCode | OpenCode Go: the active `opencode-go` key, else the active `opencode` key, in the `credential` table of `opencode.db` (`~/.local/share/opencode/opencode.db`, or where `XDG_DATA_HOME` and `OPENCODE_DB` put it); with no OpenCode 2 store there, the `opencode-go` key, else the `opencode` key, in `~/.local/share/opencode/auth.json` (`opencode/auth.json` under `XDG_DATA_HOME` when it is set), else `OPENCODE_API_KEY`. Its rolling, weekly and monthly limits; a key without a Go subscription is left out |
 
-Only providers with a sign-in are shown; a GitHub account without Copilot is left out. One PC signed in to two accounts of a provider shows both, each named by its email (a login for Copilot) and told apart by its account id, so the same account found in two places counts once. A credential file, a command's output or a provider's answer over 1 MiB is treated as unreadable. Where each sign-in lives and which endpoint states its limits follows [OpenUsage](https://github.com/robinebers/openusage).
+Only providers with a sign-in are shown; a GitHub account without Copilot is left out. One PC signed in to two accounts of a provider shows both, each named by its email (a login for Copilot) and told apart by its account id, so the same account found in two places counts once. A credential file, a command's output or a provider's answer over 1 MiB is treated as unreadable.
+
+Claude and Codex accounts signed in through GJC (gajae-code) are read from GJC's own store, `agent.db` in `~/.gjc/agent` (or `GJC_CODING_AGENT_DIR`): its enabled `anthropic` and `openai-codex` OAuth sign-ins, read only. They show as ordinary Claude and Codex accounts; one also signed in to Claude Code or Codex is listed once and asked with that sign-in while it is valid. GJC renews its own sign-ins, so one that expired or is refused is left out until GJC runs again, and **Sign in again** never targets it. Where each sign-in lives and which endpoint states its limits follows [OpenUsage](https://github.com/robinebers/openusage).
 
 - **Read only.** The server never refreshes a token: Claude, Codex, Cursor and Grok rotate refresh tokens, and a refresh the tool did not make would sign it out. An expired sign-in says so; using the tool once renews it.
 - **Asked only while someone looks.** Nothing runs in the background. The server asks a provider at most every five minutes, a refresh from the popover at most every 30 seconds, and a provider that answered 429 not before it said to.
