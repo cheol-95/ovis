@@ -26,7 +26,7 @@ function StepRow({ line, reading }: { line: StepLine | null; reading: string }) 
  * already knows (the PC's agents, the plan usage switch, paired devices, this device's alerts), and
  * the button that opens the guide again (lib/setupGuide.ts). Nothing here changes a setting.
  */
-export function SetupGuideSettings({ onOpen }: { onOpen: () => void }) {
+export function SetupGuideSettings({ onOpen, watching = false }: { onOpen: () => void; /** this device only watches: the guide is not shown to it, so there is no button to open it */ watching?: boolean }) {
   const t = useT();
   const { settings } = useSettings();
   const locale = useLocale();
@@ -77,7 +77,9 @@ export function SetupGuideSettings({ onOpen }: { onOpen: () => void }) {
             <StepRow line={alertsLine} reading={reading} />
           </ul>
         </div>
-        <button type="button" className="btn settings-guide-open" onClick={() => { onOpen(); openSetupGuide(); }}><Play aria-hidden="true" />{t("Open setup guide")}</button>
+        {watching
+          ? <span className="settings-description">{t("This device only watches. Open the guide on a device that can make changes.")}</span>
+          : <button type="button" className="btn settings-guide-open" onClick={() => { onOpen(); openSetupGuide(); }}><Play aria-hidden="true" />{t("Open setup guide")}</button>}
       </div>
     </SettingsGroup>
   );

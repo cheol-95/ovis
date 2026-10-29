@@ -1311,7 +1311,7 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
       case "devices": return <DevicesPage auth={auth} security={security} onSignOut={actions.lock} onRevokedAll={actions.refresh} />;
       case "remote": return <RemotePcsPage actions={actions} machines={machines} pcSettings={pcSettings} pcSettingsError={pcSettingsError} onPcSettings={(patch) => void updatePcSettings(patch)} />;
       case "integrations": return <IntegrationsPage watching={auth?.role === "watch"} onOpenPane={onOpenPane} onStartAgent={onStartAgent} />;
-      case "guide": return <SetupGuideSettings onOpen={onClose} />;
+      case "guide": return <SetupGuideSettings onOpen={onClose} watching={auth?.role === "watch"} />;
       case "about": return <AboutPage updates={updates} herdrVersion={herdrVersion} bridgesFollow={pcSettings?.auto_update_bridges === true} />;
       default: return null;
     }

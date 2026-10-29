@@ -350,4 +350,5 @@ export const SETTINGS_KO: Record<string, string> = {
   "Alerts: on": "알림: 켜짐",
   "Alerts: off": "알림: 꺼짐",
   "onboarding first run getting started welcome": "온보딩 처음 실행 시작하기 환영",
+  "This device only watches. Open the guide on a device that can make changes.": "이 기기는 보기만 해요. 바꿀 수 있는 기기에서 안내를 여세요.",
 };

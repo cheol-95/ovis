@@ -350,4 +350,5 @@ export const SETTINGS_JA: Record<string, string> = {
   "Alerts: on": "通知: オン",
   "Alerts: off": "通知: オフ",
   "onboarding first run getting started welcome": "オンボーディング 初回 はじめに ようこそ",
+  "This device only watches. Open the guide on a device that can make changes.": "このデバイスは表示のみです。変更できるデバイスでガイドを開いてください。",
 };

@@ -350,4 +350,5 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Alerts: on": "提醒：开启",
   "Alerts: off": "提醒：关闭",
   "onboarding first run getting started welcome": "入门 首次运行 开始使用 欢迎",
+  "This device only watches. Open the guide on a device that can make changes.": "这台设备只能查看。请在可以更改设置的设备上打开向导。",
 };

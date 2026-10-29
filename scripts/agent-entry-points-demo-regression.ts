@@ -190,7 +190,11 @@ try {
         await page.goto(`${root}&demo_devices=watch&settings=integrations`);
         await body.locator(".settings-agent-row").first().waitFor();
         assert.equal(await body.locator(".settings-agent-install").count(), 0, `a watching device gets no Install or Sign in ${at}`);
-        console.log(`PASS a watching device lists the agents but gets no ${ADD_ROW}, Install or Sign in (${at})`);
+        // the guide is never shown to a watching device (#2332), so Settings offers no button that would do nothing
+        await page.goto(`${root}&demo_devices=watch&settings=guide`);
+        await page.locator(".settings-guide-steps li").first().waitFor();
+        assert.equal(await page.getByRole("button", { name: "Open setup guide", exact: true }).count(), 0, `a watching device gets no Open setup guide ${at}`);
+        console.log(`PASS a watching device lists the agents but gets no ${ADD_ROW}, Install, Sign in or Open setup guide (${at})`);
 
         assert.deepEqual(errors, [], `no page errors ${at}`);
       } finally {
