@@ -237,6 +237,8 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [worktreeDialog, setWorktreeDialog] = useState<{ mode: WorktreeDialogMode; workspace: WorkspaceInfo } | null>(null);
+  // worktrees are not offered to a watching device: one open when this device turns into one closes
+  useEffect(() => { if (watching) setWorktreeDialog(null); }, [watching]);
   const [editingWorkspaceId, setEditingWorkspaceId] = useState<string | null>(null);
   const [workspaceLabel, setWorkspaceLabel] = useState("");
   // the order App's coordinator draws: herdr's, or a drag's until a roster read after its moves comes

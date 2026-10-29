@@ -177,6 +177,53 @@ try {
           console.log(`PASS New worktree's picker ends with ${ADD_ROW} (${at})`);
         }
 
+        // a device that turns into a watching one (its pairing changed) loses what was already open:
+        // the next health answer says role "watch" (site/demo/transport.ts demoSecurity)
+        const becomeWatching = () => page.evaluate(() => { sessionStorage.setItem("ovis:demo-security", "watch"); document.dispatchEvent(new Event("visibilitychange")); });
+        const driveAgain = () => page.evaluate(() => sessionStorage.removeItem("ovis:demo-security"));
+        // Settings: an open Install card closes, and the list shows no Install or Sign in
+        await page.goto(`${base}&settings=integrations`);
+        await body.locator("[data-section='agents-available'] .settings-agent-install").first().waitFor();
+        await press(body.locator("[data-section='agents-available'] .settings-agent-install").first());
+        await body.locator(".agent-setup").waitFor();
+        await becomeWatching();
+        await body.locator(".agent-setup").waitFor({ state: "detached" });
+        await body.locator(".settings-agent-row").first().waitFor();
+        assert.equal(await body.locator(".settings-agent-install").count(), 0, `the list shows no Install or Sign in once watching ${at}`);
+        await driveAgain();
+        // New workspace: the open Add another agent… panel goes, and the picker offers no row
+        await page.goto(`${base}&new=workspace`);
+        const opened = page.getByRole("dialog", { name: /^New workspace · / });
+        await opened.waitFor();
+        await press(opened.locator(".agent-picker-trigger"));
+        await options.last().waitFor();
+        await press(options.last());
+        await opened.locator(".add-agent-row").first().waitFor();
+        await becomeWatching();
+        await opened.locator(".add-agent").waitFor({ state: "detached" });
+        await press(opened.locator(".agent-picker-trigger"));
+        await options.last().waitFor();
+        assert.notEqual((await options.last().textContent())?.trim(), ADD_ROW, `no ${ADD_ROW} once watching ${at}`);
+        await page.keyboard.press("Escape");
+        await driveAgain();
+        if (width === 1280) {
+          // New worktree is not offered to a watching device: an open one closes
+          await page.goto(base);
+          const row = page.locator(`.workspace-group[data-workspace="${panes.api.split(":")[0]}"] > .workspace-header .workspace-select`);
+          const bounds = (await row.boundingBox())!;
+          await row.click({ button: "right", position: { x: 32, y: bounds.height / 2 } });
+          await page.getByRole("menuitem", { name: "New worktree", exact: true }).click();
+          const worktree = page.getByRole("dialog", { name: /^New worktree · / });
+          await worktree.waitFor();
+          await worktree.locator(".agent-picker-trigger").click();
+          await options.last().click();
+          await worktree.locator(".add-agent-row").first().waitFor();
+          await becomeWatching();
+          await worktree.waitFor({ state: "detached" });
+          await driveAgain();
+        }
+        console.log(`PASS turning into a watching device closes an open Install card, Add another agent… panel${width === 1280 ? " and New worktree dialog" : ""} (${at})`);
+
         // a device that only watches may not type into the PC's terminal: no setup anywhere
         await page.goto(`${root}&demo_devices=watch&new=workspace`);
         const watched = page.getByRole("dialog", { name: /^New workspace · / });

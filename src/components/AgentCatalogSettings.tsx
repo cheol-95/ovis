@@ -47,6 +47,8 @@ export function AgentCatalogSettings({ watching, onOpenPane, onStartAgent }: Age
   // the PC the setup began on: it stays that PC's, whatever PC is picked meanwhile
   const [setup, setSetup] = useState<{ row: AgentCatalogRow; machineId: string } | null>(null);
   const setupView = useRef<HTMLElement>(null);
+  // a device that turns into a watching one may not type into the PC's terminal: an open setup goes
+  useEffect(() => { if (watching) setSetup(null); }, [watching]);
   useEffect(() => { if (setup !== null) setupView.current?.focus(); }, [setup]);
   // each Check again, and each return from a setup, reads the PC again
   const [reads, setReads] = useState(0);
@@ -66,7 +68,7 @@ export function AgentCatalogSettings({ watching, onOpenPane, onStartAgent }: Age
   }, [machineId, reads, t]);
 
   const note = t("Install runs the maker's own installer in a terminal tab on this PC, where you can watch it.");
-  if (setup !== null) {
+  if (setup !== null && !watching) {
     const back = (): void => { setSetup(null); setReads((count) => count + 1); };
     const { row, machineId: on } = setup;
     return (
