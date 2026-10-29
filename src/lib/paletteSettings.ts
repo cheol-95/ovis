@@ -1,6 +1,6 @@
 import type { Translate } from "./i18n.ts";
 
-export type SettingsPageId = "appearance" | "chat" | "terminal" | "alerts" | "voice" | "usage" | "shortcuts" | "devices" | "remote" | "integrations" | "about";
+export type SettingsPageId = "appearance" | "chat" | "terminal" | "alerts" | "voice" | "usage" | "shortcuts" | "devices" | "remote" | "integrations" | "guide" | "about";
 
 /**
  * What the palette shows for one Settings page, or for one group on it: its name and the words a
@@ -35,7 +35,8 @@ export function settingsPageEntries(t: Translate): SettingsPageEntry[] {
     { id: "shortcuts", label: t("Shortcuts"), aliases: t("keyboard keys bindings hotkeys") },
     { id: "devices", label: t("Phone & devices"), aliases: t("phone install keep screen on app") },
     { id: "remote", label: t("Remote PCs"), aliases: t("machines computers ssh bridge plugins") },
-    { id: "integrations", label: t("Agent integrations"), aliases: t("agents hooks claude codex") },
+    { id: "integrations", label: t("Agent integrations"), aliases: t("agents hooks claude codex install") },
+    { id: "guide", label: t("Setup guide"), aliases: t("onboarding first run getting started welcome") },
     { id: "about", label: t("About"), aliases: t("version update release herdr") },
     { id: "appearance", section: "typography", label: t("Typography"), aliases: `${t("Interface font size")} ${t("Interface font")}` },
     { id: "chat", section: "composer", label: t("Composer"), aliases: [t("Enter sends"), t("Return inserts a new line"), t("Send queued messages automatically"), t("New tab button"), t("Suggestion chip")].join(" ") },

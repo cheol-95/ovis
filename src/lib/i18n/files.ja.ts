@@ -37,7 +37,6 @@ export const FILES_JA: Record<string, string> = {
   "Showing the first {count} lines of this file. Download it to read the rest.": "このファイルの最初の {count} 行のみ表示しています。続きを読むにはダウンロードしてください。",
   "File source": "ファイルのソース",
   "Only part of this file is shown. Download it to read the rest.": "ファイルの一部のみ表示しています。残りはダウンロードしてお読みください。",
-  "Show": "表示",
   "Changes": "変更",
   "Changed files": "変更されたファイル",
   "Compare": "比較",

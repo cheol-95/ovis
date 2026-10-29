@@ -70,7 +70,6 @@ export const DEVICES_ZH: Record<string, string> = {
   "{n} min ago": "{n} 分钟前",
   "{n} h ago": "{n} 小时前",
   "Asking this PC about Tailscale…": "正在查询此 PC 的 Tailscale 状态…",
-  "Check again": "重新检查",
   "Open this address on your phone": "在手机上打开此地址",
   "Tailscale already serves this PC": "Tailscale 已在为此 PC 提供服务",
   "Once it is open, install the app, then open the ⋯ menu and tap Alerts.": "打开后安装应用，然后在 ⋯ 菜单中点按“提醒”。",

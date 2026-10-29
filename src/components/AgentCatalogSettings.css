@@ -1,0 +1,44 @@
+/* Settings → Agent integrations: the PC's agents, installed and to install (AgentCatalogSettings) */
+.settings-agent-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.settings-agent-toolbar .btn,
+.settings-agent-install,
+.settings-agent-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-agent-toolbar .btn svg,
+.settings-agent-install svg,
+.settings-agent-back svg {
+  width: 15px;
+  height: 15px;
+}
+
+.settings-agent-row {
+  justify-content: flex-start;
+}
+
+.settings-agent-row > .agent-mark {
+  display: inline-flex;
+  flex: none;
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
+.settings-agent-version {
+  color: var(--status-done);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.settings-agent-setup {
+  gap: var(--space-3);
+}

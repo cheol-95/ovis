@@ -20,7 +20,7 @@ import { comboKey, LEGACY_COMBOS } from "./theme-baseline.ts";
 // HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
 const app = mkdtempSync(join(tmpdir(), "herdr-settings-demo-"));
 const devApp = mkdtempSync(join(tmpdir(), "herdr-settings-dev-"));
-const PAGES = ["Appearance", "Chat", "Terminal", "Alerts", "Voice input", "Subscription usage", "Shortcuts", "Phone & devices", "Remote PCs", "Agent integrations", "About"];
+const PAGES = ["Appearance", "Chat", "Terminal", "Alerts", "Voice input", "Subscription usage", "Shortcuts", "Phone & devices", "Remote PCs", "Agent integrations", "Setup guide", "About"];
 const SETTINGS = { language: "en", showUsage: true, voiceInput: true, showQuickReplies: true, fileOpen: "panel" };
 
 const dialogOf = (page: Page) => page.getByRole("dialog", { name: "Settings", exact: true });
@@ -146,7 +146,7 @@ const landing = async (page: Page, label: (name: string) => string): Promise<{ p
   return { page: id, section, visible };
   });
   // the panel is named by its page's label in the language shown: back to the page's id
-  const ids = ["appearance", "chat", "terminal", "alerts", "voice", "usage", "shortcuts", "devices", "remote", "integrations", "about"];
+  const ids = ["appearance", "chat", "terminal", "alerts", "voice", "usage", "shortcuts", "devices", "remote", "integrations", "guide", "about"];
   return { ...shown, page: shown.page === null ? null : ids[PAGES.findIndex((name) => label(name) === shown.page)] ?? `unknown: ${shown.page}` };
 };
 /** Anything in the palette or Settings wider than the window: a long query or label must not push the sheet sideways. */
@@ -531,7 +531,8 @@ try {
               const body = page.locator(".settings-body:not([hidden])");
               assert.equal(await body.locator("[role='alert']").count(), 0, "the integrations page shows no error");
               const install = (target: string): string => `herdr integration install ${target}`;
-              const shown = await body.locator(".settings-row").evaluateAll((nodes) => nodes.map((node) => ({
+              // the install catalog's agents lead the page (AgentCatalogSettings); these are the rows after them
+              const shown = await body.locator(".settings-row:not(.settings-agent-row)").evaluateAll((nodes) => nodes.map((node) => ({
                 label: node.querySelector(".settings-label")?.textContent ?? "",
                 description: node.querySelector(".settings-description")?.textContent ?? "",
                 command: node.querySelector("code")?.textContent ?? null,

@@ -70,7 +70,6 @@ export const DEVICES_JA: Record<string, string> = {
   "{n} min ago": "{n} 分前",
   "{n} h ago": "{n} 時間前",
   "Asking this PC about Tailscale…": "この PC の Tailscale の状態を確認しています…",
-  "Check again": "再確認",
   "Open this address on your phone": "スマートフォンでこのアドレスを開いてください",
   "Tailscale already serves this PC": "Tailscale はすでにこの PC を公開しています",
   "Once it is open, install the app, then open the ⋯ menu and tap Alerts.": "開いたらアプリをインストールし、⋯ メニューの「通知」をタップしてください。",

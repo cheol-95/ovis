@@ -1,0 +1,112 @@
+/* a creation dialog's Add another agent: the agents to install, then the setup card (AddAgentPanel) */
+.add-agent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.add-agent-lead {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+}
+
+.add-agent-error {
+  margin: 0;
+  color: var(--status-blocked);
+}
+
+.add-agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.add-agent-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--row-h);
+  padding: var(--space-2) var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.add-agent-row:hover,
+.add-agent-row:focus-visible {
+  outline: none;
+  background: var(--bg-hover);
+  color: var(--text-strong);
+}
+
+.add-agent-row .agent-mark {
+  display: inline-flex;
+  flex: none;
+}
+
+.add-agent-row > svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--text-dim);
+}
+
+.add-agent-copy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.add-agent-name {
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.add-agent-description {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-base);
+}
+
+/* the card sits in the dialog's own box: no second frame around it */
+.add-agent .agent-setup {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.add-agent-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.add-agent-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.add-agent-actions .btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+@media (pointer: coarse) {
+  .add-agent-row {
+    min-height: var(--touch-target);
+  }
+}

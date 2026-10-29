@@ -15,6 +15,7 @@ import "./WorktreeDialog.css";
 import type { AgentKind, WorkspaceInfo, WorktreeEntry, WorktreeOpened } from "../../shared/protocol.ts";
 import { MAX_LABEL_CHARS } from "../../shared/labels.ts";
 import { ApiError } from "../lib/api.ts";
+import { AddAgentPanel } from "./AddAgentPanel.tsx";
 import { AgentPicker, rememberAgent, rememberedAgent } from "./AgentPicker.tsx";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import { useT } from "../lib/i18n.ts";
@@ -31,12 +32,14 @@ interface Props {
   workspace: WorkspaceInfo;
   onClose: () => void;
   onOpened: (opened: WorktreeOpened) => void;
+  /** shows a pane of this PC in its terminal: an agent's install or sign-in tab, from Add another agent */
+  onOpenPane?: (paneId: string) => void;
 }
 
 /** herdr's own words about a refused worktree (a branch that exists, a folder that is no repository) */
 const said = (reason: unknown): string => reason instanceof ApiError ? reason.detail : reason instanceof Error ? reason.message : String(reason);
 
-export function WorktreeDialog({ mode, workspace, onClose, onOpened }: Props) {
+export function WorktreeDialog({ mode, workspace, onClose, onOpened, onOpenPane }: Props) {
   const t = useT();
   const { settings } = useSettings();
   const id = useId();
@@ -53,6 +56,8 @@ export function WorktreeDialog({ mode, workspace, onClose, onOpened }: Props) {
   const [entries, setEntries] = useState<WorktreeEntry[] | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Add another agent shows in place of the fields, which keep what was typed
+  const [adding, setAdding] = useState(false);
   const first = useRef<HTMLInputElement>(null);
   const surface = useRef<HTMLFormElement>(null);
   const picker = useRef<HTMLButtonElement>(null);
@@ -109,6 +114,22 @@ export function WorktreeDialog({ mode, workspace, onClose, onOpened }: Props) {
     );
     return () => { cancelled = true; };
   }, [mode, workspace.workspace_id, listWorktrees]);
+
+  // back from Add another agent, the focus returns to the picker it was opened from
+  const wasAdding = useRef(false);
+  useEffect(() => {
+    if (wasAdding.current && !adding) picker.current?.focus();
+    wasAdding.current = adding;
+  }, [adding]);
+  // the installed agent is offered once the PC lists it: picked then, else said why not
+  const addedAgent = (kind: string): void => {
+    setAdding(false);
+    fetchAgentKinds().then((next) => {
+      setAgents(next);
+      if (next.some((agent) => agent.kind === kind)) { setAgentKind(kind); setError(null); }
+      else setError(t("It is installed, but this PC does not offer it here yet. Restart Ovis on the PC, or start it in a terminal tab."));
+    }, (reason: unknown) => setError(said(reason)));
+  };
 
   const run = async (status: string, request: () => Promise<WorktreeOpened>): Promise<void> => {
     if (pending) return;
@@ -171,7 +192,9 @@ export function WorktreeDialog({ mode, workspace, onClose, onOpened }: Props) {
             <X aria-hidden="true" />
           </button>
         </header>
-        <div className="modal-body">
+        {adding ? <div className="modal-body">
+          <AddAgentPanel onReady={addedAgent} onOpenTerminal={(paneId) => { if (onOpenPane) onOpenPane(paneId); else onClose(); }} onBack={() => setAdding(false)} />
+        </div> : <><div className="modal-body">
           {mode === "create" ? (
             <>
               <p className="worktree-lead">{t("A git worktree of this repository, checked out under herdr's worktree folder and opened as a workspace next to this one.")}</p>
@@ -192,7 +215,7 @@ export function WorktreeDialog({ mode, workspace, onClose, onOpened }: Props) {
               </label>
               <div className="field">
                 <span className="field-label" id={`${id}-agent`}>{t("Agent")}</span>
-                <AgentPicker ref={picker} agents={agents} value={agentKind} disabled={locked} labelledBy={`${id}-agent`} onChange={setAgentKind} />
+                <AgentPicker ref={picker} agents={agents} value={agentKind} disabled={locked} labelledBy={`${id}-agent`} addAgent={{ label: t("Add another agent…"), onSelect: () => setAdding(true) }} onChange={setAgentKind} />
               </div>
             </>
           ) : others === null && !error ? (
@@ -221,7 +244,7 @@ export function WorktreeDialog({ mode, workspace, onClose, onOpened }: Props) {
         <footer className="modal-footer">
           <button type="button" className="btn btn-ghost" disabled={pending !== null} onClick={onClose}>{t("Cancel")}</button>
           {mode === "create" && <button type="submit" className="btn btn-primary" disabled={pending !== null || (!made && !branch.trim())}>{t(made ? "Open" : "Create worktree")}</button>}
-        </footer>
+        </footer></>}
       </form>
     </div>,
     document.body,
