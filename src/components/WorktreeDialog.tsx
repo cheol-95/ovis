@@ -121,10 +121,11 @@ export function WorktreeDialog({ mode, workspace, onClose, onOpened, onOpenPane 
 
   // back from Add another agent, the focus returns to the picker it was opened from
   const wasAdding = useRef(false);
+  // (after a setup, once the refreshed picker is enabled again)
   useEffect(() => {
-    if (wasAdding.current && !adding) picker.current?.focus();
-    wasAdding.current = adding;
-  }, [adding]);
+    if (adding) { wasAdding.current = true; return; }
+    if (wasAdding.current && !refreshing) { wasAdding.current = false; picker.current?.focus(); }
+  }, [adding, refreshing]);
   // the installed agent is offered once the PC lists it: picked then, else said why not
   const addedAgent = (kind: string): void => {
     setAdding(false);

@@ -56,7 +56,7 @@ export function SetupGuideSettings({ onOpen }: { onOpen: () => void }) {
   const agentLine: StepLine | null = agents === null ? null
     : agents === "unknown" ? { done: false, text: t("Agent: could not be read") }
     : agents.length === 0 ? { done: false, text: t("Agent: none yet") }
-    : { done: true, text: t("Agent: {names}", { names: new Intl.ListFormat(locale, { style: "narrow", type: "unit" }).format(agents) }) };
+    : { done: true, text: t("Agent: {names}", { names: new Intl.ListFormat(locale, { type: "conjunction" }).format(agents) }) };
   const usageLine: StepLine = settings.showUsage ? { done: true, text: t("Plan usage: on") } : { done: false, text: t("Plan usage: off") };
   const phoneLine: StepLine | null = devices === null ? null
     : devices === "unknown" ? { done: false, text: t("Phone: could not be read") }

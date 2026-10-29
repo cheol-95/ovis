@@ -214,10 +214,11 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
 
   // back from Add another agent, the focus returns to the picker it was opened from
   const wasAdding = useRef(false);
+  // (after a setup, once the refreshed picker is enabled again)
   useEffect(() => {
-    if (wasAdding.current && !adding) firstFieldRef.current?.focus();
-    wasAdding.current = adding;
-  }, [adding]);
+    if (adding) { wasAdding.current = true; return; }
+    if (wasAdding.current && !refreshing) { wasAdding.current = false; firstFieldRef.current?.focus(); }
+  }, [adding, refreshing]);
 
   if (!open) return null;
 

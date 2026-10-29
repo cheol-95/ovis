@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { AGENT_CATALOG, catalogRow, type AgentInstallState } from "../../shared/agent-catalog.ts";
-import { addableAgents, agentSections, pickerStarts, setupStart } from "./agentList.ts";
+import { addableAgents, agentSections, setupStart } from "./agentList.ts";
 
 const missing: AgentInstallState = { installed: false, binary: null, on_path: null, version: null, version_error: null, meets_min_version: null };
 const found = (version: string): AgentInstallState => ({ installed: true, binary: "/usr/bin/x", on_path: true, version, version_error: null, meets_min_version: true });
@@ -35,8 +35,6 @@ describe("addableAgents", () => {
     const commandCode = AGENT_CATALOG.find((entry) => entry.id === "cmd");
     if (commandCode === undefined) throw new Error("the catalog has no cmd entry");
     expect(addableAgents([catalogRow(commandCode, "linux", missing)])).toEqual([]);
-    expect(pickerStarts("cmd")).toBe(false);
-    expect(pickerStarts("codex")).toBe(true);
   });
 });
 

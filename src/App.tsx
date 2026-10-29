@@ -953,6 +953,9 @@ export function App() {
       <SettingsDialog machines={machines} auth={auth} herdrVersion={shownHealth?.herdr?.version ?? null} security={security} open={settingsOpen} section={settingsSection} linkPage={settingsLinkPage} linkSection={settingsLinkSection} onPage={onSettingsPage} onClose={closeSettings} onUsageLogin={(paneId) => { closeSettings(); selectTarget("local", paneId, "terminal"); void load(); }} onOpenPane={(machineId, paneId) => { closeSettings(); selectTarget(machineId, paneId, "terminal"); void load(); }} onStartAgent={(machineId, agent) => {
         // picked for this opening only, as a link's agent is: the remembered default stays the user's
         closeSettings();
+        setDrawerOpen(false);
+        // the setup's PC becomes the selected one, so the address (and a reload) names the PC the dialog makes on
+        if (machineId !== selectedMachineId) selectTarget(machineId, null);
         const fields = { cwd: null, name: null, agent };
         setNewPrefill(fields);
         setNewFields(fields);
