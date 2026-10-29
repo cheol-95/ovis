@@ -30,7 +30,7 @@ describe("AgentSetupCard", () => {
     const installing = render({ kind: "installing", tab });
     expect(installing).toContain("Installing Claude Code…");
     expect(buttons(installing)).toEqual(["Show details", "Open terminal", "Cancel"]);
-    expect(render({ kind: "installed", version: "2.1.312", onPath: false })).toContain("its folder is not on PATH yet");
+    expect(render({ kind: "installed", version: "2.1.312", onPath: false })).toContain("Installed. New terminal tabs will find it.");
     expect(buttons(render({ kind: "installed", version: "2.1.312", onPath: true }))).toEqual(["Sign in", "Skip", "Show details"]);
     expect(buttons(render({ kind: "ready", version: "2.1.312" }))).toEqual(["Start Claude Code"]);
     expect(buttons(render({ kind: "failed", message: "fixture failure", after: "install" }))).toEqual(["Try again", "Show details", "Cancel"]);

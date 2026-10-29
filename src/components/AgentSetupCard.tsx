@@ -71,21 +71,22 @@ export function AgentSetupCard({ agent, machineId = "local", initial = { kind: "
       </ol>
       <div className="agent-setup-bar" data-state={step.kind} aria-hidden="true"><span style={{ width: `${fraction * 100}%` }} /></div>
       <div className="agent-setup-status" role="status" data-state={step.kind}>
-        {step.kind === "idle" && <><SquareTerminal aria-hidden="true" /><div><strong>{t("Install {agent}", { agent: name })}</strong><span>{t("Runs the official installer in a terminal tab on this PC.")}</span></div></>}
+        {step.kind === "idle" && <><SquareTerminal aria-hidden="true" /><div><strong>{t("Install {agent}", { agent: name })}</strong><span>{t("Uses the official installer, on this PC.")}</span></div></>}
         {step.kind === "installing" && <><LoaderCircle className="agent-setup-spin" aria-hidden="true" /><div><strong>{t("Installing {agent}…", { agent: name })}</strong><span>{t("This can take a few minutes. You can keep using Ovis.")}</span></div></>}
-        {step.kind === "installed" && <><KeyRound aria-hidden="true" /><div><strong>{t("Sign in to {agent}", { agent: name })}</strong><span>{step.onPath ? t("Installed. Sign in so it can use your plan.") : t("Installed. Open a new terminal to use it: its folder is not on PATH yet.")}</span></div></>}
+        {step.kind === "installed" && <><KeyRound aria-hidden="true" /><div><strong>{t("Sign in to {agent}", { agent: name })}</strong><span>{step.onPath ? t("Installed. Sign in so it can use your plan.") : t("Installed. New terminal tabs will find it.")}</span></div></>}
         {step.kind === "signing-in" && <><LoaderCircle className="agent-setup-spin" aria-hidden="true" /><div><strong>{t("Finish signing in")}</strong><span>{t("Follow the steps in the sign-in tab, then come back here.")}</span></div></>}
         {step.kind === "ready" && <><Check aria-hidden="true" /><div><strong>{t("{agent} is ready", { agent: name })}</strong>{step.version && <span>{t("Version {version}", { version: step.version })}</span>}</div></>}
         {step.kind === "failed" && <><TriangleAlert aria-hidden="true" /><div><strong>{t("It did not finish")}</strong><span>{step.message}</span></div></>}
       </div>
       {details && command !== null && <pre className="agent-setup-command"><code>{command}</code></pre>}
+      {details && step.kind === "installed" && !step.onPath && <p className="agent-setup-note">{t("Its folder is on PATH only for terminals opened after the install.")}</p>}
       <div className="agent-setup-actions">
         {step.kind === "idle" && <button type="button" className="btn btn-primary" disabled={agent.install === null} onClick={install}>{t("Install")}</button>}
         {step.kind === "installed" && <><button type="button" className="btn btn-primary" onClick={signIn}>{t("Sign in")}</button><button type="button" className="btn btn-ghost" onClick={() => dispatch({ type: "skip-sign-in" })}>{t("Skip")}</button></>}
         {step.kind === "signing-in" && <button type="button" className="btn btn-primary" onClick={() => dispatch({ type: "sign-in-done" })}>{t("I've signed in")}</button>}
         {step.kind === "ready" && <button type="button" className="btn btn-primary" onClick={onStart}><Play aria-hidden="true" />{t("Start {agent}", { agent: name })}</button>}
         {step.kind === "failed" && <button type="button" className="btn btn-primary" onClick={step.after === "install" ? install : signIn}><RotateCw aria-hidden="true" />{t("Try again")}</button>}
-        {command !== null && step.kind !== "ready" && <button type="button" className="btn btn-ghost" aria-expanded={details} onClick={() => setDetails((open) => !open)}>{details ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}{details ? t("Hide details") : t("Show details")}</button>}
+        {(command !== null || step.kind === "installed") && step.kind !== "ready" && <button type="button" className="btn btn-ghost" aria-expanded={details} onClick={() => setDetails((open) => !open)}>{details ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}{details ? t("Hide details") : t("Show details")}</button>}
         {tab !== null && <button type="button" className="btn btn-ghost" onClick={() => onOpenTerminal(tab.pane_id)}><SquareTerminal aria-hidden="true" />{t("Open terminal")}</button>}
         {(step.kind === "installing" || step.kind === "signing-in" || step.kind === "failed") && <button type="button" className="btn agent-setup-cancel" onClick={() => dispatch({ type: "cancel" })}>{t("Cancel")}</button>}
       </div>

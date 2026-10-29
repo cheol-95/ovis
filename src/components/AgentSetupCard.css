@@ -190,6 +190,12 @@
   word-break: break-all;
 }
 
+.agent-setup-note {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
 .agent-setup-actions {
   display: flex;
   flex-wrap: wrap;
