@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -45,6 +45,25 @@ describe.skipIf(process.platform === "win32")("AgentDetector", () => {
     stub("claude", "echo '2.1.320 (Claude Code, updated)'");
     expect(await detector.state(entry("claude"), "linux")).toMatchObject({ version: "2.1.320" });
     expect(runsOf("claude")).toBe(2);
+  });
+
+  it("reads the version again when the executable is replaced by another file of the same size and time", async () => {
+    stub("copilot", "echo 'copilot 0.10.0'");
+    const target = join(bin, "copilot");
+    utimesSync(target, 1_700_000_000, 1_700_000_000);
+    const detector = new AgentDetector({ home: emptyHome, locate });
+    expect(await detector.state(entry("copilot"), "linux")).toMatchObject({ version: "0.10.0" });
+    // an updater writes the new file beside the old one and renames it over: same size, mtime copied
+    const before = statSync(target);
+    const next = join(bin, "copilot.next");
+    writeFileSync(next, readFileSync(target, "utf8").replace("0.10.0", "0.20.0"));
+    chmodSync(next, 0o755);
+    utimesSync(next, 1_700_000_000, 1_700_000_000);
+    renameSync(next, target);
+    const after = statSync(target);
+    expect([after.size, after.mtimeMs]).toEqual([before.size, before.mtimeMs]);
+    expect(await detector.state(entry("copilot"), "linux")).toMatchObject({ version: "0.20.0" });
+    expect(runsOf("copilot")).toBe(2);
   });
 
   it("runs one version flag for readers that ask at once", async () => {

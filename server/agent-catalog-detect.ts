@@ -151,10 +151,14 @@ interface Kept {
   retryAt: number | null;
 }
 
+/**
+ * The executable file as it is now: which file (device and inode) and when it last changed. A file
+ * renamed over it is another inode, and its ctime moves even when its size and mtime were copied.
+ */
 const fingerprintOf = (executable: string): string | null => {
   try {
-    const stat = statSync(executable);
-    return stat.isFile() ? `${executable}\0${stat.size}\0${stat.mtimeMs}` : null;
+    const stat = statSync(executable, { bigint: true });
+    return stat.isFile() ? [executable, stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join("\0") : null;
   } catch {
     return null;
   }
