@@ -69,6 +69,36 @@ describe("POST /api/agent-catalog/install and /sign-in", () => {
     expect(typed.mock.calls).toEqual([["w1:p9", claude.install.windows!.primary.command]]);
   });
 
+  it("on Windows, closes the new tab when reading its shell fails, and lets the next install start", async () => {
+    for (const [path, detector] of [["/api/agent-catalog/install", nowhere], ["/api/agent-catalog/sign-in", found]] as const) {
+      info.mockImplementationOnce(async () => { throw new herdr.HerdrError("timeout", "herdr did not answer"); });
+      const installer = new AgentInstaller(detector, "windows", undefined, { shellWaitMs: 5_000 });
+      const failed = await installer.handle(post(path, { agent: "claude" }), path);
+      expect([path, failed!.status]).toEqual([path, 502]);
+      expect(closed.mock.calls).toEqual([["w1:t9"]]);
+      expect(typed).not.toHaveBeenCalled();
+      expect((await installer.handle(post(path, { agent: "claude" }), path))!.status).toBe(200);
+      closed.mockClear();
+      typed.mockClear();
+    }
+  });
+
+  it("on Windows, gives the new tab's shell one overall deadline, not one per answer", async () => {
+    // herdr answers slowly: nothing named at first, then PowerShell after the deadline
+    let answers = 0;
+    // fixed wait: a herdr answer that takes 300 ms is what the deadline is measured against
+    info.mockImplementation(async () => { await Bun.sleep(300); return (answers++ === 0 ? null : await pwsh()) as never; });
+    expect(await code(await new AgentInstaller(nowhere, "windows", undefined, { shellWaitMs: 500 }).handle(post("/api/agent-catalog/install", { agent: "claude" }), "/api/agent-catalog/install"))).toEqual([409, "shell_unknown"]);
+    // one answer that comes after the deadline is not waited for
+    // fixed wait: one herdr answer that comes only after the deadline
+    info.mockImplementation(async () => { await Bun.sleep(800); return await pwsh(); });
+    const started = performance.now();
+    expect(await code(await new AgentInstaller(nowhere, "windows", undefined, { shellWaitMs: 300 }).handle(post("/api/agent-catalog/install", { agent: "claude" }), "/api/agent-catalog/install"))).toEqual([409, "shell_unknown"]);
+    expect(performance.now() - started).toBeLessThan(700);
+    expect(typed).not.toHaveBeenCalled();
+    expect(closed).toHaveBeenCalledTimes(2);
+  });
+
   it("on Windows, types nothing into a tab whose shell herdr never names, or names as another shell, and closes that tab", async () => {
     for (const reported of [null, { foreground_processes: [{ argv: ["C:\\tools\\nu.exe"] }] }]) {
       info.mockImplementation(async () => reported as never);
@@ -80,27 +110,77 @@ describe("POST /api/agent-catalog/install and /sign-in", () => {
     expect(closed.mock.calls).toEqual(Array.from({ length: 4 }, () => ["w1:t9"]));
   });
 
-  it("runs one install of an agent at a time on a PC, until its tab ends or the agent is found", async () => {
-    let placed = false;
-    const detector = new AgentDetector({ locate: async (binary) => placed ? `/opt/agents/${binary}` : null, home: "/nonexistent", env: {} });
-    const installer = new AgentInstaller(detector, "linux");
-    const install = (agent: string) => installer.handle(post("/api/agent-catalog/install", { agent }), "/api/agent-catalog/install");
-    openPanes.push("w1:p9");
-    const both = await Promise.all([install("claude"), install("claude")]);
-    expect(both.map((response) => response!.status).sort()).toEqual([200, 409]);
-    expect(await code(both.find((response) => response!.status === 409)!)).toEqual([409, "install_running"]);
-    expect(await code(await install("claude"))).toEqual([409, "install_running"]);
-    expect(tab).toHaveBeenCalledTimes(1);
-    // another agent is not held up
-    expect((await install("codex"))!.status).toBe(200);
-    // the tab ended: another install may start
-    openPanes.length = 0;
-    expect((await install("claude"))!.status).toBe(200);
-    openPanes.push("w1:p9");
-    expect(await code(await install("claude"))).toEqual([409, "install_running"]);
-    // the agent is now found, though its tab is still open
-    placed = true;
-    expect((await install("claude"))!.status).toBe(200);
+  describe("one install of an agent at a time, for as long as its installer runs", () => {
+    const shellPid = 100;
+    const shell = [{ pid: shellPid, argv: ["/bin/bash"] }];
+    const installerRunning = [{ pid: 201, argv: ["curl", "-fsSL", "https://claude.ai/install.sh"] }, { pid: 202, argv: ["bash"] }];
+    let front: { pid: number; argv: string[] }[] = shell;
+    const follow = () => info.mockImplementation(async () => ({ shell_pid: shellPid, foreground_processes: front }) as never);
+    const installOf = (installer: AgentInstaller, agent = "claude") => installer.handle(post("/api/agent-catalog/install", { agent }), "/api/agent-catalog/install");
+
+    it("holds it while the installer runs, even once the agent is found, and releases it when the tab is back at its shell", async () => {
+      let placed = false;
+      const detector = new AgentDetector({ locate: async (binary) => placed ? `/opt/agents/${binary}` : null, home: "/nonexistent", env: {} });
+      const installer = new AgentInstaller(detector, "linux", undefined, { startWindowMs: 60_000 });
+      front = shell;
+      follow();
+      openPanes.push("w1:p9");
+      const both = await Promise.all([installOf(installer), installOf(installer)]);
+      expect(both.map((response) => response!.status).sort()).toEqual([200, 409]);
+      expect(await code(both.find((response) => response!.status === 409)!)).toEqual([409, "install_running"]);
+      front = installerRunning;
+      expect(await code(await installOf(installer))).toEqual([409, "install_running"]);
+      // the installer put the agent in place before it finished: still held
+      placed = true;
+      expect(await code(await installOf(installer))).toEqual([409, "install_running"]);
+      // another agent is not held up
+      expect((await installOf(installer, "codex"))!.status).toBe(200);
+      // the installer exited, its tab still open at the shell: released at once
+      front = shell;
+      expect((await installOf(installer))!.status).toBe(200);
+      expect(tab).toHaveBeenCalledTimes(3);
+    });
+
+    it("releases an install whose installer is not seen running within the start window, and one whose tab closed", async () => {
+      front = shell;
+      follow();
+      openPanes.push("w1:p9");
+      // typed a moment ago: its installer may not be in front yet
+      const waiting = new AgentInstaller(nowhere, "linux", undefined, { startWindowMs: 60_000 });
+      expect((await installOf(waiting))!.status).toBe(200);
+      expect(await code(await installOf(waiting))).toEqual([409, "install_running"]);
+      // a failed command that never ran a program: released once the window is over
+      const over = new AgentInstaller(nowhere, "linux", undefined, { startWindowMs: 0 });
+      expect((await installOf(over))!.status).toBe(200);
+      expect((await installOf(over))!.status).toBe(200);
+      // the tab closed while the installer ran
+      front = installerRunning;
+      expect(await code(await installOf(waiting))).toEqual([409, "install_running"]);
+      openPanes.length = 0;
+      expect((await installOf(waiting))!.status).toBe(200);
+    });
+
+    it("releases an install still running past the overall cap", async () => {
+      front = installerRunning;
+      follow();
+      openPanes.push("w1:p9");
+      const capped = new AgentInstaller(nowhere, "linux", undefined, { startWindowMs: 60_000, capMs: 0 });
+      expect((await installOf(capped))!.status).toBe(200);
+      expect((await installOf(capped))!.status).toBe(200);
+    });
+
+    it("on Windows, holds it while the tab's shell has a program running under it, and releases it once none is", async () => {
+      info.mockImplementation(async () => ({ shell_pid: shellPid, foreground_processes: [{ pid: shellPid, argv: ["C:\\Program Files\\PowerShell\\7\\pwsh.exe"] }] }) as never);
+      const other = { pid: 7, parent: 1, path: "C:\\Windows\\explorer.exe", commandLine: "explorer.exe" };
+      let rows = [other];
+      const installer = new AgentInstaller(nowhere, "windows", undefined, { startWindowMs: 60_000, processTable: async () => rows });
+      openPanes.push("w1:p9");
+      expect((await installOf(installer))!.status).toBe(200);
+      rows = [other, { pid: 300, parent: shellPid, path: "C:\\Users\\u\\.local\\bin\\claude.exe", commandLine: "claude.exe install" }];
+      expect(await code(await installOf(installer))).toEqual([409, "install_running"]);
+      rows = [other];
+      expect((await installOf(installer))!.status).toBe(200);
+    });
   });
 
   it("refuses an unknown agent, a missing command, a bad alternative and another shell's command, typing nothing", async () => {
