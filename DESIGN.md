@@ -3291,6 +3291,21 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   rule, with its repair narrowed to the faults re-subscribing mends. Dismissal follows the update
   notice's button and the PC-action notice's per-fault lifetime (`lib/machineNotice.ts`).
 
+### Setup guide (`.setup-*`)
+- Follows the Claude and Codex apps' first runs: one question per screen in the pane area, the
+  sidebar left in place, nothing modal. It opens by itself once, on a fresh install only (no herdr
+  workspace, no saved settings, no shared settings, no paired device); Settings opens it again.
+- The welcome is centered: the app mark, "Is this your first time using Ovis?", two big choice rows
+  (`--radius-xl` cards on `--bg-panel`, an accent border on hover), and four topic pills.
+- Each step sits in a 552px column under a five-part progress bar (4px segments: `--accent` now,
+  `--status-done` done, `--bg-hover` ahead; a skipped step's label is struck through), with "Skip
+  setup" at its top right and a quiet underlined "Skip" at the bottom right of every step. On a
+  phone the primary button takes the full width and Skip centers under it.
+- Steps reuse what the app already draws: the agent setup card, the plan meter's account block
+  as the usage preview (dashed `--border-strong` frame), Settings' switch, the phone QR code, and
+  the in-app alert's colors for the sample alert. Done lists each step with a check or an empty
+  circle and, for a skipped one, where Settings has it.
+
 ### Token gate
 - A centered password card replaces the entire shell while authentication is required. It has a real
   label, autofocused field, primary Unlock button and linked alert text.

@@ -9,6 +9,7 @@ import { FILES_KO } from "./i18n/files.ko.ts";
 import { DEVICES_KO } from "./i18n/devices.ko.ts";
 import { USAGE_KO } from "./i18n/usage.ko.ts";
 import { SETUP_KO } from "./i18n/setup.ko.ts";
+import { GUIDE_KO } from "./i18n/guide.ko.ts";
 import { UPDATES_KO } from "./i18n/updates.ko.ts";
 import { PALETTE_KO } from "./i18n/palette.ko.ts";
 
@@ -310,6 +311,7 @@ export const KO_PARTS: Record<string, Record<string, string>> = {
   devices: DEVICES_KO,
   usage: USAGE_KO,
   setup: SETUP_KO,
+  guide: GUIDE_KO,
   updates: UPDATES_KO,
   palette: PALETTE_KO,
 };
