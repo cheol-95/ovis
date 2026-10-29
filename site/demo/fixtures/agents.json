@@ -1,12 +1,12 @@
 {
   "agents": [
     {
-      "kind": "agy",
-      "label": "agy"
-    },
-    {
       "kind": "amp",
       "label": "Amp"
+    },
+    {
+      "kind": "agy",
+      "label": "Antigravity"
     },
     {
       "kind": "claude",
@@ -26,7 +26,7 @@
     },
     {
       "kind": "devin",
-      "label": "devin"
+      "label": "Devin"
     },
     {
       "kind": "droid",
@@ -46,11 +46,11 @@
     },
     {
       "kind": "grok",
-      "label": "grok"
+      "label": "Grok"
     },
     {
       "kind": "hermes",
-      "label": "hermes"
+      "label": "Hermes"
     },
     {
       "kind": "kilo",
