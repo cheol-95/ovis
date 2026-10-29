@@ -370,8 +370,10 @@ export function createServer(
       // is a POST only to keep the subscription out of the address, and answers the device about its own.
       // A watch device may report its own connection metadata, never terminal input or file data.
       const ownPreferences = pathname === "/api/auth" || pathname === "/api/push/subscribe" || pathname === "/api/push/status" || pathname === "/api/connection-diagnostics";
-      // a repository's changes are file contents too: the patch of a credential file is that file
-      const repositoryDiff = /^\/api\/(?:machines\/[^/]+\/)?workspace\/diff\//.test(pathname);
+      // a repository's changes are file contents too: the patch of a credential file is that file. Its
+      // history is the same: a commit's message and the base its patches are read against, and the
+      // branch names a watching device's sidebar is not shown either (#2250)
+      const repositoryDiff = /^\/api\/(?:machines\/[^/]+\/)?workspace\/(?:diff|git)\//.test(pathname);
       // earlier sessions carry their first prompts
       const sessionHistory = /^\/api\/(?:machines\/[^/]+\/)?sessions\/history$/.test(pathname);
       // an agent's commands in a folder, and a pane's, are read from that folder's command files (each row

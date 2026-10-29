@@ -285,6 +285,20 @@ export type { DevicePairedEvent, Machine, MachineEvent, MachineRoster, PaneTarge
  *  GET    /api/workspace/diff/refs?pane_id=&directory= -> RepoDiffRefs (the local and remote
  *         branches of that repository, as full refnames with their commits, for choosing a base:
  *         at most `limits.max_refs`, sorted, a remote's symbolic HEAD left out; nothing is fetched)
+ *  GET    /api/workspace/git/log?pane_id=&directory=&ref=&oid=&skip=&limit= -> RepoLog (a page of
+ *         commits from `ref`, HEAD when absent, newest first: `limit` 1..100, 50 by default, from
+ *         `skip`; each with the full refnames at it. Later pages pass the first page's `oid`, so
+ *         commits made in between do not shift them; `next_skip` is null on the last page. 400
+ *         invalid_limit / invalid_skip / invalid_oid / invalid_revision, 404 revision_not_found)
+ *  GET    /api/workspace/git/branches?pane_id=&directory= -> RepoBranches (the local branches, the
+ *         current one first and then by last commit, each with its upstream, ahead/behind and
+ *         whether the upstream is gone, as of the last fetch: at most `limits.max_branches`)
+ *  GET    /api/workspace/git/show?pane_id=&directory=&rev= -> RepoCommitDetail (one commit's whole
+ *         message, at most 64 KiB, its author and committer, and `base`: its first parent, or
+ *         `empty` for a root commit, which diff/files and diff/file take as `base` in the commit
+ *         scope. 400 missing_revision / invalid_revision, 404 revision_not_found). The three are
+ *         read like the diff routes: the same folder resolution, caps, deadline and error codes,
+ *         `no-store`, 403 cross_site for another site's page, 403 read_only for a watching device)
  *  GET    /api/pane/prompt?pane_id=     -> PanePromptResponse
  *         (the agent's TUI question/approval menu currently on screen, parsed from the visible pane
  *         text; with no menu, the next prompt Claude Code suggests, grey in its empty input box, and
@@ -563,6 +577,8 @@ export type { DirectoryListing, CreateDirectoryRequest, DirectoryCreated } from 
 export type { FileKind, FileInfo, ProjectFavicon } from "./files.ts";
 
 export type { RepoDiffScope, RepoBranchComparison, RepoDiffRefs, RepoDiffStatus, RepoDiffRepository, RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch } from "./repo-diff.ts";
+
+export type { RepoPerson, RepoCommitSummary, RepoLog, RepoBranch, RepoBranches, RepoCommitDetail } from "./repo-log.ts";
 
 export type { AgentKind } from "./agents.ts";
 

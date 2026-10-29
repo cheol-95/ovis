@@ -737,8 +737,9 @@ it("watch credentials cannot mutate HTTP state, read credential files, or elevat
       expect(response.status).toBe(403);
       if (method === "GET") expect(await response.json()).toMatchObject({ error: { code: "read_only" } });
     }
-    // a repository's changes are file contents: refused like a file read, on this PC and through a PC's route
-    for (const path of ["workspace/diff/files", "workspace/diff/file", "workspace/diff/refs", "machines/pc1/workspace/diff/files", "machines/pc1/workspace/diff/file", "machines/pc1/workspace/diff/refs", "machines/local/workspace/diff/file"]) {
+    // a repository's changes and its history are file contents: refused like a file read, on this PC and through a PC's route
+    for (const path of ["workspace/diff/files", "workspace/diff/file", "workspace/diff/refs", "machines/pc1/workspace/diff/files", "machines/pc1/workspace/diff/file", "machines/pc1/workspace/diff/refs", "machines/local/workspace/diff/file",
+      "workspace/git/log", "workspace/git/branches", "workspace/git/show", "machines/pc1/workspace/git/log", "machines/pc1/workspace/git/branches", "machines/pc1/workspace/git/show", "machines/local/workspace/git/show"]) {
       const response = await fetch(`${base}/api/${path}?directory=${encodeURIComponent(root)}&path=devices.json`, { headers });
       expect([path, response.status]).toEqual([path, 403]);
       expect(await response.json()).toMatchObject({ error: { code: "read_only" } });

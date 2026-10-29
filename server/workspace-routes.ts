@@ -17,6 +17,7 @@ import { HerdrError, paneMoveToNewTab, sessionSnapshot, tabClose, tabCreate, tab
 import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse, readJsonObject, setRequestRoute } from "./http.ts";
 import { paneContext } from "./pane-context.ts";
 import { repoDiffResponse } from "./repo-diff.ts";
+import { repoLogResponse } from "./repo-log.ts";
 import type { ShellAgentLocator } from "./shell-agent.ts";
 
 /** `value` as an absolute path (`~` expanded) when it is a directory this user can read; null otherwise. */
@@ -71,7 +72,9 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
     return listing === null ? badRequest("invalid_cwd", "path must be a directory this user can read") : jsonResponse(listing);
   }
 
-  if (pathname === "/api/workspace/diff/files" || pathname === "/api/workspace/diff/file" || pathname === "/api/workspace/diff/refs") {
+  const repositoryRead = pathname === "/api/workspace/diff/files" || pathname === "/api/workspace/diff/file" || pathname === "/api/workspace/diff/refs"
+    || pathname === "/api/workspace/git/log" || pathname === "/api/workspace/git/branches" || pathname === "/api/workspace/git/show";
+  if (repositoryRead) {
     setRequestRoute(pathname);
     if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
     // file contents, like /api/fs/file: this app reads them, another site's page does not
@@ -93,6 +96,7 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
       cwd = expandedDirectory(relative ? resolve(base!, directory) : directory) ?? undefined;
     }
     if (cwd === undefined) return badRequest("invalid_cwd", "directory must be a directory this user can read");
+    if (pathname.startsWith("/api/workspace/git/")) return repoLogResponse(pathname.endsWith("/log") ? "log" : pathname.endsWith("/branches") ? "branches" : "show", cwd, url.searchParams);
     return repoDiffResponse(pathname.endsWith("/files") ? "files" : pathname.endsWith("/refs") ? "refs" : "file", cwd, url.searchParams);
   }
 
