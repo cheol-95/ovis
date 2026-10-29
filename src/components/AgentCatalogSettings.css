@@ -42,3 +42,28 @@
 .settings-agent-setup {
   gap: var(--space-3);
 }
+
+/* a phone keeps the description at full width: the version and the button go on a line under it */
+@media (max-width: 640px) {
+  .settings-agent-row {
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
+  }
+
+  .settings-agent-row > .settings-row-text {
+    flex: 1 1 calc(100% - 22px - var(--space-4));
+  }
+
+  .settings-agent-row > .settings-agent-version {
+    margin-left: calc(22px + var(--space-4));
+  }
+
+  .settings-agent-row > .settings-agent-install {
+    margin-left: auto;
+  }
+
+  /* a row without a version starts its button under the text, not at the far end */
+  .settings-agent-row > .settings-row-text + .settings-agent-install {
+    margin-left: calc(22px + var(--space-4));
+  }
+}

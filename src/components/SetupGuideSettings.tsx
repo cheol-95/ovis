@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Check, Circle, Play } from "lucide-react";
 
 import { fetchAgentCatalog, fetchDevices } from "../lib/api.ts";
-import { useT } from "../lib/i18n.ts";
+import { useLocale, useT } from "../lib/i18n.ts";
 import { useMachineId } from "../lib/machineContext.tsx";
 import { notificationState } from "../lib/notifications.ts";
 import { useSettings } from "../lib/settings.ts";
@@ -29,6 +29,7 @@ function StepRow({ line, reading }: { line: StepLine | null; reading: string }) 
 export function SetupGuideSettings({ onOpen }: { onOpen: () => void }) {
   const t = useT();
   const { settings } = useSettings();
+  const locale = useLocale();
   const machineId = useMachineId();
   const [agents, setAgents] = useState<string[] | null | "unknown">(null);
   const [devices, setDevices] = useState<number | null | "unknown">(null);
@@ -44,9 +45,9 @@ export function SetupGuideSettings({ onOpen }: { onOpen: () => void }) {
 
   useEffect(() => {
     let live = true;
-    // another device paired with this server: this one is left out, it is the one reading
+    // any paired device counts, the one reading this page too: a phone may be the one that opened it
     fetchDevices().then(
-      (list) => { if (live) setDevices(list.filter((device) => !device.current).length); },
+      (list) => { if (live) setDevices(list.length); },
       () => { if (live) setDevices("unknown"); },
     );
     return () => { live = false; };
@@ -55,7 +56,7 @@ export function SetupGuideSettings({ onOpen }: { onOpen: () => void }) {
   const agentLine: StepLine | null = agents === null ? null
     : agents === "unknown" ? { done: false, text: t("Agent: could not be read") }
     : agents.length === 0 ? { done: false, text: t("Agent: none yet") }
-    : { done: true, text: t("Agent: {names}", { names: agents.join(", ") }) };
+    : { done: true, text: t("Agent: {names}", { names: new Intl.ListFormat(locale, { style: "narrow", type: "unit" }).format(agents) }) };
   const usageLine: StepLine = settings.showUsage ? { done: true, text: t("Plan usage: on") } : { done: false, text: t("Plan usage: off") };
   const phoneLine: StepLine | null = devices === null ? null
     : devices === "unknown" ? { done: false, text: t("Phone: could not be read") }

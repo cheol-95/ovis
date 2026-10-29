@@ -47,7 +47,6 @@ import { TelemetryControls } from "./TelemetryControls.tsx";
 import { UsageSettings } from "./UsageSettings.tsx";
 import { AgentCatalogSettings } from "./AgentCatalogSettings.tsx";
 import { SetupGuideSettings } from "./SetupGuideSettings.tsx";
-import { rememberAgent } from "./AgentPicker.tsx";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { CrashProbe, RegionCrash } from "./AppCrash.tsx";
@@ -69,6 +68,8 @@ export interface SettingsDialogProps {
   onUsageLogin: (paneId: string) => void;
   /** shows a pane of `machineId` in its terminal: an agent's install or sign-in tab, from Agent integrations */
   onOpenPane: (machineId: string, paneId: string) => void;
+  /** New workspace on `machineId` with `agent` picked: a ready agent's Start, from Agent integrations */
+  onStartAgent: (machineId: string, agent: string) => void;
   actions: AppActions;
   updates: UpdatesModel;
   /** how this browser got in, from the last health check */
@@ -685,7 +686,7 @@ function VoicePage() {
  * herdr's own integrations (`integration.list`), read only: installing one writes into an agent's
  * hooks or settings, which this app leaves to the user, so a row shows the command to run instead.
  */
-function IntegrationsPage({ watching, onOpenPane, onStartAgent }: { watching: boolean; onOpenPane: (machineId: string, paneId: string) => void; onStartAgent: (agent: string) => void }) {
+function IntegrationsPage({ watching, onOpenPane, onStartAgent }: { watching: boolean; onOpenPane: (machineId: string, paneId: string) => void; onStartAgent: (machineId: string, agent: string) => void }) {
   return (
     <>
       <AgentCatalogSettings watching={watching} onOpenPane={onOpenPane} onStartAgent={onStartAgent} />
@@ -1168,7 +1169,7 @@ function SaveFailure({ error, paused, retrying, onRetry }: { error: UserError; p
   </div>;
 }
 
-function OpenSettingsDialog({ section = null, linkPage = null, linkSection = null, onPage, onClose, onUsageLogin, onOpenPane, actions, updates, auth, herdrVersion, security, onEnableNotifications, saveError, savePaused, saveRetrying, onRetrySave, overPreview = false, machines = [] }: SettingsDialogProps) {
+function OpenSettingsDialog({ section = null, linkPage = null, linkSection = null, onPage, onClose, onUsageLogin, onOpenPane, onStartAgent, actions, updates, auth, herdrVersion, security, onEnableNotifications, saveError, savePaused, saveRetrying, onRetrySave, overPreview = false, machines = [] }: SettingsDialogProps) {
   const t = useT();
   const narrow = useNarrow();
   // opened by Forward, the dialog shows what that entry of the history showed
@@ -1306,8 +1307,7 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
       // after every device went, its own pairing included, a browser asks the server where it stands: the roster answers, or the gate does
       case "devices": return <DevicesPage auth={auth} security={security} onSignOut={actions.lock} onRevokedAll={actions.refresh} />;
       case "remote": return <RemotePcsPage actions={actions} machines={machines} pcSettings={pcSettings} pcSettingsError={pcSettingsError} onPcSettings={(patch) => void updatePcSettings(patch)} />;
-      // a ready agent starts as New workspace starts one: the dialog opens with it picked
-      case "integrations": return <IntegrationsPage watching={auth?.role === "watch"} onOpenPane={onOpenPane} onStartAgent={(agent) => { rememberAgent(agent); onClose(); actions.openNewSession(); }} />;
+      case "integrations": return <IntegrationsPage watching={auth?.role === "watch"} onOpenPane={onOpenPane} onStartAgent={onStartAgent} />;
       case "guide": return <SetupGuideSettings onOpen={onClose} />;
       case "about": return <AboutPage updates={updates} herdrVersion={herdrVersion} bridgesFollow={pcSettings?.auto_update_bridges === true} />;
       default: return null;

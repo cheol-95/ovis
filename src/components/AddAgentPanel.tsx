@@ -32,6 +32,7 @@ export function AddAgentPanel({ onReady, onOpenTerminal, onBack }: AddAgentPanel
   const [error, setError] = useState<UserError | null>(null);
   const [chosen, setChosen] = useState<AgentCatalogRow | null>(null);
   const first = useRef<HTMLButtonElement>(null);
+  const card = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const abort = new AbortController();
@@ -46,13 +47,15 @@ export function AddAgentPanel({ onReady, onOpenTerminal, onBack }: AddAgentPanel
     return () => abort.abort();
   }, [machineId, t]);
 
+  // the focus follows the view: the list's first row, or the card that replaced it
   useEffect(() => {
     if (chosen === null) first.current?.focus();
+    else card.current?.focus();
   }, [chosen, agents]);
 
   if (chosen !== null) {
     return (
-      <div className="add-agent">
+      <div ref={card} className="add-agent" tabIndex={-1}>
         <AgentSetupCard agent={chosen} machineId={machineId} onOpenTerminal={onOpenTerminal} onStart={() => onReady(chosen.id)} />
         <div className="add-agent-actions">
           <button type="button" className="btn btn-ghost" onClick={() => setChosen(null)}><ArrowLeft aria-hidden="true" />{t("Other agents")}</button>

@@ -58,6 +58,10 @@ export function WorktreeDialog({ mode, workspace, onClose, onOpened, onOpenPane 
   const [error, setError] = useState<string | null>(null);
   // Add another agent shows in place of the fields, which keep what was typed
   const [adding, setAdding] = useState(false);
+  // the PC's agents read again after a setup: nothing is created until the picker shows the result
+  const [refreshing, setRefreshing] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const first = useRef<HTMLInputElement>(null);
   const surface = useRef<HTMLFormElement>(null);
   const picker = useRef<HTMLButtonElement>(null);
@@ -124,11 +128,14 @@ export function WorktreeDialog({ mode, workspace, onClose, onOpened, onOpenPane 
   // the installed agent is offered once the PC lists it: picked then, else said why not
   const addedAgent = (kind: string): void => {
     setAdding(false);
+    setRefreshing(true);
     fetchAgentKinds().then((next) => {
+      if (!mounted.current) return;
       setAgents(next);
       if (next.some((agent) => agent.kind === kind)) { setAgentKind(kind); setError(null); }
       else setError(t("It is installed, but this PC does not offer it here yet. Restart Ovis on the PC, or start it in a terminal tab."));
-    }, (reason: unknown) => setError(said(reason)));
+    }, (reason: unknown) => { if (mounted.current) setError(said(reason)); })
+      .finally(() => { if (mounted.current) setRefreshing(false); });
   };
 
   const run = async (status: string, request: () => Promise<WorktreeOpened>): Promise<void> => {
@@ -152,6 +159,7 @@ export function WorktreeDialog({ mode, workspace, onClose, onOpened, onOpenPane 
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
     if (made) { onOpened(made); return; }
+    if (refreshing) return;
     const name = branch.trim();
     if (!name) return;
     void run(t("Creating the checkout…"), async () => {
@@ -178,7 +186,7 @@ export function WorktreeDialog({ mode, workspace, onClose, onOpened, onOpenPane 
     stops[next]?.focus();
   };
 
-  const locked = pending !== null || made !== null;
+  const locked = pending !== null || made !== null || refreshing;
   const title = mode === "create" ? t("New worktree · {name}", { name: workspace.label }) : t("Open worktree · {name}", { name: workspace.label });
   // the repository's own checkout is this workspace: the list is the other ones
   const others = entries?.filter((entry) => entry.open_workspace_id !== workspace.workspace_id) ?? null;
@@ -243,7 +251,7 @@ export function WorktreeDialog({ mode, workspace, onClose, onOpened, onOpenPane 
         </div>
         <footer className="modal-footer">
           <button type="button" className="btn btn-ghost" disabled={pending !== null} onClick={onClose}>{t("Cancel")}</button>
-          {mode === "create" && <button type="submit" className="btn btn-primary" disabled={pending !== null || (!made && !branch.trim())}>{t(made ? "Open" : "Create worktree")}</button>}
+          {mode === "create" && <button type="submit" className="btn btn-primary" disabled={pending !== null || refreshing || (!made && !branch.trim())}>{t(made ? "Open" : "Create worktree")}</button>}
         </footer></>}
       </form>
     </div>,

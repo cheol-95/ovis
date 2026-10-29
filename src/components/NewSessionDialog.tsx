@@ -115,6 +115,10 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
   const [browsing, setBrowsing] = useState(false);
   // Add another agent shows in place of the fields, which keep what was typed
   const [adding, setAdding] = useState(false);
+  // the PC's agents read again after a setup: nothing is started until the picker shows the result
+  const [refreshing, setRefreshing] = useState(false);
+  // counts openings and closings, so an answer for an earlier opening changes nothing
+  const openings = useRef(0);
   const [recentFolders, setRecentFolders] = useState(() => recentDirectories.read(machineId));
   // folders kept before worktrees and temporary folders were left out are left out here too
   const shownFolders = recentFolders.filter((path) => !passingFolder(path, worktrees)).slice(0, RECENT_FOLDERS_SHOWN);
@@ -158,6 +162,7 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
     setCreatedKept(false);
     setBrowsing(false);
     setAdding(false);
+    setRefreshing(false);
     setRecentFolders(recentDirectories.read(machineId));
     const remembered = rememberedAgent();
     const stored = filled?.agent ?? remembered;
@@ -205,6 +210,8 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [open, onClose, pending]);
 
+  useLayoutEffect(() => { openings.current += 1; }, [open]);
+
   // back from Add another agent, the focus returns to the picker it was opened from
   const wasAdding = useRef(false);
   useEffect(() => {
@@ -217,7 +224,7 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
   const selectedAgent = agents.find((agent) => agent.kind === agentKind);
   const agentLabel = selectedAgent?.label ?? agentKind;
   const pendingLabel = selectedAgent ? t("Starting {agent}… up to 60s", { agent: selectedAgent.label }) : t("Starting shell…");
-  const fieldsDisabled = pending || createdPaneId !== null;
+  const fieldsDisabled = pending || refreshing || createdPaneId !== null;
   const can = launchCapabilities(agentKind);
   const launched = dialogLaunch({ agent: agentKind, model, effort, ultracode, prompt }, settings);
   const fault = "fault" in launched ? launched.fault : null;
@@ -241,13 +248,17 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
 
   // the installed agent is offered once the PC lists it: picked then, else said why not
   const addedAgent = (kind: string): void => {
+    const opening = openings.current;
     setAdding(false);
+    setRefreshing(true);
     void fetchAgentKinds().then((next) => {
+      if (openings.current !== opening) return;
       setAgents(next);
       const added = next.find((agent) => agent.kind === kind);
       if (added) { pickAgent(kind); setError(null); }
       else setError({ message: t("It is installed, but this PC does not offer it here yet. Restart Ovis on the PC, or start it in a terminal tab."), detail: null });
-    }, (reason: unknown) => setError(userErrorMessage(reason)));
+    }, (reason: unknown) => { if (openings.current === opening) setError(userErrorMessage(reason)); })
+      .finally(() => { if (openings.current === opening) setRefreshing(false); });
   };
 
   const insertSkill = (skill: SlashCommand): void => {
@@ -264,7 +275,7 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
   };
 
   const startWorkspace = async (directory: string): Promise<void> => {
-    if (pending || guard.current.busy()) return;
+    if (pending || refreshing || guard.current.busy()) return;
     if (createdPaneId !== null) { onCreated(createdPaneId, createdStarted, createdKept); return; }
     // a combination the launch does not take: Start is disabled for it, and an Enter in a field sends nothing
     if (launch === null) return;
@@ -469,7 +480,7 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
         </div>
         <footer className="modal-footer">
           <button type="button" className="btn btn-ghost" disabled={pending} onClick={onClose}>{t("Cancel")}</button>
-          <button type="submit" className="btn btn-primary" disabled={pending || fault !== null}>{t(pending ? "Starting…" : createdPaneId !== null ? "Open" : "Start")}</button>
+          <button type="submit" className="btn btn-primary" disabled={pending || refreshing || fault !== null}>{t(pending ? "Starting…" : createdPaneId !== null ? "Open" : "Start")}</button>
         </footer></>}
       </form>
     </div>
