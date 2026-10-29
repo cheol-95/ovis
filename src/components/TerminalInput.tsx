@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type Ref } from "react";
-import { CornerDownLeft, SendHorizontal, TextCursorInput } from "lucide-react";
+import { ChevronUp, CornerDownLeft, Keyboard, SendHorizontal, TextCursorInput } from "lucide-react";
 
 import "./TerminalInput.css";
 import { readTerminalDraft, writeTerminalDraft, TERMINAL_LINE_LIMIT, subscribeTerminalDraft, terminalDraftSending, setTerminalDraftSending, acknowledgeTerminalDraft, terminalDraftVersion } from "../lib/terminalDraft.ts";
@@ -28,6 +28,13 @@ export interface TerminalInputProps {
   onPasting?: (active: boolean) => void;
   /** the line took the focus */
   onFocus?: () => void;
+  /** on a touch screen: the input mode key, moved here from the key bar the line folds away */
+  onToggleDirect?: () => void;
+  /** greys out the input mode key (offline, held, ended, a composition in either field) */
+  directDisabled?: boolean;
+  /** on a touch screen: opens and folds the key bar under the line (lib/terminalKeys.ts) */
+  onToggleKeys?: () => void;
+  keysOpen?: boolean;
   ref?: Ref<TerminalInputHandle>;
 }
 
@@ -59,7 +66,7 @@ interface SendAttempt {
  * keyboard's own editing and goes to the pane whole, then Enter. Autocorrect and spell-check stay
  * off, as in the composer: they would swap a flag, path or branch name for a dictionary word.
  */
-export function TerminalInput({ owner, active = true, connected, onSend, onEnter, onInsert, pasteTarget, onPasting, onComposing, onFocus, ref }: TerminalInputProps) {
+export function TerminalInput({ owner, active = true, connected, onSend, onEnter, onInsert, pasteTarget, onPasting, onComposing, onFocus, onToggleDirect, directDisabled, onToggleKeys, keysOpen = false, ref }: TerminalInputProps) {
   const t = useT();
   const text = useSyncExternalStore(subscribeTerminalDraft, () => readTerminalDraft(owner));
   const setText = useCallback((value: string | ((previous: string) => string)) => {
@@ -366,6 +373,40 @@ export function TerminalInput({ owner, active = true, connected, onSend, onEnter
       />
       {dictation.shown && <MicButton dictation={dictation} className="terminal-input-mic" />}
       <span className="terminal-input-actions">
+        {/* the key bar's two controls for the bar itself, ahead of the line's own actions so Send
+            keeps the edge: the input mode key (pressed: this is the input line) and the key that
+            opens and folds the bar. Neither takes the focus, so the keyboard stays as it is */}
+        {onToggleDirect && (
+          <button
+            type="button"
+            className="terminal-input-action terminal-input-toggle"
+            data-key="direct"
+            aria-label={t("Input line")}
+            title={t("Input line")}
+            aria-pressed="true"
+            disabled={directDisabled}
+            onPointerDown={(event) => event.preventDefault()}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={onToggleDirect}
+          >
+            <span className="terminal-input-face"><Keyboard aria-hidden="true" /></span>
+          </button>
+        )}
+        {onToggleKeys && (
+          <button
+            type="button"
+            className="terminal-input-action terminal-input-toggle"
+            data-key="keys"
+            aria-label={t("Terminal keys")}
+            title={t("Terminal keys")}
+            aria-pressed={keysOpen}
+            onPointerDown={(event) => event.preventDefault()}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={onToggleKeys}
+          >
+            <span className="terminal-input-face"><ChevronUp aria-hidden="true" /></span>
+          </button>
+        )}
         {/* Insert, apart from Send by its words, its outline and its name: the text goes to the
             prompt and stays there to edit. Each says what it does above its round target */}
         <button

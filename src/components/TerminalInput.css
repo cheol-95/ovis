@@ -4,13 +4,22 @@
    change of it resizes the pane for every device on it. The masked input (SecretInput.css) takes
    the line's place the same way. */
 .terminal-input-slot {
+  /* the line's room under its controls: the key bar's rule is under it, or another pane */
+  --terminal-input-under: var(--space-1);
   position: relative;
   flex-shrink: 0;
   /* .terminal-input at one row: its top border, its padding above and below, the field's label and
      the gap under it, then the taller of the round targets and a one-row .terminal-input-text (same
      font size, line height, padding and border); the actions' words sit beside the label */
-  height: calc(var(--hairline) + 2 * var(--space-1) + var(--fs-chat) * var(--lh-tight) + var(--space-2)
+  height: calc(var(--hairline) + var(--space-1) + var(--terminal-input-under) + var(--fs-chat) * var(--lh-tight) + var(--space-2)
     + max(var(--touch-target), max(var(--fs-input), var(--fs-xl)) * var(--lh-base) + 2 * var(--space-2) + 2 * var(--hairline)));
+}
+
+/* with the key bar folded under it (PaneTerminal.tsx) the line is the screen's bottom row: its
+   controls keep clear of the home indicator, and of the screen's edge where there is none
+   (lib/screenBottom.ts marks the row) */
+.terminal-input-slot.is-at-screen-bottom:not(.is-empty) {
+  --terminal-input-under: max(var(--space-2), env(safe-area-inset-bottom, 0px));
 }
 
 /* the masked input stands in on a pane that types straight into the grid: no row is kept */
@@ -43,8 +52,9 @@
   gap: var(--space-2);
   align-items: end;
   /* the same room under the field and the send button as over them, so they never sit on the key
-     bar's rule (or the screen's edge) below; the sides keep the key bar's --space-2 */
-  padding: var(--space-1) var(--space-2);
+     bar's rule below, and more at the screen's edge (the slot's --terminal-input-under); the sides
+     keep the key bar's --space-2 */
+  padding: var(--space-1) var(--space-2) var(--terminal-input-under, var(--space-1));
   border-top: var(--hairline) solid var(--border);
   background: var(--bg-panel);
 }
@@ -166,6 +176,30 @@
 }
 
 .terminal-input-insert:active:not(:disabled) .terminal-input-face {
+  border-color: var(--accent);
+  color: var(--text-strong);
+}
+
+/* the input mode key and Terminal keys (TerminalInput.tsx), the key bar's own controls for itself:
+   Insert's quiet outline with no words over them (their names are the tooltip and what a screen
+   reader says), and the key bar's pressed look while on */
+.terminal-input-toggle .terminal-input-face {
+  border-color: var(--text-dim);
+  background: var(--bg-elevated);
+  color: var(--text);
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+@media (hover: hover) {
+  .terminal-input-toggle:hover:not(:disabled) .terminal-input-face {
+    background: var(--bg-hover);
+  }
+}
+
+.terminal-input-toggle[aria-pressed="true"] .terminal-input-face,
+.terminal-input-toggle:active:not(:disabled) .terminal-input-face {
   border-color: var(--accent);
   color: var(--text-strong);
 }

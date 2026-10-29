@@ -35,6 +35,7 @@ const BASE: Record<string, string> = {
   "Recent folders": "최근 폴더",
   "Dismiss": "닫기",
   "Input line": "입력창",
+  "Terminal keys": "터미널 키",
   // ---- settings ----
   "Settings": "설정",
   "Chat": "채팅",

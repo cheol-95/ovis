@@ -7,6 +7,7 @@ import type { KeyBarKey, StickyModifiers } from "../lib/keys.ts";
 import { keyBarItemId, keyBarItemLabel, type KeyBarItem, type KeyBarKeyItem } from "../lib/keyBar.ts";
 import { createKeyRepeat, isRepeatableKeyBarItem, type KeyRepeat } from "../lib/keyRepeat.ts";
 import { keyboardUp, subscribeKeyboardUp } from "../lib/keyboard.ts";
+import { markScreenBottom } from "../lib/screenBottom.ts";
 import { useT } from "../lib/i18n.ts";
 
 export type { KeyBarKey };
@@ -232,11 +233,7 @@ export function KeyBar({ onKey, modifiers, onToggleModifier, items, directTyping
   useLayoutEffect(() => {
     const bar = barRef.current;
     if (!bar) return;
-    const place = (): void => {
-      // measured without the room the class adds, which would otherwise keep itself
-      bar.classList.remove("is-at-screen-bottom");
-      bar.classList.toggle("is-at-screen-bottom", bar.getBoundingClientRect().bottom >= window.innerHeight - 1);
-    };
+    const place = (): void => markScreenBottom(bar);
     place();
     // the pane's own frame and what holds it change size on a split or zoom with the page unchanged
     const observer = new ResizeObserver(place);

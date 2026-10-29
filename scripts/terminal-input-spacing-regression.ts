@@ -6,6 +6,11 @@
  * key and not on the bar behind it. Folded (412) and unfolded (720) widths, a gesture-bar inset,
  * the on-screen keyboard up (visualViewport) and a landscape phone. On the isolated test herdr;
  * UI_EVIDENCE_DIR=<dir> keeps the screenshots.
+ *
+ * The key bar starts folded under the input line (#1531): the line holds the input mode key and
+ * Terminal keys, and as the screen's bottom row keeps max(8px, the inset) under its controls. Terminal
+ * keys opens the bar without taking the focus, with no second mode key in it; the device remembers
+ * it open across a reload, and a second tap folds it again.
  */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
@@ -49,8 +54,38 @@ export async function checkTerminalInputSpacing(browser: Browser, origin: string
         if (size.keyboard > 0) {
           await page.locator(".terminal-input-text").focus();
           await page.evaluate((height) => (window as unknown as KeyboardQA).keyboardQA(height), size.height - size.keyboard);
-          await page.waitForFunction((bottom) => (document.querySelector(".key-bar")?.getBoundingClientRect().bottom ?? 0) <= bottom + 1, size.height - size.keyboard);
+          await page.waitForFunction((bottom) => (document.querySelector(".terminal-input")?.getBoundingClientRect().bottom ?? 0) <= bottom + 1, size.height - size.keyboard);
         }
+        // folded: the line is the bottom row, with the mode key and Terminal keys at its end
+        const keysKey = page.locator('.terminal-input [data-key="keys"]');
+        await keysKey.waitFor();
+        const folded = await page.evaluate(() => {
+          const line = document.querySelector(".terminal-input")!.getBoundingClientRect();
+          const controls = [".terminal-input-text", ".terminal-input-send .terminal-input-face", '.terminal-input [data-key="direct"] .terminal-input-face', '.terminal-input [data-key="keys"] .terminal-input-face']
+            .map((selector) => document.querySelector(selector)!.getBoundingClientRect());
+          return {
+            keyBar: document.querySelectorAll(".key-bar").length,
+            mode: document.querySelector('.terminal-input [data-key="direct"]')?.getAttribute("aria-pressed") ?? null,
+            keys: document.querySelector('.terminal-input [data-key="keys"]')?.getAttribute("aria-pressed") ?? null,
+            under: line.bottom - Math.max(...controls.map((box) => box.bottom)),
+            lineBottom: line.bottom,
+            screenBottom: window.visualViewport!.height,
+            focus: document.activeElement?.className ?? "",
+          };
+        });
+        assert.equal(folded.keyBar, 0, `${size.label}: the key bar starts folded under the input line`);
+        assert.equal(folded.mode, "true", `${size.label}: the input mode key sits in the line, pressed`);
+        assert.equal(folded.keys, "false", `${size.label}: Terminal keys sits in the line, not pressed while folded`);
+        assert.ok(Math.abs(folded.lineBottom - folded.screenBottom) <= 1, `${size.label}: folded, the line is the bottom row (${folded.lineBottom} / ${folded.screenBottom})`);
+        const underWanted = size.keyboard > 0 ? 4 : Math.max(8, size.inset);
+        assert.ok(Math.abs(folded.under - underWanted) <= 1, `${size.label}: folded, the line keeps ${underWanted}px under its controls (${folded.under})`);
+        if (evidence) await page.screenshot({ path: join(evidence, `input-spacing-folded-${size.label.replace(/\s+/g, "-")}.png`) });
+        await keysKey.tap();
+        await page.locator(".key-bar").waitFor();
+        if (size.keyboard > 0) await page.waitForFunction((bottom) => (document.querySelector(".key-bar")?.getBoundingClientRect().bottom ?? 0) <= bottom + 1, size.height - size.keyboard);
+        assert.equal(await keysKey.getAttribute("aria-pressed"), "true", `${size.label}: Terminal keys reads pressed while the bar is open`);
+        assert.equal(await page.locator('.key-bar [data-key="direct"]').count(), 0, `${size.label}: the open bar has no second input mode key`);
+        assert.equal(await page.evaluate(() => document.activeElement?.className ?? ""), folded.focus, `${size.label}: Terminal keys leaves the focus (and the keyboard) where it was`);
         const geometry = await page.evaluate(() => {
           const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect();
           const line = box(".terminal-input");
@@ -105,9 +140,17 @@ export async function checkTerminalInputSpacing(browser: Browser, origin: string
           assert.ok(key.landsAbove && key.landsBelow, `${size.label}: a tap just inside a key's 44px touch target lands on the key (above ${key.landsAbove}, below ${key.landsBelow})`);
         }
         if (evidence) await page.screenshot({ path: join(evidence, `input-spacing-${size.label.replace(/\s+/g, "-")}.png`) });
+        if (size.label.startsWith("folded")) {
+          await page.reload();
+          await page.locator(".key-bar").waitFor();
+          assert.equal(await keysKey.getAttribute("aria-pressed"), "true", `${size.label}: the device keeps the bar open across a reload`);
+          await keysKey.tap();
+          await page.locator(".key-bar").waitFor({ state: "detached" });
+          assert.equal(await keysKey.getAttribute("aria-pressed"), "false", `${size.label}: a second tap folds the bar`);
+        }
       } finally { await context.close(); }
     }
-    console.log("PASS the phone's terminal input line and key bar are evenly spaced (field and send button, keys with 44px targets) folded, unfolded, over a gesture bar, with the keyboard up and in landscape");
+    console.log("PASS the phone's terminal input line and key bar are evenly spaced (field and send button, keys with 44px targets) folded, unfolded, over a gesture bar, with the keyboard up and in landscape; the key bar folds under the line, which holds the mode key and Terminal keys, keeps the safe area folded, and opens without a second mode key");
   } finally {
     if (workspaceId) await workspaceClose(workspaceId).catch(() => {});
     rmSync(root, { recursive: true, force: true });

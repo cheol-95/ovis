@@ -108,6 +108,8 @@ async function phone(browser: Browser, settings: Settings, viewport = PHONE): Pr
   await context.addInitScript(({ key, settings, pane, height }) => {
     if (localStorage.getItem(key) === null) localStorage.setItem(key, JSON.stringify(settings));
     localStorage.setItem(`ovis:view:${pane}`, "terminal");
+    // the key bar, with the keyboard control, opened under the input line (it starts folded there, #1531)
+    localStorage.setItem("ovis:terminal-keys-open", "1");
     const visual = window.visualViewport!;
     let current = height;
     Object.defineProperty(visual, "height", { get: () => current });
@@ -234,7 +236,8 @@ const role = (page: Page, mode: "observe" | "interact"): Promise<void> =>
  */
 async function switchMode(page: Page, to: "line" | "direct"): Promise<void> {
   const before = await control(page);
-  await page.locator('.pane-frame:not(.is-hidden) .key-bar [data-key="direct"]').tap();
+  // the mode key: beside Send in the input line, first in the key bar in direct typing (#1531)
+  await page.locator('.pane-frame:not(.is-hidden) [data-key="direct"]').tap();
   if (to === "direct") await page.locator("[data-direct-typing]").waitFor();
   else await page.locator("[data-direct-typing]").waitFor({ state: "detached" });
   await page.waitForFunction((rows) => document.querySelectorAll(".pane-frame:not(.is-hidden) .xterm-rows > div").length !== rows, before.grid.rows);
@@ -698,7 +701,7 @@ async function captureSet(browser: Browser, dir: string): Promise<Capture[]> {
     const key = keyOf(page);
     assert.equal(await key.getAttribute("aria-label"), "키보드 보이기");
     assert.equal(await key.getAttribute("title"), "키보드 보이기");
-    assert.equal(await page.locator('.pane-frame:not(.is-hidden) .key-bar [data-key="direct"]').getAttribute("aria-label"), "입력창");
+    assert.equal(await page.locator('.pane-frame:not(.is-hidden) [data-key="direct"]').getAttribute("aria-label"), "입력창");
     await shot(page, "390-dark-ko-line-down", { theme: "dark", language: "ko", state: "line mode, keyboard down: the control is named 키보드 보이기" });
     await key.tap();
     await page.keyboard.type("echo 한글 초안");

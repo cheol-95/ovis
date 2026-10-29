@@ -19,7 +19,6 @@ export const TERMINAL_JA: Record<string, string> = {
   "Terminal for {title}": "{title} のターミナル",
   "Pane name": "ペイン名",
   "A tab needs a name.": "タブには名前が必要です。",
-  "Terminal keys": "ターミナルキー",
   "Up": "上",
   "Down": "下",
   "Left": "左",

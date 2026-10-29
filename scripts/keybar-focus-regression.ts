@@ -52,6 +52,11 @@ export async function checkKeyBarKeepsKeyboardDown(browser: Browser, origin: str
         const focus = () => page.evaluate(() => ({ active: document.activeElement?.tagName, grid: document.activeElement?.classList.contains("xterm-helper-textarea") === true, height: visualViewport!.height }));
         const before = await focus();
         assert.equal(before.active, "BODY", `${tag}: nothing focused to start with`);
+        // the key bar starts folded under the input line (#1531): Terminal keys opens it, and keeps the keyboard down too
+        if (mode === "line") {
+          await page.locator('.terminal-input [data-key="keys"]').tap();
+          assert.deepEqual(await focus(), before, `${tag}: opening the key bar leaves the focus and the viewport alone`);
+        }
         await page.locator(".key-bar").waitFor();
         const prompts = await page.evaluate(() => (document.querySelector(".xterm-rows")!.textContent!.match(/\$/g) ?? []).length);
         for (const key of ["Control", "Control", "Enter", "Escape"]) {

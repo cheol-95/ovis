@@ -134,6 +134,8 @@ async function openShell(browser: Browser, origin: string, variant: Variant) {
   await context.addInitScript(([theme, language, paneId]) => {
     localStorage.setItem("ovis:settings", JSON.stringify({ language, theme, terminalInputMode: "line", alertsOn: false, shortcutOverrides: { "previous-pane": "1", "next-pane": "2" } }));
     localStorage.setItem(`ovis:view:${paneId}`, "terminal");
+    // the key bar, with Paste, opened under the input line (it starts folded there, #1531)
+    localStorage.setItem("ovis:terminal-keys-open", "1");
   }, [variant.theme, variant.language, panes.shell] as const);
   const page = await context.newPage();
   page.setDefaultTimeout(10_000);
@@ -385,7 +387,8 @@ async function checkClipboardTargetChanged(page: Page): Promise<void> {
   // the line put away (direct typing) while the read waited; Paste there says where it goes and changes no mode
   await paste.tap();
   await pending.waitFor();
-  const direct = page.locator('.pane-frame.is-current .key-bar [data-key="direct"]');
+  // the mode key: beside Send in the input line, first in the key bar in direct typing (#1531)
+  const direct = page.locator('.pane-frame.is-current [data-key="direct"]');
   await direct.tap();
   await line.waitFor({ state: "detached" });
   await h.releaseClipboard();
@@ -594,7 +597,7 @@ async function captureStates(page: Page, variant: Variant, phone: boolean): Prom
     await page.locator(".pane-frame.is-current .terminal-input-note").waitFor();
     await capture(page, variant, "limit");
     await h.set({ clipboardMode: "real" });
-    const direct = page.locator('.pane-frame.is-current .key-bar [data-key="direct"]');
+    const direct = page.locator('.pane-frame.is-current [data-key="direct"]');
     await setLine(page, "");
     await direct.tap();
     await line.waitFor({ state: "detached" });

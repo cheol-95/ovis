@@ -50,6 +50,8 @@ import { useT } from "../lib/i18n.ts";
 import { isAppShortcut } from "../lib/shortcuts.ts";
 import { plainPageDirection } from "../lib/pageScroll.ts";
 import { keyboardToggleAction, keyboardUp } from "../lib/keyboard.ts";
+import { markScreenBottom } from "../lib/screenBottom.ts";
+import { readTerminalKeysOpen, setTerminalKeysOpen, useTerminalKeysOpen } from "../lib/terminalKeys.ts";
 import { OpenFileContext } from "../lib/filePaths.ts";
 import { WebPanelContext } from "../lib/webPanel.ts";
 import { hyperlinkFilter } from "../lib/terminalFileLinks.ts";
@@ -932,6 +934,14 @@ export function PaneTerminal({
   /> : null;
   // the input line's row, kept while the masked input stands in for it
   const lineSlot = presented && paneId !== null && !observing && !ended && inputLine;
+  // A touch screen's input line holds the key bar's input mode key and folds the bar under it until
+  // its Terminal keys key opens it (lib/terminalKeys.ts): the grid keeps the bar's row. Direct
+  // typing keeps the bar as it is, mode key first: there it is the only row
+  const keysOpen = useTerminalKeysOpen();
+  const keysFold = coarse && lineSlot && !secretActive;
+  const toggleKeys = useCallback(() => { setTerminalKeysOpen(!readTerminalKeysOpen()); }, []);
+  // a Ctrl held on the bar does not stay armed out of sight once the bar folds
+  useLayoutEffect(() => { if (keysFold && !keysOpen) clearModifiers(); }, [keysFold, keysOpen, clearModifiers]);
   // What floats from the slot may reach up to the grid's top and no further (TerminalInput.css):
   // in a short pane (a split, a phone in landscape with its keyboard up) a grown line or the masked
   // input would otherwise cover the find bar, or be clipped under the pane's frame
@@ -943,7 +953,9 @@ export function PaneTerminal({
       const slot = inputSlot.getBoundingClientRect();
       // the chat lens's box-less slot has no rect, and nothing floats there to cap
       if (slot.width === 0) return;
-      const room = slot.bottom - surface.getBoundingClientRect().top;
+      // with the key bar folded the line is the screen's bottom row, and keeps clear of the home indicator
+      markScreenBottom(inputSlot);
+      const room = inputSlot.getBoundingClientRect().bottom - surface.getBoundingClientRect().top;
       inputSlot.style.setProperty("--terminal-input-room", `${Math.max(0, Math.floor(room))}px`);
     };
     measure();
@@ -951,7 +963,8 @@ export function PaneTerminal({
     const observer = new ResizeObserver(measure);
     observer.observe(stackRef.current);
     observer.observe(surface);
-    return () => observer.disconnect();
+    window.addEventListener("resize", measure);
+    return () => { observer.disconnect(); window.removeEventListener("resize", measure); };
   }, [inputSlot]);
 
   // the wait for input is a live region in the banner column from the stack's first render, clipped while
@@ -1313,12 +1326,13 @@ export function PaneTerminal({
           slot in the chat lens too (a box-less slot there, TerminalInput.css), so switching lenses
           keeps it mounted: a remount would drop what was typed and a send still on its way */}
       {((!chatView && lineSlot) || secretInput) && <div ref={setInputSlot} className={`terminal-input-slot${!chatView && lineSlot ? "" : " is-empty"}`}>
-        {secretInput ?? (!chatView && lineSlot && !secretActive && <TerminalInput key={paneId} ref={lineRef} active={active} owner={paneStorageId(machineId, paneId)} onComposing={setLineComposing} connected={connected && !held} onSend={sendTerminalLine} onEnter={pressEnter} onInsert={insertTerminalText} pasteTarget={pasteTarget} onPasting={setLinePasting} onFocus={reassertGrid} />)}
+        {secretInput ?? (!chatView && lineSlot && !secretActive && <TerminalInput key={paneId} ref={lineRef} active={active} owner={paneStorageId(machineId, paneId)} onComposing={setLineComposing} connected={connected && !held} onSend={sendTerminalLine} onEnter={pressEnter} onInsert={insertTerminalText} pasteTarget={pasteTarget} onPasting={setLinePasting} onFocus={reassertGrid}
+          {...(coarse ? { onToggleDirect: toggleDirect, directDisabled: composing || lineComposing || !connected || !inputReady || held, onToggleKeys: toggleKeys, keysOpen } : {})} />)}
       </div>}
-      {presented && paneId !== null && !secretActive && !observing && !chatView && <KeyBar disabled={composing || !connected || !inputReady || held || ended} onKey={pressKey}
+      {presented && paneId !== null && !secretActive && !observing && !chatView && (!keysFold || keysOpen) && <KeyBar disabled={composing || !connected || !inputReady || held || ended} onKey={pressKey}
         holdScope={`${paneStorageId(machineId, paneId)}:${view}`}
         modifiers={modifiers} onToggleModifier={toggleModifier} items={settings.keyBarItems}
-        {...(coarse ? { directTyping, onToggleDirect: toggleDirect, directDisabled: lineComposing, onPaste: pasteIntoLine, pasteDisabled: linePasting,
+        {...(coarse ? { directTyping, ...(keysFold ? {} : { onToggleDirect: toggleDirect }), directDisabled: lineComposing, onPaste: pasteIntoLine, pasteDisabled: linePasting,
           note: pasteGuidance ? t("Tap Input line to paste.") : null, onNoteDismiss: dismissPasteGuidance,
           onToggleKeyboard: toggleKeyboard, keyboardDisabled: !connected || !inputReady || held || ended, keyboardRefused: composing || lineComposing || linePasting } : {})} />}
     </div>

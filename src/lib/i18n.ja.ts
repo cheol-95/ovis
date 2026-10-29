@@ -37,6 +37,7 @@ const BASE: Record<string, string> = {
   "Recent folders": "最近のフォルダー",
   "Dismiss": "閉じる",
   "Input line": "入力欄",
+  "Terminal keys": "ターミナルキー",
   // ---- settings ----
   "Settings": "設定",
   "Chat": "チャット",

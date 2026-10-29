@@ -7,7 +7,9 @@ input boundary; the terminal screen is still rendered from the attach stream.
 
 Settings → Terminal → Terminal input mode offers Direct typing, the default on every device
 with phones included, and Input line, for a line you edit before sending. The key bar's keyboard
-button switches modes too, on a touch screen only: a desktop changes the mode in Settings.
+button switches modes too, on a touch screen only: a desktop changes the mode in Settings. In
+Input line mode on a touch screen that button sits at the end of the line, beside Terminal keys,
+which opens and folds the key bar under the line (folded by default, remembered per device).
 Settings → Shortcuts can change each app action's binding or return its keys to the terminal.
 Bindings default to Mod+Shift, which leaves Ctrl+key to the pane; a recorded plain Ctrl/Alt chord
 takes that key from the pane only after Save anyway. The hold-to-dictate binding remains fixed. Conflicts include the legacy New workspace

@@ -3178,7 +3178,23 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   title: a command is never broken inside a word.
 - The touch input line keeps `--space-1` above and below its field and send button (and `--space-2`
   at the sides, as the key bar), so neither sits on the key bar's rule; its row keeps the height it
-  had, so the grid and the pty are not resized. Keys draw at `--key-h` (`--keybar-h` less `3 * --space-1`), centered
+  had, so the grid and the pty are not resized. With the key bar folded under it (below) the line is
+  the screen's bottom row and keeps `max(--space-2, safe-area-inset-bottom)` under its controls
+  instead (`.terminal-input-slot.is-at-screen-bottom`, marked as the key bar is, `lib/screenBottom.ts`).
+- On a touch screen in Input line mode the key bar folds under the line (#1531): the line ends with
+  the bar's **Input line** switch (`[data-key="direct"]`, the keyboard glyph, always pressed there)
+  and **Terminal keys** (`[data-key="keys"]`, lucide chevron-up, `aria-pressed` while the bar is
+  open), ahead of Insert and Send so Send keeps the edge. Both are round outlined faces like
+  Insert's, with no words over them (their names are the tooltip and what a screen reader says), and
+  neither takes the focus, so a keyboard stays as it was. Terminal keys opens the bar under the line
+  without a second mode key (Paste, the keyboard control and the keys stay) and folds it again; the
+  grid takes the bar's row back, about 48px or two to three lines on a phone, at the cost of one
+  resize per open or fold. Open or folded is one device's choice for every pane, kept across
+  reloads in its own key (`ovis:terminal-keys-open`, `lib/terminalKeys.ts`); it starts folded. A
+  modifier held on the bar is cleared when it folds, so none stays armed out of sight. Direct typing
+  keeps the bar as it was, mode key first: there it is the only row. The Claude and Codex phone apps
+  are the model: one input row with its actions at its end; the bar stays one tap away rather than
+  behind a swipe, which is harder to find. Keys draw at `--key-h` (`--keybar-h` less `3 * --space-1`), centered
   in the bar with equal room above and below, and reach `--touch-target` through an invisible
   expander inside the bar; the bar's safe-area padding is added below that.
 - The mobile key bar starts with Esc, Tab and `^C`, then sticky Ctrl/Alt/Shift, Enter and arrows;
@@ -3193,7 +3209,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   A deliberately empty row retains only the Input line switch, Paste and the keyboard control on a
   touch screen.
 - On a touch screen the row starts with controls that are not keys: the **Input line** switch
-  (the keyboard glyph, `aria-pressed` while the input line is on), **Paste** (below) and, after
+  (the keyboard glyph, `aria-pressed` while the input line is on; in Input line mode it sits in the
+  line instead, above), **Paste** (below) and, after
   them, **Show keyboard** / **Hide keyboard** (#1046), which moves the soft keyboard without changing the input mode. Its glyph
   is the panel at the screen's bottom with the way it goes next (`PanelBottomOpen` to show,
   `PanelBottomClose` to hide), its name says the same, and its `aria-pressed` is the state

@@ -39,6 +39,7 @@ const BASE: Record<string, string> = {
   "Recent folders": "最近的文件夹",
   "Dismiss": "关闭",
   "Input line": "输入框",
+  "Terminal keys": "终端按键",
   // ---- settings ----
   "Settings": "设置",
   "Chat": "聊天",

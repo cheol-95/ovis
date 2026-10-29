@@ -373,7 +373,9 @@ On a phone:
 - The terminal gets a key bar above the keyboard (Esc, Tab, Ctrl+C, Ctrl, Alt, Shift, Enter, arrows).
   Ctrl, Alt and Shift stay held until tapped again and combine with each other.
   The terminal starts in direct typing, where they combine with letters and symbols; the
-  keyboard button switches to an input line you edit before sending. Herdr encodes each chord
+  keyboard button switches to an input line you edit before sending. There the keyboard button
+  sits at the end of the line, and the key bar folds away until **Terminal keys** (the chevron
+  beside it) opens it, so the terminal keeps that row; the phone remembers whether you left it open. Herdr encodes each chord
   for the program's keyboard protocol; legacy protocols cannot distinguish every chord (for example Ctrl+I and Tab).
   Draft text in the input line is sent unchanged. Modifiers clear
   when leaving the pane or terminal view, or when the connection drops.

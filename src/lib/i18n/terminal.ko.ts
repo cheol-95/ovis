@@ -19,7 +19,6 @@ export const TERMINAL_KO: Record<string, string> = {
   "Terminal for {title}": "{title} 터미널",
   "Pane name": "패널 이름",
   "A tab needs a name.": "탭 이름을 입력하세요.",
-  "Terminal keys": "터미널 키",
   "Up": "위",
   "Down": "아래",
   "Left": "왼쪽",

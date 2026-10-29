@@ -778,6 +778,8 @@ async function checkKeyBarWhileLineComposes(browser: Browser, origin: string, pa
   page.setDefaultTimeout(10_000);
   await context.addInitScript((pane) => {
     localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", terminalInputMode: "line" }));
+    // the key bar opened under the line (it starts folded there, #1531)
+    localStorage.setItem("ovis:terminal-keys-open", "1");
     localStorage.setItem(`ovis:view:${pane}`, "terminal");
   }, pane);
   const frames: any[] = [];
@@ -817,8 +819,9 @@ async function checkKeyBarWhileLineComposes(browser: Browser, origin: string, pa
     await until(() => frames.length > before + 1, "^C frame");
     assert.deepEqual(frames.slice(before).map((frame) => [frame.type, frame.text ?? frame.keys]), [["input", "\x1b"], ["input", "\x03"]]);
     assert.equal(await line.inputValue(), "fix the", "the composing line keeps its text");
-    // the switch to direct typing would unmount the line mid-composition: it waits
-    const direct = page.locator('.key-bar [data-key="direct"]');
+    // the switch to direct typing would unmount the line mid-composition: it waits (the mode key
+    // sits in the line, beside Send, while the line shows)
+    const direct = page.locator('.terminal-input [data-key="direct"]');
     assert.equal(await direct.isDisabled(), true, "the direct-typing toggle waits for the line's composition");
     const sent = frames.length;
     await direct.tap({ force: true });

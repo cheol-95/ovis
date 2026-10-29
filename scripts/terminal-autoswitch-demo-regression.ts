@@ -507,7 +507,8 @@ try {
         // back would unmount the line mid-word
         await send(page, "/config");
         await expectPeek(true, "/config");
-        const direct = stack(page).locator('.key-bar .key[data-key="direct"]');
+        // the mode key: first in the key bar in direct typing, beside Send in the input line (#1531)
+        const direct = stack(page).locator('[data-key="direct"]');
         await direct.click();
         const line = stack(page).locator(".terminal-input textarea");
         await line.waitFor();

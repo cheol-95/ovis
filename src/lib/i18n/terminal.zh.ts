@@ -19,7 +19,6 @@ export const TERMINAL_ZH: Record<string, string> = {
   "Terminal for {title}": "{title} 终端",
   "Pane name": "窗格名称",
   "A tab needs a name.": "标签页需要一个名称。",
-  "Terminal keys": "终端按键",
   "Up": "上",
   "Down": "下",
   "Left": "左",
