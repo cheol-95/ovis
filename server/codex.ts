@@ -930,21 +930,30 @@ const normalizeDisplay = (text: string): string => text.normalize("NFKC").replac
 const promptKey = (text: string): string => text.normalize("NFKC").replace(/^\s*\u203a/, "").replace(/\s+/g, "");
 
 /**
- * A Codex screen cut at what was typed: each prompt (a line Codex starts with "›", a prompt sent or
- * the input box, or an indented "↳", a message queued to be sent; with the indented and blank lines
- * it wraps onto), each tool's output (an indented "└" and the lines below it) and the stretches
- * between them. Neither a prompt nor a tool's output is evidence of the conversation shown: either may
- * quote any conversation's answer.
+ * A text exactly as written, but for the spaces and line breaks a screen wraps it at: an answer counts
+ * on screen only shown character for character, so `base + 1` is not `base - 1`. One whose markdown
+ * Codex renders its own way (code, emphasis, links) is not found that way, and the terminal stands in
+ * rather than a guess at how it rendered.
+ */
+const markedDisplay = (text: string): string => text.normalize("NFKC").replace(/\s+/g, "");
+
+/**
+ * A Codex screen cut at what was typed and what tools did: each prompt (a line Codex starts with
+ * "›", a prompt sent or the input box, or an indented "↳", a message queued to be sent), each tool
+ * call Codex shows (a "•" line it starts with what it did or does: "Ran", "You ran", "Called",
+ * "Explored", "Searched", "Waited", "Running" and so on) and each tool's output (an indented "└"), with
+ * the indented and blank lines each wraps onto, and the stretches between them. Neither a prompt nor a
+ * tool's call or output is evidence of the conversation shown: any may quote any conversation's answer.
  */
 function codexScreenParts(screen: string): { prompt: boolean; tool?: true; text: string }[] {
   const parts: { prompt: boolean; tool?: true; text: string }[] = [];
   for (const line of screen.split("\n")) {
     const last = parts.at(-1);
     const prompt = /^(?:\u203a|\s*\u21b3(?:\s|$))/.test(line);
-    // a tool's output: an indented "\u2514" and the lines indented below it, which may hold any text, as
-    // shownAnswers reads it. A call's line may wrap above it, so it is told by the "\u2514" alone; a tree an
-    // answer draws with one is lost with it, and the screen then tells nothing rather than another's
-    const tool = !prompt && /^\s+\u2514(?:\s|$)/.test(line);
+    // "You ran": a shell command the user ran from the composer, as Codex 0.163 titles it. An answer that
+    // starts with one of these words is taken for a call too: telling them apart could show another's chat
+    const tool = !prompt && (/^\s+\u2514(?:\s|$)/.test(line)
+      || /^\u2022 (?:Ran|You ran|Called|Explored|Searched|Waited|Running|Calling|Exploring|Searching|Waiting)(?:\s|$)/.test(line));
     if (prompt || tool) parts.push({ prompt, ...(tool ? { tool } : {}), text: line });
     else if (last !== undefined && (last.prompt || last.tool) && /^(?:\s|$)/.test(line)) last.text += `\n${line}`;
     else if (last !== undefined && !last.prompt && !last.tool) last.text += `\n${line}`;
@@ -961,15 +970,49 @@ function codexScreenParts(screen: string): { prompt: boolean; tool?: true; text:
  * it is made of, for what another conversation's screen may show of it (mayShowWords).
  */
 function answerAnchor(text: string): Anchor | null {
-  const pieces = cutAtLinkTargets(text).map((piece) => piece.text);
+  // a link shows as its label, then its target its own way: the label's opening "[" is markdown, not text
+  const pieces = cutAtLinkTargets(text).map((piece) => {
+    const open = piece.target === "" ? -1 : piece.text.lastIndexOf("[");
+    return open < 0 ? piece.text : piece.text.slice(0, open) + piece.text.slice(open + 1);
+  });
   for (let index = pieces.length - 1; index >= 0; index--) {
     const anchor = normalizeDisplay(pieces[index]!).slice(-160);
-    if (anchor.length >= 64 && new Set(anchor).size >= 12) return { anchor, words: wordsEnding(pieces[index]!, anchor.length) };
+    if (anchor.length >= 64 && new Set(anchor).size >= 12) {
+      // the whole answer, both ends: each piece exactly, a link's target in the parentheses Codex shows it in
+      const whole = new RegExp(`^${pieces.map((piece) => markedDisplay(piece).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\(.*\\)")}$`, "u");
+      return { anchor, words: wordsEnding(pieces[index]!, anchor.length), marked: markedEnding(pieces[index]!, anchor.length), whole };
+    }
   }
   return null;
 }
 
-interface Anchor { anchor: string; words: string[] }
+/**
+ * A screen's answers, each as it would be compared whole: a line at the start of the screen's line (a "•"
+ * or "◦" one, without its bullet) with the indented and blank lines below it, up to the next such line or
+ * a "─" rule Codex draws below a finished turn. An answer counts only as one such block.
+ */
+function shownBlocks(text: string): string[] {
+  const blocks: string[] = [];
+  let open = false;
+  for (const line of text.split("\n")) {
+    // Codex indents what an answer wraps onto: a line at the start of the screen's line begins another
+    if (/^\u2500/.test(line)) open = false;
+    else if (open && /^(?:\s|$)/.test(line)) blocks[blocks.length - 1] += `\n${line}`;
+    else if (line.trim() !== "") { blocks.push(line.replace(/^[\u2022\u25e6]\s?/, "")); open = true; }
+  }
+  return blocks.map(markedDisplay);
+}
+
+/** `marked`: the anchor as markedDisplay reads it, symbols included, for a screen to show as well. */
+interface Anchor { anchor: string; words: string[]; marked: string; whole: RegExp }
+
+/** The end of a text as markedDisplay reads it that holds its last `letters` letters and digits. */
+function markedEnding(text: string, letters: number): string {
+  const marked = markedDisplay(text);
+  let at = marked.length;
+  for (let counted = 0; at > 0 && counted < letters;) if (/[\p{L}\p{N}]/u.test(marked[--at]!)) counted++;
+  return marked.slice(at);
+}
 
 /** The words a text ends with (runs of letters and digits), as many as make up its last `length` of them, the first cut to fit. */
 function wordsEnding(text: string, length: number): string[] {
@@ -995,8 +1038,12 @@ function wordsEnding(text: string, length: number): string[] {
  * runs across blocks is answers side by side, another conversation's. */
 export function matchCodexTranscript(screen: string, candidates: { path: string; text: string }[], scrutinized: ReadonlySet<string> = new Set(), said: ReadonlyMap<string, Said> = new Map(), blocks = false): string | null {
   const lastHeader = screen.lastIndexOf("OpenAI Codex (v");
-  const displays = blocks ? screen.split(/\n(?=\u2022)/).map(normalizeDisplay)
-    : [normalizeDisplay(codexScreenParts(lastHeader >= 0 ? screen.slice(lastHeader) : screen).filter((part) => !part.prompt && !part.tool).map((part) => part.text).join("\n"))];
+  const answerParts = blocks ? screen.split(/\n(?=\u2022)/)
+    : codexScreenParts(lastHeader >= 0 ? screen.slice(lastHeader) : screen).filter((part) => !part.prompt && !part.tool).map((part) => part.text);
+  const texts = blocks ? answerParts : [answerParts.join("\n")];
+  const displays = texts.map(normalizeDisplay);
+  // an answer counts only shown whole, both ends, in one block: one more character either side is another answer
+  const wholeBlocks = answerParts.flatMap(shownBlocks);
   const answersOf = (turns: ConversationTurn[]) => turns.filter((turn) => turn.role === "assistant")
     .flatMap((turn) => turn.parts).filter((part) => part.kind === "text").map((part) => part.text);
   const parsed = candidates.map((candidate) => parseCodexTranscript(candidate.text, Infinity));
@@ -1009,7 +1056,8 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
   let open = false;
   for (const [index, candidate] of candidates.entries()) {
     const anchors = answersOf(parsed[index]!.slice(-100)).slice(-8).map(answerAnchor)
-      .filter((found): found is Anchor => found !== null && displays.some((display) => display.includes(found.anchor)));
+      .filter((found): found is Anchor => found !== null
+        && displays.some((display, at) => display.includes(found.anchor) && wholeBlocks.some((block) => found.whole.test(block))));
     if (anchors.length === 0) continue;
     if (!scrutinized.has(candidate.path) || anchors.some((anchor) => !givenElsewhere(index, anchor))) matching.add(candidate.path);
     else open = true;
@@ -2117,7 +2165,8 @@ async function codexProcessesOf(paneId: string): Promise<{ list: { pid: number; 
     })
     .filter(({ argv = [] }) => {
       const executable = argv[0] ?? "";
-      const codex = /(?:^|[\\/])codex(?:\.js|\.exe|\.opencodex-real)?$/;
+      // also a release binary named for its target, and any letter case of Windows' file names
+      const codex = /(?:^|[\\/])codex(?:-(?:x86_64|aarch64)-[a-z0-9_-]+)?(?:\.js|\.exe|\.opencodex-real)?$/i;
       if (codex.test(executable)) return true;
       // `node codex.js` and shell shebangs name the script after the interpreter and its
       // `--flag` options (`node --no-warnings codex.js`). Only options known to take no
@@ -2617,8 +2666,9 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   const session = agent.agent_session;
 
   const { codexProcesses, processes, open } = await openRollouts(paneId, home);
-  // Earlier wrapper probes do not prove Codex still runs; residual screen text cannot replace that proof.
-  if (agent.nestedTerminal && codexProcesses.length === 0) return null;
+  // no Codex process of the pane proven now: what its screen still shows (an earlier occupant's, or
+  // a Codex gone since) ties it to no conversation, and the terminal stands in
+  if (codexProcesses.length === 0) return null;
   // `home` was chosen while no Codex process of the pane was seen (paneCodexHomePlaced): one seen now
   // must be known to write there (its environment says so), or what this store holds is not proof
   const first = codexProcesses[0];
