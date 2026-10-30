@@ -976,10 +976,60 @@ function answerAnchor(text: string): Anchor | null {
   return null;
 }
 
+/** The footer Codex draws below a finished turn, a line of its own: "Worked for 4s \u2022 7:05 PM", indented. */
+const CODEX_TURN_FOOTER = /^[ \t]*Worked for <?\d+(?:ms|s|m|h)(?: \d+(?:ms|s|m|h))*(?: \u2022 \d{1,2}:\d{2}(?: [AP]M)?)?[ \t]*\r?$/;
+/** That footer with the clock the turn finished at: the only one a screen is read without. */
+const CLOCKED_TURN_FOOTER = /^[ \t]*Worked for <?\d+(?:ms|s|m|h)(?: \d+(?:ms|s|m|h))* \u2022 (\d{1,2}):(\d{2})(?: ([AP])M)?[ \t]*\r?$/;
+
 /**
- * A screen's answers, each as it would be compared whole: a line at the start of the screen's line (a "•"
- * or "◦" one, without its bullet) with the indented and blank lines below it, up to the next such line or
- * a "─" rule Codex draws below a finished turn. An answer counts only as one such block.
+ * The screen without the completed-turn footers Codex draws, and the clocks they show (minutes of the day):
+ * a line of exactly that shape with its clock (CLOCKED_TURN_FOOTER), a blank line above it, and only blank
+ * lines below it up to the next prompt (a "\u203a" line: the composer, or the next message sent). A line of
+ * that shape anywhere else is kept, as it may be an answer's own text: one an answer still being written ends
+ * in has Codex's working line below it, and a read that ends before the composer shows no finished turn.
+ * Null when the screen shows no such footer. A screen without its prompts (shownAnswers) keeps every footer,
+ * so its finished answers fall back.
+ */
+function withoutTurnFooters(screen: string): { screen: string; clocks: number[] } | null {
+  const lines = screen.split("\n");
+  const clocks: number[] = [];
+  const kept = lines.filter((line, index) => {
+    const footer = CLOCKED_TURN_FOOTER.exec(line);
+    if (footer === null || index === 0 || lines[index - 1]!.trim() !== ""
+      || !(lines.slice(index + 1).find((after) => after.trim() !== "") ?? "").startsWith("\u203a")) return true;
+    const hours = Number(footer[1]) % (footer[3] === undefined ? 24 : 12) + (footer[3] === "P" ? 12 : 0);
+    clocks.push(hours * 60 + Number(footer[2]));
+    return false;
+  });
+  return clocks.length === 0 ? null : { screen: kept.join("\n"), clocks };
+}
+
+/**
+ * Whether a conversation's rollout records a turn that finished on exactly this answer at one of these clocks
+ * (minutes of this server's day, one either side for the minute turning): what ties an answer shown above a
+ * footer to that conversation's own turn, rather than another's that said the same or an answer's own
+ * footer-shaped last line. A rollout that records no finished turn (an older Codex) ties none.
+ */
+function finishedAt(rollout: string, answer: string, clocks: readonly number[]): boolean {
+  const shown = markedDisplay(answer);
+  for (const line of rollout.split("\n")) {
+    if (!line.includes('"task_complete"')) continue;
+    try {
+      const entry = JSON.parse(line) as { timestamp?: unknown; payload?: { type?: unknown; last_agent_message?: unknown } };
+      if (entry.payload?.type !== "task_complete" || typeof entry.payload.last_agent_message !== "string"
+        || typeof entry.timestamp !== "string" || markedDisplay(entry.payload.last_agent_message) !== shown) continue;
+      const at = new Date(entry.timestamp);
+      const minute = at.getHours() * 60 + at.getMinutes();
+      if (Number.isFinite(minute) && clocks.some((clock) => [0, 1, 1439].includes((clock - minute + 1440) % 1440))) return true;
+    } catch { /* a record cut by the tail read */ }
+  }
+  return false;
+}
+
+/**
+ * A screen's answers, each as it would be compared whole: a line at the start of the screen's line (a "\u2022"
+ * or "\u25e6" one, without its bullet) with the indented and blank lines below it, up to the next such line or
+ * a "\u2500" rule Codex draws below a finished turn. An answer counts only as one such block.
  */
 function shownBlocks(text: string): string[] {
   const blocks: string[] = [];
@@ -1027,13 +1077,20 @@ function wordsEnding(text: string, length: number): string[] {
  * answer counts only inside one of its blocks: Codex shows one answer as one block, so text that
  * runs across blocks is answers side by side, another conversation's. */
 export function matchCodexTranscript(screen: string, candidates: { path: string; text: string }[], scrutinized: ReadonlySet<string> = new Set(), said: ReadonlyMap<string, Said> = new Map(), blocks = false): string | null {
-  const lastHeader = screen.lastIndexOf("OpenAI Codex (v");
-  const answerParts = blocks ? screen.split(/\n(?=\u2022)/)
-    : codexScreenParts(lastHeader >= 0 ? screen.slice(lastHeader) : screen).filter((part) => !part.prompt && !part.tool).map((part) => part.text);
+  const partsOf = (text: string) => {
+    const lastHeader = text.lastIndexOf("OpenAI Codex (v");
+    return blocks ? text.split(/\n(?=\u2022)/)
+      : codexScreenParts(lastHeader >= 0 ? text.slice(lastHeader) : text).filter((part) => !part.prompt && !part.tool).map((part) => part.text);
+  };
+  const answerParts = partsOf(screen);
   const texts = blocks ? answerParts : [answerParts.join("\n")];
   const displays = texts.map(normalizeDisplay);
   // an answer counts only shown whole, both ends, in one block: one more character either side is another answer
   const wholeBlocks = answerParts.flatMap(shownBlocks);
+  // the blocks again without Codex's completed-turn footers (withoutTurnFooters), for an answer a candidate's
+  // own turn finished on at the clock a footer shows (finishedAt)
+  const unfooted = withoutTurnFooters(screen);
+  const unfootedBlocks = unfooted === null ? [] : partsOf(unfooted.screen).flatMap(shownBlocks);
   const answersOf = (turns: ConversationTurn[]) => turns.filter((turn) => turn.role === "assistant")
     .flatMap((turn) => turn.parts).filter((part) => part.kind === "text").map((part) => part.text);
   const parsed = candidates.map((candidate) => parseCodexTranscript(candidate.text, Infinity));
@@ -1045,9 +1102,12 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
   const matching = new Set<string>();
   let open = false;
   for (const [index, candidate] of candidates.entries()) {
-    const anchors = answersOf(parsed[index]!.slice(-100)).slice(-8).map(answerAnchor)
-      .filter((found): found is Anchor => found !== null
-        && displays.some((display, at) => display.includes(found.anchor) && wholeBlocks.some((block) => found.whole.test(block))));
+    const anchors = answersOf(parsed[index]!.slice(-100)).slice(-8).flatMap((text) => {
+      const found = answerAnchor(text);
+      return found !== null && displays.some((display) => display.includes(found.anchor))
+        && (wholeBlocks.some((block) => found.whole.test(block))
+          || (unfooted !== null && unfootedBlocks.some((block) => found.whole.test(block)) && finishedAt(candidate.text, text, unfooted.clocks))) ? [found] : [];
+    });
     if (anchors.length === 0) continue;
     if (!scrutinized.has(candidate.path) || anchors.some((anchor) => !givenElsewhere(index, anchor))) matching.add(candidate.path);
     else open = true;
@@ -1354,7 +1414,7 @@ function displayedFirstExchange(screen: string, keepCompletionFooter = false): C
   const responseLines = lines.slice(answerAt, nextPrompt < 0 ? undefined : nextPrompt);
   // Codex's completed-turn footer is terminal chrome, after a blank line and before the composer.
   const footer = responseLines.findIndex((line, index) => index > 0 && responseLines[index - 1]!.trim() === ""
-    && /^[ \t]*Worked for <?\d+(?:ms|s|m|h)(?: \d+(?:ms|s|m|h))*(?: • \d{1,2}:\d{2}(?: [AP]M)?)?[ \t]*$/.test(line)
+    && CODEX_TURN_FOOTER.test(line)
     && responseLines.slice(index + 1).every((after) => after.trim() === ""));
   const response = (footer < 0 || keepCompletionFooter ? responseLines : responseLines.slice(0, footer))
     .map((line) => /^•/.test(line) ? line.slice(1) : line).join("\n");
