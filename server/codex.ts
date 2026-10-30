@@ -1102,8 +1102,14 @@ function cutAtLinkTargets(text: string): { text: string; target: string }[] {
     // relative to cwd. Those spaces are part of the path, not the end of its destination.
     // Keep ordinary whitespace/malformed prose unchanged, and never cross a line boundary.
     const local = /^<?(?:\/|[A-Za-z]:[\\/])/.test(text.slice(end, end + 4));
-    while (end < text.length && text[end] !== ")" && !/[\r\n]/.test(text[end]!)
-      && (local || !/\s/.test(text[end]!))) end++;
+    if (text[end] === "<") {
+      while (end < text.length && text[end] !== ">" && !/[\r\n]/.test(text[end]!)) end++;
+      if (text[end] !== ">") { search = end; continue; }
+      end++;
+    } else {
+      while (end < text.length && text[end] !== ")" && !/[\r\n]/.test(text[end]!)
+        && (local || !/\s/.test(text[end]!))) end++;
+    }
     // unclosed: no "](" before `end` is closed either, so all of it stays text
     if (text[end] !== ")") { search = end; continue; }
     pieces.push({ text: text.slice(start, at), target: text.slice(at + 2, end) });

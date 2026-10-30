@@ -770,17 +770,29 @@ describe("Codex rollout resolution", () => {
     }
   });
 
+  it("does not select a conversation from only an angle-wrapped file link containing parentheses", () => {
+    const filename = "report (old) with detailed quarterly analysis and supporting documentation for project milestones.md";
+    const linked = `${answer} [Daily report](</home/user/My Project/${filename}>)`;
+    const candidates = [{ path: "own", text: jsonl(message("assistant", linked, "final_answer")) }];
+    expect(matchCodexTranscript(`• Daily report (${filename})`, candidates)).toBeNull();
+    expect(matchCodexTranscript(`• ${answer} Daily report (${filename})`, candidates)).toBe("own");
+  });
+
   it("keeps local link destinations containing a line break as literal answer text", () => {
     for (const newline of ["\n", "\r", "\r\n"]) {
-      const literal = `${answer} [Daily report](/home/user/My Project${newline}Daily notes/report.md)`;
-      const candidates = [{ path: "own", text: jsonl(message("assistant", literal, "final_answer")) }];
-      expect(matchCodexTranscript(`• ${answer} Daily report`, candidates)).toBeNull();
-      expect(matchCodexTranscript(`• ${literal}`, candidates)).toBe("own");
+      for (const target of [`/home/user/My Project${newline}Daily notes/report.md`,
+        `</home/user/My Project${newline}Daily notes/report (old).md>`]) {
+        const literal = `${answer} [Daily report](${target})`;
+        const candidates = [{ path: "own", text: jsonl(message("assistant", literal, "final_answer")) }];
+        expect(matchCodexTranscript(`• ${answer} Daily report`, candidates)).toBeNull();
+        expect(matchCodexTranscript(`• ${literal}`, candidates)).toBe("own");
+      }
     }
   });
 
   it("keeps unclosed local file links as literal answer text", () => {
-    for (const target of ["/home/user/My Project/Daily notes/report.md", "</home/user/My Project/Daily notes/report.md>"]) {
+    for (const target of ["/home/user/My Project/Daily notes/report.md", "</home/user/My Project/Daily notes/report.md>",
+      "</home/user/My Project/Daily notes/report (old).md)"]) {
       const literal = `${answer} [Daily report](${target}`;
       const candidates = [{ path: "own", text: jsonl(message("assistant", literal, "final_answer")) }];
       expect(matchCodexTranscript(`• ${answer} Daily report`, candidates)).toBeNull();
