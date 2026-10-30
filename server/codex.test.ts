@@ -1148,6 +1148,8 @@ describe("Codex submitted first exchange", () => {
       "Worked for a while on this.",
       "Worked for 1s • unknown time",
       "Worked for 1s • 11:11 AM\nMore answer text",
+      // a line Codex 0.166 writes for a turn of another day, which this reader never took for its footer
+      "Worked for 1s • Oct 29 at 7:05 PM",
     ]) {
       expect(matchCodexFirstExchange(screen.replace(answer, answer + "\n\n" + suffix), [row()], started)).toBeNull();
     }
