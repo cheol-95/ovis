@@ -126,20 +126,20 @@ export const MarkdownImageRetryContext = createContext(0);
  * shows `fallback`. `src` is null while an address is still being resolved: the slot stands from
  * the first paint.
  */
-export function ReservedImage({ src, alt, width, className, slot, slotStyle, fallback }: {
-  src: string | null; alt: string; width?: number; className?: string; slot: boolean; slotStyle?: CSSProperties; fallback?: ReactNode;
+export function ReservedImage({ src, alt, width, className, slot, slotStyle, fallback, retry = 0 }: {
+  src: string | null; alt: string; width?: number; className?: string; slot: boolean; slotStyle?: CSSProperties; fallback?: ReactNode; retry?: number;
 }) {
   const t = useT();
   // keyed by address: another one starts from the slot again and never takes the old one's answer
-  const [settled, setSettled] = useState<{ src: string; failed: boolean } | null>(null);
-  const phase = src !== null && settled?.src === src ? (settled.failed ? "failed" : "decoded") : "loading";
+  const [settled, setSettled] = useState<{ src: string; failed: boolean; attempt?: number } | null>(null);
+  const phase = src !== null && settled?.src === src && (!settled.failed || settled.attempt === retry) ? (settled.failed ? "failed" : "decoded") : "loading";
   // a cached image is complete before `onLoad` can fire
   const complete = useCallback((image: HTMLImageElement | null) => {
     if (image !== null && src !== null && image.complete && image.naturalWidth > 0) setSettled({ src, failed: false });
   }, [src]);
   if (phase === "failed" && !slot) return <>{fallback}</>;
   const image = src === null ? null : <img ref={complete} className={className} src={src} alt={alt} width={width} loading="lazy"
-    onLoad={() => setSettled({ src, failed: false })} onError={() => setSettled({ src, failed: true })} />;
+    onLoad={() => setSettled({ src, failed: false })} onError={() => setSettled({ src, failed: true, attempt: retry })} />;
   if (!slot) return image;
   if (phase === "failed") {
     return <span className="image-slot is-failed" style={slotStyle}>
@@ -154,12 +154,12 @@ function MarkdownImage({ src, alt, width, fallback, resolve, interactive, standa
   const t = useT();
   const openImage = useContext(MarkdownImageOpenContext);
   const retry = useContext(MarkdownImageRetryContext);
-  const [loaded, setLoaded] = useState<{ src: string; resolve: MarkdownImageResolver; preview: MarkdownImagePreview | null } | null>(null);
+  const [loaded, setLoaded] = useState<{ src: string; resolve: MarkdownImageResolver; preview: MarkdownImagePreview | null; retry: number } | null>(null);
   useEffect(() => {
     let live = true;
     resolve(src).then(
-      (preview) => { if (live) setLoaded({ src, resolve, preview }); },
-      () => { if (live) setLoaded({ src, resolve, preview: null }); },
+      (preview) => { if (live) setLoaded({ src, resolve, preview, retry }); },
+      () => { if (live) setLoaded({ src, resolve, preview: null, retry }); },
     );
     return () => { live = false; };
   }, [src, resolve, retry]);
@@ -171,7 +171,8 @@ function MarkdownImage({ src, alt, width, fallback, resolve, interactive, standa
   }
   // still being stat'ed: a standalone image's slot stands from the first paint, a badge shows its alt
   if (preview === undefined && !standalone) return <span>{alt}</span>;
-  const image = <ReservedImage src={preview?.url ?? null} alt={alt} width={width} className="markdown-image" slot={standalone} slotStyle={standalone ? imageSlotStyle(width) : undefined} fallback={fallback} />;
+  // A failed byte load retries only after the new stat has passed the same size/type checks.
+  const image = <ReservedImage src={preview?.url ?? null} alt={alt} width={width} className="markdown-image" slot={standalone} slotStyle={standalone ? imageSlotStyle(width) : undefined} fallback={fallback} retry={loaded?.retry ?? 0} />;
   if (preview === undefined || !interactive || openImage === null) return image;
   return <button type="button" className={`markdown-image-open${standalone ? " is-standalone" : ""}`} aria-label={alt || preview.name} title={t("Open image")} onClick={(event) => {
     event.currentTarget.focus({ preventScroll: true });

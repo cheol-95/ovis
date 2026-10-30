@@ -3606,5 +3606,7 @@ A standalone or inline image opens ChatView's existing image viewer on click or 
 with its alt text as caption and its actual filename for download. The opener regains focus on close.
 An image inside an authored link or a read-only label keeps that container's action, with no nested
 button. File previews do not get Chat's opener. A reconnect retries image stat resolutions that
-may have failed while offline; losing the socket alone keeps already decoded images in place. No new setting, endpoint or permission grant is
+may have failed while offline; losing the socket alone keeps already decoded images in place. A byte
+load that failed retries after the new stat passes the size/type checks, without remounting decoded
+neighbors. No new setting, endpoint or permission grant is
 introduced.

@@ -172,3 +172,25 @@ it("retries an offline stat on reconnect, keeping a decoded image when the conne
   await answer(2, info("/project/diagram.png"));
   expect(images()[0]!.props.src).toBe(src);
 });
+
+it("retries failed image bytes only after a fresh stat, without remounting a decoded neighbor", async () => {
+  const text = "![Good](./good.png)\n\n![Retry](./retry.png)";
+  await draw({ text });
+  await answer(0, info("/project/good.png"));
+  await answer(1, info("/project/retry.png"));
+  const good = images().find((node) => node.props.alt === "Good")!;
+  const failed = images().find((node) => node.props.alt === "Retry")!;
+  await act(async () => { good.props.onLoad(); failed.props.onError(); });
+  expect(images()).toHaveLength(1);
+  await draw({ text, connected: false });
+  await draw({ text, connected: true });
+  // The previous stat is not enough to start new bytes: the file may now be oversized or gone.
+  expect(images()).toHaveLength(1);
+  await answer(2, info("/project/good.png"));
+  expect(images()).toHaveLength(1);
+  await answer(3, info("/project/retry.png"));
+  expect(images()).toHaveLength(2);
+  expect(images().find((node) => node.props.alt === "Good")).toBe(good);
+  await act(async () => { images().find((node) => node.props.alt === "Retry")!.props.onLoad(); });
+  expect(renderer!.root.findAll((node) => node.props.className === "image-slot is-failed")).toHaveLength(0);
+});
