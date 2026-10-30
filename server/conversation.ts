@@ -80,6 +80,7 @@ import { commandTranscriptRecords, PI_EVIDENCE_TYPES, type CommandTranscriptReco
 import { type ClaudeBranch, claudeForks, followClaudeBranch, type PromptChain, turnStarts } from "./transcript-turns.ts";
 import { devinSessionForPane, isDevinProcess } from "./devin-session.ts";
 import { userHome } from "./user-home.ts";
+import { kiroCodexProcess } from "./kiro-terminal.ts";
 
 export { isOmoProcess } from "./omo.ts";
 export { devinSessionForPane, isDevinProcess } from "./devin-session.ts";
@@ -1360,6 +1361,7 @@ async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: strin
       isGjcProcess(Array.isArray(process.argv) ? process.argv.map(String) : []),
     );
     if (running || await gjcPidUnderShell(info?.process_info?.shell_pid)) agent = "gjc";
+    else if (await kiroCodexProcess(info?.process_info as ProcessInfo | undefined) !== null) agent = "codex";
   }
   // a Muse or Letta pane's processes are asked for once, for omo and for its own binding
   if ((agent === "muse" || agent === "letta") && known === undefined) known = (await paneProcessInfo(paneId).catch(() => undefined)) ?? null;

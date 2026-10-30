@@ -13,7 +13,8 @@ import { codexReadCall, codexReadSkills, selectedSkill } from "./skill-activity.
 import { trimOutput } from "./tool-output.ts";
 import type { TranscriptParser } from "./transcript-records.ts";
 import type { AgentInfo } from "../shared/herdr-api.generated.ts";
-import { agentGet, paneProcessInfo, paneRead, sessionSnapshot } from "./herdr/client.ts";
+import { agentGet, HerdrError, paneGet, paneProcessInfo, paneRead, sessionSnapshot } from "./herdr/client.ts";
+import { kiroCodexProcess } from "./kiro-terminal.ts";
 import { resolveAgent } from "./pane-context.ts";
 import { codexStartScreenUnused } from "./start-screen.ts";
 
@@ -2033,7 +2034,7 @@ async function codexProcessesOf(paneId: string): Promise<{ list: { pid: number; 
   const processInfo = await paneProcessInfo(paneId);
   // herdr's schema allows `argv: null`; this reader has always read argv as absent or a list
   // (the cast is the inline result type herdrRpc was given before the typed seam)
-  const list = ((processInfo?.foreground_processes ?? []) as { pid: number; argv?: string[] }[])
+  let list = ((processInfo?.foreground_processes ?? []) as { pid: number; argv?: string[] }[])
     .map((foreground) => {
       if (foreground.argv?.length || process.platform !== "linux") return foreground;
       // herdr can report only pid/name. Read this process, never infer argv from
@@ -2062,7 +2063,23 @@ async function codexProcessesOf(paneId: string): Promise<{ list: { pid: number; 
       }
       return codex.test(argv[script] ?? "");
     });
+  if (list.length === 0) {
+    const nested = await kiroCodexProcess(processInfo);
+    if (nested !== null) list = [nested];
+  }
   return { list, key: list.map((process) => process.pid).sort((left, right) => left - right).join(",") };
+}
+
+/** A missing label is expected for Kiro's outer PTY, but only its proven live Codex can use this fallback. */
+async function codexAgentInfo(paneId: string): Promise<Pick<AgentInfo, "agent_session" | "terminal_title" | "terminal_title_stripped" | "cwd" | "foreground_cwd">> {
+  try { return await agentGet(paneId); }
+  catch (error) {
+    if (!(error instanceof HerdrError) || error.code !== "agent_not_found"
+      || await kiroCodexProcess(await paneProcessInfo(paneId)) === null) throw error;
+    const pane = await paneGet(paneId);
+    // Never revive an earlier occupant's session report through a shell wrapper.
+    return { ...pane, agent_session: undefined };
+  }
 }
 
 /** When each pane last looked at the other Codex panes for a set of threads, and which panes those were. */
@@ -2416,7 +2433,7 @@ async function openRollouts(paneId: string, home: string): Promise<{ codexProces
  * matches the pane again.
  */
 export async function codexOpenRollout(paneId: string, cwd: string | null | undefined, home = defaultCodexHome()): Promise<string | null> {
-  const agent = await agentGet(paneId);
+  const agent = await codexAgentInfo(paneId);
   const session = agent.agent_session;
   if (session?.kind === "path" && session.value) return codexRolloutPath(session.value, home);
   const { codexProcesses, processes, open } = await openRollouts(paneId, home);
@@ -2456,7 +2473,7 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
     const open = new Set(panes.map((pane) => pane.pane_id));
     for (const pane of [...boundRollouts.keys()]) if (!open.has(pane)) boundRollouts.delete(pane);
   }
-  const agent = await agentGet(paneId);
+  const agent = await codexAgentInfo(paneId);
   const session = agent.agent_session;
   if (session?.kind === "path" && session.value) return codexRolloutPath(session.value, home);
 

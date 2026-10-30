@@ -7,6 +7,9 @@ import { join } from "node:path";
 import { asCodexTitle, codexOpenRollout, codexTranscriptPath, limitCodexHistoryForTests } from "./codex.ts";
 import * as processStart from "./process-start.ts";
 import { processStartedAt } from "./process-start.ts";
+import * as kiro from "./kiro-terminal.ts";
+import { paneTranscript } from "./conversation.ts";
+import type { SessionSnapshot } from "../shared/protocol.ts";
 
 // Native stores and the real RPC client; only herdr's foreground metadata is synthetic.
 // In particular, a real process supplies /proc/cmdline when that metadata omits argv.
@@ -24,6 +27,7 @@ let listener: ReturnType<typeof Bun.listen>;
 let socketBefore: string | undefined;
 /** The terminal title herdr reports for the pane (Codex's [tui].terminal_title), null for none. */
 let title: string | null;
+let unlabelled: boolean;
 /** The pane's folders herdr reports. */
 let agentFolders: { cwd?: string; foreground_cwd?: string };
 const children: ReturnType<typeof Bun.spawn>[] = [];
@@ -43,6 +47,7 @@ beforeEach(() => {
   db.close();
   screen = "";
   title = null;
+  unlabelled = false;
   agentFolders = {};
   peerScreens = new Map();
   foreground = [];
@@ -59,11 +64,16 @@ beforeEach(() => {
         if (!socket.data.buffer.includes("\n")) return;
         const request = JSON.parse(socket.data.buffer) as { id: string; method: string; params?: { pane_id?: string } };
         const peerScreen = peerScreens.get(request.params?.pane_id ?? "");
+        if (request.method === "agent.get" && unlabelled) {
+          socket.end(`${JSON.stringify({ id: request.id, error: { code: "agent_not_found", message: "outer shell" } })}\n`);
+          return;
+        }
         if (request.method === "pane.read" && peerScreen instanceof Error) {
           socket.end(`${JSON.stringify({ id: request.id, error: { code: "pane_not_found", message: peerScreen.message } })}\n`);
           return;
         }
-        const result = request.method === "agent.get" ? { agent: { ...agentFolders, ...(title === null ? {} : { terminal_title: title, terminal_title_stripped: title }) } }
+        const result = request.method === "pane.get" ? { pane: { pane_id: root, cwd: root } }
+          : request.method === "agent.get" ? { agent: { ...agentFolders, ...(title === null ? {} : { terminal_title: title, terminal_title_stripped: title }) } }
           : request.method === "pane.process_info" ? { process_info: { foreground_processes: foregrounds.get(request.params?.pane_id ?? "") ?? foreground } }
           : request.method === "pane.read" ? { read: { text: peerScreen ?? screen } }
           : null;
@@ -89,6 +99,19 @@ const resolve = () => codexTranscriptPath(root, root, home, [{
   pane_id: root, workspace_id: root, tab_id: root, terminal_id: root,
   agent: "codex", agent_status: "working", cwd: root, focused: false, revision: 0,
 }]);
+
+it("reads an unlabelled pane only when the Kiro foreground check proves its nested Codex", async () => {
+  unlabelled = true;
+  foreground = [{ pid: 2147483647, argv: ["zsh (kiro-cli-term)"] }];
+  screen = answer;
+  const nested = spyOn(kiro, "kiroCodexProcess").mockResolvedValue({ pid: 2147483646, argv: ["codex"] });
+  const snapshot = { panes: [{ pane_id: root, cwd: root, agent_status: "unknown" }] } as SessionSnapshot;
+  try {
+    expect(await paneTranscript(root, home, snapshot)).toMatchObject({ source: "codex-transcript", path });
+    nested.mockResolvedValue(null);
+    await expect(paneTranscript(root, home, snapshot)).rejects.toMatchObject({ message: "no_recognized_transcript" });
+  } finally { nested.mockRestore(); }
+});
 
 /** A fixture's first line, whole: a busy pipe can hand "READY" and its newline over in two reads. */
 async function firstLine(stdout: ReadableStream<Uint8Array>): Promise<string> {
