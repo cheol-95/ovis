@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, jest } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HerdrError, herdrRpc, paneGet, paneSendKeys, paneSendText, sessionSnapshot, subscribeEvents, type EventFrame } from "../herdr/client.ts";
+import { HerdrError, herdrRpc, paneGet, paneSendKeys, paneSendText, sessionSnapshot, subscribeEvents, type EventFrame, paneClose, tabClose, tabCreate, workspaceClose, workspaceCreate, agentManifests, agentStart } from "../herdr/client.ts";
 import { startHerdrCoreAdapter } from "./adapter.ts";
 import { encodeFrame, FRAME_CLOSE, FRAME_DATA, HcConnection, HcError, type HcTransport, makeFrameReader } from "./connection.ts";
 import type { HcTerminal } from "./snapshot.ts";
@@ -300,4 +300,191 @@ describe("herdr-core adapter", () => {
       expect(core.closed).toEqual([channel]);
     });
   }
+
+describe("herdr-core adapter, new and closed terminals", () => {
+  /** a core whose terminal list follows its own terminal.run, terminal.kill and terminal.rm */
+  async function living(start: HcTerminal[]) {
+    const terminals = [...start];
+    const runs: Record<string, unknown>[] = [];
+    const ends: string[] = [];
+    let next = terminals.length + 1;
+    const ready = await setup(terminals, {
+      "terminal.run": (params) => {
+        runs.push(params);
+        const record = terminal(`t${next++}`, { cwd: typeof params["cwd"] === "string" ? params["cwd"] : "/home/u", labels: params["labels"] as Record<string, string> });
+        terminals.push(record);
+        return record;
+      },
+      "terminal.kill": (params) => {
+        ends.push(`kill ${String(params["terminal"])}`);
+        const found = terminals.find((entry) => entry.address === params["terminal"]);
+        if (!found) throw new Error("no terminal");
+        found.state = "finished";
+        return found;
+      },
+      "terminal.rm": (params) => {
+        ends.push(`rm ${String(params["terminal"])}`);
+        terminals.splice(terminals.findIndex((entry) => entry.address === params["terminal"]), 1);
+        return { removed: params["terminal"] };
+      },
+    });
+    return { ...ready, runs, ends };
+  }
+
+  it("starts a new workspace as a kept shell labeled with a space and tab of its own, named as asked", async () => {
+    const { socket, runs } = await living([terminal("t1")]);
+    const created = await workspaceCreate({ cwd: "/work/web", label: "web" }, socket);
+    const labels = runs[0]!["labels"] as Record<string, string>;
+    expect(runs[0]).toMatchObject({ keep: true, cwd: "/work/web" });
+    expect(labels["herdr.space"]).toMatch(/^ovis-/);
+    expect(labels["herdr.tab"]).toMatch(/^ovis-/);
+    expect(labels["ovis.workspace"]).toBe("web");
+    expect(created.workspace).toMatchObject({ workspace_id: labels["herdr.space"], label: "web" });
+    expect(created.tab).toMatchObject({ tab_id: labels["herdr.tab"], workspace_id: labels["herdr.space"] });
+    expect(created.root_pane).toMatchObject({ pane_id: "t2", terminal_id: "t2", tab_id: labels["herdr.tab"] });
+  });
+
+  it("starts a new tab in the app's space, where that space's first pane works, and one in Other terminals on its own", async () => {
+    const { socket, runs } = await living([terminal("t1", { cwd: "/repo/api" })]);
+    const tab = await tabCreate({ workspaceId: "s1", label: "logs" }, socket);
+    expect(runs[0]).toMatchObject({ keep: true, cwd: "/repo/api" });
+    expect(runs[0]!["labels"]).toMatchObject({ "herdr.space": "s1", "ovis.tab": "logs" });
+    expect(tab.tab).toMatchObject({ workspace_id: "s1", label: "logs" });
+    expect(tab.root_pane.pane_id).toBe("t2");
+    await tabCreate({ workspaceId: "hc-other" }, socket);
+    expect(runs[1]!["labels"]).toEqual({});
+    await expect(tabCreate({ workspaceId: "nope" }, socket)).rejects.toMatchObject({ code: "workspace_not_found" });
+  });
+
+  it("closes a pane, a tab or a workspace by ending each of its terminals and removing its record", async () => {
+    const { socket, ends } = await living([terminal("t1"), terminal("t2", { labels: { "herdr.space": "s1", "herdr.tab": "s1t2" } }), terminal("t3")]);
+    await paneClose("t3", socket);
+    expect(ends).toEqual(["kill t3", "rm t3"]);
+    await tabClose("s1t2", socket);
+    expect(ends.slice(2)).toEqual(["kill t2", "rm t2"]);
+    await workspaceClose("s1", socket);
+    expect(ends.slice(4)).toEqual(["kill t1", "rm t1"]);
+    expect((await sessionSnapshot(socket)).panes).toEqual([]);
+    await expect(paneClose("t9", socket)).rejects.toMatchObject({ code: "pane_not_found" });
+  });
+
+  it("closes only a tab's own terminal when labels name the same ids in other spaces", async () => {
+    // t1 is the app's own (the layout document places it); t5 to t7 are labeled only
+    const { socket, ends } = await living([
+      terminal("t1"),
+      terminal("t5", { labels: { "herdr.space": "S", "herdr.tab": "T" } }),
+      terminal("t6", { labels: { "herdr.space": "T" } }),
+      terminal("t7", { labels: { "herdr.space": "Y", "herdr.tab": "T" } }),
+    ]);
+    await tabClose("T", socket);
+    expect(ends).toEqual(["kill t5", "rm t5"]);
+  });
+
+  it("refuses to close Other terminals as a whole: its jobs and agents' workers are no workspace's", async () => {
+    const { socket, ends } = await living([terminal("t1"), terminal("t5")]);
+    await expect(workspaceClose("hc-other", socket)).rejects.toMatchObject({ code: "unsupported" });
+    expect(ends).toEqual([]);
+  });
+
+  it("ends every terminal of a closed workspace at once, and answers a failure only after trying them all", async () => {
+    const kills: string[] = [];
+    const held = Promise.withResolvers<void>();
+    const terminals = [terminal("t1"), terminal("t2", { labels: { "herdr.space": "s1", "herdr.tab": "s1t2" } })];
+    const { socket } = await setup(terminals, {
+      "terminal.kill": (params) => {
+        kills.push(String(params["terminal"]));
+        if (kills.length === 2) held.resolve();
+        if (params["terminal"] === "t1") throw new Error("kill refused");
+        return {};
+      },
+      "terminal.rm": () => ({}),
+    });
+    await expect(workspaceClose("s1", socket)).rejects.toMatchObject({ message: expect.stringContaining("kill refused") });
+    await held.promise;
+    expect(kills.sort()).toEqual(["t1", "t2"]);
+  });
+});
+
+describe("herdr-core adapter, agents", () => {
+  it("starts an agent by typing its kind and quoted arguments into the pane's idle shell, and answers once it is in front", async () => {
+    const shell = { pid: 10, name: "bash" };
+    const agent = { pid: 11, name: "claude" };
+    const record = terminal("t1", { cols: 90, rows: 20, pid: 10, foreground: shell });
+    const { socket, cores } = await setup([record], {
+      // hc's foreground: the shell until the line was typed, then the agent
+      "terminal.get": () => ({ terminal: { ...record, foreground: cores[0]!.typed.length > 0 ? agent : shell } }),
+    });
+    await agentStart({ name: "claude-1", kind: "claude", paneId: "t1", args: ["--model", "it's big"] }, socket);
+    const core = cores[0]!;
+    expect(core.calls.find((call) => call.method === "terminal.attach")?.params).toMatchObject({ terminal: "t1", cols: 90, rows: 20 });
+    expect(core.typed.map((write) => write.text).join("")).toBe("\u0015'claude' '--model' 'it'\\''s big'\r");
+    // it looked again after typing: the answer follows what hc saw in front
+    const methods = core.calls.map((call) => call.method);
+    expect(methods.lastIndexOf("terminal.get")).toBeGreaterThan(methods.indexOf("terminal.attach"));
+  });
+
+  it("counts an agent run through its interpreter as started, and a shell's command-not-found handler as a failed start", async () => {
+    const shell = { pid: 10, name: "bash" };
+    // hc's foreground: the shell until the line is typed, then each later look sees the next one
+    const sequence = (after: { pid: number; name: string; argv?: string[] }[]) => {
+      const record = terminal("t1", { pid: 10, foreground: shell });
+      const holder: { cores: FakeCore[] } = { cores: [] };
+      let seen = 0;
+      const get = () => ({ terminal: { ...record, foreground: holder.cores[0]?.typed.length ? after[Math.min(seen++, after.length - 1)] : shell } });
+      return { record, holder, get };
+    };
+    const node = sequence([{ pid: 11, name: "node", argv: ["node", "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"] }]);
+    const started = await setup([node.record], { "terminal.get": node.get });
+    node.holder.cores = started.cores;
+    await agentStart({ name: "claude-1", kind: "claude", paneId: "t1" }, started.socket);
+    const missing = sequence([{ pid: 12, name: "python3", argv: ["/usr/bin/python3", "/usr/lib/command-not-found", "--", "amp"] }, shell]);
+    const failed = await setup([missing.record], { "terminal.get": missing.get });
+    missing.holder.cores = failed.cores;
+    await expect(agentStart({ name: "amp-1", kind: "amp", paneId: "t1" }, failed.socket)).rejects.toMatchObject({ code: "agent_start_failed" });
+  });
+
+  it("lets what is typed after a start reach the pane while the start waits for its agent", async () => {
+    const shell = { pid: 10, name: "bash" };
+    const record = terminal("t1", { pid: 10, foreground: shell });
+    const holder: { cores: FakeCore[]; agentUp: boolean } = { cores: [], agentUp: false };
+    const ready = await setup([record], { "terminal.get": () => ({ terminal: { ...record, foreground: holder.agentUp ? { pid: 11, name: "claude" } : shell } }) });
+    holder.cores = ready.cores;
+    const starting = agentStart({ name: "claude-1", kind: "claude", paneId: "t1" }, ready.socket);
+    let started = false;
+    void starting.then(() => { started = true; });
+    // typed while the agent is not in front yet: it goes in, and the start is still waiting
+    await paneSendText("t1", "hi", ready.socket);
+    expect(holder.cores[0]!.typed.map((write) => write.text)).toContain("hi");
+    expect(started).toBe(false);
+    holder.agentUp = true;
+    await starting;
+  });
+
+  it("types Cursor's agent command, not the IDE's, and waits for it in front", async () => {
+    const shell = { pid: 10, name: "bash" };
+    const record = terminal("t1", { pid: 10, foreground: shell });
+    const holder: { cores: FakeCore[] } = { cores: [] };
+    const ready = await setup([record], { "terminal.get": () => ({ terminal: { ...record, foreground: holder.cores[0]?.typed.length ? { pid: 11, name: "cursor-agent" } : shell } }) });
+    holder.cores = ready.cores;
+    await agentStart({ name: "cursor-1", kind: "cursor", paneId: "t1" }, ready.socket);
+    expect(ready.cores[0]!.typed.map((write) => write.text).join("")).toBe("\u0015'cursor-agent'\r");
+  });
+
+  it("refuses a pane with a program in front, a kind that is no command, and an argument with a control character", async () => {
+    const { socket, cores } = await setup([terminal("t1", { pid: 10, foreground: { pid: 12, name: "vim" } })]);
+    await expect(agentStart({ name: "x", kind: "claude", paneId: "t1" }, socket)).rejects.toMatchObject({ code: "agent_pane_busy" });
+    await expect(agentStart({ name: "x", kind: "rm -rf /", paneId: "t1" }, socket)).rejects.toMatchObject({ code: "invalid_params" });
+    await expect(agentStart({ name: "x", kind: "claude", paneId: "t1", args: ["a\u0015touch /tmp/x\r"] }, socket)).rejects.toMatchObject({ code: "invalid_params" });
+    await expect(agentStart({ name: "x", kind: "claude", paneId: "t9" }, socket)).rejects.toMatchObject({ code: "pane_not_found" });
+    expect(cores[0]!.typed).toEqual([]);
+  });
+
+  it("offers the agents Ovis knows by kind, leaving the ones Ovis starts itself to the server", async () => {
+    const { socket } = await setup([terminal("t1")]);
+    const kinds = (await agentManifests(socket)).manifests.map((manifest) => manifest.agent);
+    expect(kinds).toContain("claude");
+    expect(kinds).toContain("codex");
+    expect(kinds).not.toContain("omo");
+  });
+});
 });

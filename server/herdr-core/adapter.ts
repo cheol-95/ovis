@@ -1,9 +1,11 @@
 import { existsSync, rmSync } from "node:fs";
 import { createConnection } from "node:net";
 import type { Socket } from "bun";
+import { AGENT_LABELS } from "../agents-routes.ts";
 import { LINE_BYTES, makeLineReader } from "../herdr/client.ts";
+import { SHELL_AGENTS, shellCommandLine } from "../shell-agent.ts";
 import { type HcConnection, HcError } from "./connection.ts";
-import { agentInfoOf, agentStatusOf, buildSnapshot, type HcTerminal, hcKeyName, HERDR_PROTOCOL, isRecord, keyBytes, LAYOUT_DOC, processInfoOf } from "./snapshot.ts";
+import { agentInfoOf, agentStatusOf, buildSnapshot, type HcTerminal, hcKeyName, HERDR_PROTOCOL, isRecord, keyBytes, LAYOUT_DOC, OTHER_WORKSPACE_ID, processInfoOf, SPACE_LABEL, TAB_LABEL, TAB_NAME_LABEL, WORKSPACE_NAME_LABEL } from "./snapshot.ts";
 import type { SessionSnapshot } from "../../shared/herdr-api.generated.ts";
 
 /**
@@ -158,6 +160,12 @@ function flush(socket: Socket<ConnectionState>): void {
   if (state.ending) socket.end();
 }
 
+/** An agent whose command is not its kind, as the Herdr app runs it (herdr-app defaults/programs.json): the Cursor IDE is `cursor`. */
+const AGENT_COMMANDS: Readonly<Record<string, string>> = { cursor: "cursor-agent" };
+
+/** How long a typed agent start may take to show in front of its shell. */
+const AGENT_START_MS = 10_000;
+
 function paneIdOf(params: Record<string, unknown>, field = "pane_id"): string {
   const value = params[field];
   if (typeof value !== "string" || value === "") throw new AdapterError("invalid_params", `${field} is required`);
@@ -230,6 +238,34 @@ function createAnswers(hc: HcConnection): (request: Request) => Promise<Reply> {
     return run;
   };
 
+  /**
+   * A shell hc keeps (a lost program comes back as a shell), labeled `labels`, answered as herdr
+   * answers a new one: the workspace, tab and pane it shows as in the snapshot right after.
+   */
+  const startShell = async (params: Record<string, unknown>, labels: Record<string, string>) => {
+    const env = isRecord(params["env"]) ? Object.fromEntries(Object.entries(params["env"]).filter((entry): entry is [string, string] => typeof entry[1] === "string")) : undefined;
+    const record = await hc.call<HcTerminal>("terminal.run", { keep: true, labels, ...(typeof params["cwd"] === "string" ? { cwd: params["cwd"] } : {}), ...(env ? { env } : {}) });
+    const shown = await snapshot();
+    const root_pane = shown.panes.find((pane) => pane.pane_id === record.address);
+    const tab = root_pane && shown.tabs.find((candidate) => candidate.tab_id === root_pane.tab_id);
+    const workspace = root_pane && shown.workspaces.find((candidate) => candidate.workspace_id === root_pane.workspace_id);
+    if (!root_pane || !tab || !workspace) throw new AdapterError("internal", `hc started ${record.address}, but it is not in the snapshot`);
+    return { workspace, tab, root_pane };
+  };
+
+  /**
+   * Ends each terminal and removes its record, as closing a herdr pane does: all at once (a program
+   * can take seconds to end), every one tried before the first failure is answered.
+   */
+  const end = async (addresses: string[]): Promise<void> => {
+    const ended = await Promise.allSettled(addresses.map(async (address) => {
+      await hc.call("terminal.kill", { terminal: address });
+      await hc.call("terminal.rm", { terminal: address });
+    }));
+    const failed = ended.find((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
+    if (failed) throw failed.reason;
+  };
+
   const methods: Record<string, (params: Record<string, unknown>) => Promise<unknown>> = {
     async ping() {
       const hello = await hc.hello();
@@ -266,6 +302,50 @@ function createAnswers(hc: HcConnection): (request: Request) => Promise<Reply> {
       // hc reads text only: plain text is an ANSI screen without colours
       return { read: { pane_id: paneId, workspace_id: pane.workspace_id, tab_id: pane.tab_id, source, format, text, revision: pane.revision, truncated: !read.complete } };
     },
+    // herdr starts an agent by its kind (its command is its kind) from herdr's own manifests; hc has
+    // none, so the kinds Ovis knows are offered, and the start types the command into the pane's
+    // shell as a person would. Ovis's own shell-started agents are offered and started by the
+    // server itself (shell-agent.ts), through pane.send_text.
+    async "server.agent_manifests"() {
+      const manifests = Object.keys(AGENT_LABELS).filter((agent) => !Object.hasOwn(SHELL_AGENTS, agent))
+        .map((agent) => ({ agent, source: "herdr-core", source_kind: "herdr-core", local_override_shadowing_remote: false }));
+      return { manifests };
+    },
+    async "agent.start"(params) {
+      const paneId = paneIdOf(params);
+      const kind = params["kind"];
+      if (typeof kind !== "string" || !/^[a-z][a-z0-9-]*$/.test(kind)) throw new AdapterError("invalid_params", "kind is required");
+      const args = Array.isArray(params["args"]) ? params["args"].filter((arg): arg is string => typeof arg === "string") : [];
+      // a control character could end the quoted line early and type something else
+      if (args.some((arg) => /[\u0000-\u001f\u007f]/.test(arg))) throw new AdapterError("invalid_params", "an argument holds a control character");
+      const command = AGENT_COMMANDS[kind] ?? kind;
+      // only into the pane's own shell, once hc has seen it in front: a running program would take
+      // the line as its input (agent-launch.ts retries a busy pane while a new shell comes up). The
+      // pane's input turn is held for the typing only, so nothing typed after waits on the start.
+      await inTurn(paneId, async () => {
+        const ready = await terminal(paneId);
+        if (!ready.pid || ready.foreground?.pid !== ready.pid) throw new AdapterError("agent_pane_busy", `pane ${paneId} has no idle shell in front`);
+        // Ctrl-U first: a line someone left half typed is cleared, not run with the command after it
+        await type(paneId, `\u0015${shellCommandLine("posix", command, args)}\r`);
+      });
+      // started means the agent itself came up in front (hc samples it about twice a second): a
+      // program or script named for the kind (`claude`, `node …/claude-code/cli.js`,
+      // `codex-x86_64-…`). Not any program: a shell's command-not-found handler runs in front too,
+      // and then the shell is back
+      const deadline = Date.now() + AGENT_START_MS;
+      let left = false;
+      for (;;) {
+        const now = await terminal(paneId);
+        const front = now.foreground;
+        if (front && front.pid !== now.pid) {
+          left = true;
+          const parts = [front.name, ...(front.argv ?? []).slice(0, 2)].flatMap((part) => part.split("/"));
+          if (parts.some((part) => part === command || part.startsWith(`${command}-`) || part.startsWith(`${command}.`))) return { type: "agent_started", pane_id: paneId };
+        } else if (left) throw new AdapterError("agent_start_failed", `${kind} did not start in pane ${paneId}`);
+        if (Date.now() > deadline) throw new AdapterError("agent_start_failed", `${kind} did not come up in pane ${paneId}`);
+        await Bun.sleep(100);
+      }
+    },
     async "pane.send_text"(params) {
       const text = params["text"];
       if (typeof text !== "string") throw new AdapterError("invalid_params", "text is required");
@@ -301,6 +381,49 @@ function createAnswers(hc: HcConnection): (request: Request) => Promise<Reply> {
       if (typeof text !== "string") throw new AdapterError("invalid_params", "text is required");
       if (!(await paneOf(paneId, "agent_not_found")).agent) throw new AdapterError("agent_not_found", `no agent in pane ${paneId}`);
       await inTurn(paneId, () => hc.call("terminal.send", { terminal: paneId, text }, 30_000));
+      return { type: "ok" };
+    },
+    // A new workspace or tab is a shell hc starts, labeled with its space and tab as the Herdr app
+    // labels its own: the app adopts it there (herdr-app src/window.rs `reconcile`), and until
+    // then, or without the app, the snapshot groups it by those labels (snapshot.ts `groups`).
+    // Names live in the app's document, which Ovis never writes: a name given here is a label.
+    async "workspace.create"(params) {
+      const spaceId = `ovis-${crypto.randomUUID()}`;
+      const label: Record<string, string> = typeof params["label"] === "string" && params["label"] ? { [WORKSPACE_NAME_LABEL]: params["label"] } : {};
+      const pane = await startShell(params, { [SPACE_LABEL]: spaceId, [TAB_LABEL]: `ovis-${crypto.randomUUID()}`, ...label });
+      return { type: "workspace_created", ...pane };
+    },
+    async "tab.create"(params) {
+      const workspaceId = paneIdOf(params, "workspace_id");
+      const shown = await snapshot();
+      const workspace = shown.workspaces.find((candidate) => candidate.workspace_id === workspaceId);
+      if (!workspace && workspaceId !== OTHER_WORKSPACE_ID) throw new AdapterError("workspace_not_found", `workspace ${workspaceId} not found`);
+      // a tab in a workspace starts where that workspace's first pane works, as herdr's does
+      const cwd = typeof params["cwd"] === "string" ? params["cwd"] : shown.panes.find((pane) => pane.workspace_id === workspaceId)?.cwd ?? undefined;
+      const label: Record<string, string> = typeof params["label"] === "string" && params["label"] ? { [TAB_NAME_LABEL]: params["label"] } : {};
+      // "Other terminals" is no space of the app's: a tab there is a terminal of its own
+      const space: Record<string, string> = workspaceId === OTHER_WORKSPACE_ID ? {} : { [SPACE_LABEL]: workspaceId, [TAB_LABEL]: `ovis-${crypto.randomUUID()}` };
+      const { tab, root_pane } = await startShell({ ...params, ...(cwd ? { cwd } : {}) }, { ...space, ...label });
+      return { type: "tab_created", tab, root_pane };
+    },
+    async "pane.close"(params) {
+      await end([await paneOf(paneIdOf(params))].map((pane) => pane.pane_id));
+      return { type: "ok" };
+    },
+    async "tab.close"(params) {
+      const tabId = paneIdOf(params, "tab_id");
+      const panes = (await snapshot()).panes.filter((pane) => pane.tab_id === tabId);
+      if (panes.length === 0) throw new AdapterError("tab_not_found", `tab ${tabId} not found`);
+      await end(panes.map((pane) => pane.pane_id));
+      return { type: "ok" };
+    },
+    async "workspace.close"(params) {
+      const workspaceId = paneIdOf(params, "workspace_id");
+      // "Other terminals" is no workspace anyone made: its jobs and agents' workers close one by one
+      if (workspaceId === OTHER_WORKSPACE_ID) throw new AdapterError("unsupported", "Other terminals holds terminals no workspace made: close them one by one");
+      const panes = (await snapshot()).panes.filter((pane) => pane.workspace_id === workspaceId);
+      if (panes.length === 0) throw new AdapterError("workspace_not_found", `workspace ${workspaceId} not found`);
+      await end(panes.map((pane) => pane.pane_id));
       return { type: "ok" };
     },
   };
