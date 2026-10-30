@@ -794,7 +794,8 @@ describe("Codex rollout resolution", () => {
     // conversation finished the same answer, says nothing about this one
     const another = `${done(recordedAnswer)}\n\n\u203a Second\n\n\u2022 Short reply.\n\n  Worked for 1s \u2022 7:10 PM\n\n\u203a Ask Codex to do anything`;
     expect(matchCodexTranscript(another, [said("at-7-10", ...turn("t3", "Something else entirely", recordedAnswer, new Date(2026, 9, 30, 19, 10, 3)))])).toBeNull();
-    expect(matchCodexTranscript(another, [own])).toBe("own");
+    // and an earlier turn's footer, with a message sent below it, closes no turn the composer waits after
+    expect(matchCodexTranscript(another, [own])).toBeNull();
     // nor for a turn an earlier Codex in the pane finished, above the one it shows now
     expect(matchCodexTranscript(`${done(recordedAnswer)}\n\n  >_ OpenAI Codex (v0.163.0)\n\n\u203a Ask Codex to do anything`, [own])).toBeNull();
     // an answer that ends in a footer-shaped line of its own: never the conversation that said the rest, and its
@@ -803,6 +804,28 @@ describe("Codex rollout resolution", () => {
     expect(matchCodexTranscript(`\u203a ${asked}\n\n${shownAs(literal)}\n\n\u203a Ask Codex to do anything`, [said("rest", ...turn("t4", "Something else entirely", recordedAnswer))])).toBeNull();
     expect(matchCodexTranscript(`\u203a ${asked}\n\n${shownAs(literal)}\n\n\u2022 Working (3s \u2022 esc to interrupt)\n\n\u203a Ask`, [own])).toBeNull();
     expect(matchCodexTranscript(done(literal), [said("literal", ...turn("t5", asked, literal))])).toBeNull();
+    // nor below a message sent since, while Codex works on it: only the composer, waiting, may follow a footer
+    expect(matchCodexTranscript(done(recordedAnswer, footer).replace(/\u203a Ask Codex to do anything$/, "\u203a Next question\n\n\u2022 Working (3s \u2022 esc to interrupt)\n\n\u203a Ask Codex to do anything"), [own])).toBeNull();
+    // nor on the screen a Codex left when it exited, before the next one draws its own
+    expect(matchCodexTranscript(`${done(recordedAnswer)}\n\nToken usage so far: total=10,360 input=10,231 output=129\nuser@host proj % codex`, [own])).toBeNull();
+    // an answer with emphasis Codex renders away is found; one that differs in any other character is not
+    const bold = recordedAnswer.replace("31 Frostwake", "**31 Frostwake**");
+    expect(matchCodexTranscript(recordedScreen, [said("bold", ...turn("b1", asked, bold))])).toBe("bold");
+    expect(matchCodexTranscript(recordedScreen, [said("symbol", ...turn("b2", asked, recordedAnswer.replace("one, two,", "one; two,")))])).toBeNull();
+    const underscored = (answer: string) => `\u203a ${asked}\n\n\u2022 ${answer}\n\n  Worked for 4s \u2022 7:05 PM\n\n\u203a Ask Codex to do anything`;
+    const valued = "The ferryman kept every count in one ledger column he called base_value, beside the river's tide table.";
+    expect(matchCodexTranscript(underscored(valued), [said("joined", ...turn("u1", asked, valued.replace("base_value", "basevalue")))])).toBeNull();
+    expect(matchCodexTranscript(underscored(valued), [said("valued", ...turn("u2", asked, valued))])).toBe("valued");
+    // a prompt or an answer that differs only in its spaces is another one ("stone bridge" is not "stonebridge")
+    expect(matchCodexTranscript(recordedScreen, [said("spaced-prompt", ...turn("s1", asked.replace("the Elbe", "theElbe"), recordedAnswer))])).toBeNull();
+    expect(matchCodexTranscript(recordedScreen, [said("spaced-answer", ...turn("s2", asked, recordedAnswer.replace("the Elbe", "theElbe")))])).toBeNull();
+    // a footer-shaped line some conversation finished its answer on is that answer's text: with the pane's own
+    // conversation in another folder (elsewhere), the one that said the rest is not this pane's
+    const ownLiteral = said("own-elsewhere", ...turn("o1", asked, `${recordedAnswer}\n\n${footer.trim()}`));
+    const rest = said("rest-same-prompt", ...turn("r1", asked, recordedAnswer));
+    expect(matchCodexTranscript(done(recordedAnswer), [rest], new Set(), new Map(), false, [ownLiteral])).toBeNull();
+    // and with the pane's own among the candidates, its answer with that line is shown whole: it is found
+    expect(matchCodexTranscript(done(recordedAnswer), [rest, ownLiteral])).toBe("own-elsewhere");
     // nor is any other line a footer: an impossible clock, text after the bullet, a wrapped clock, no blank line
     // above, more answer below, or a read that ends before the composer
     for (const shown of [
