@@ -752,7 +752,7 @@ describe("Codex rollout resolution", () => {
   const recordedAnswer = "At noon, Oskar the ferryman rested his oars beside the Elbe and counted the swans as they drifted past: one, two, then seven, whenever a ripple made him lose his place. He kept a little calendar in his coat, marked with three dates nobody else had heard of: 31 Frostwake, 8 Swanrise, and 46 Lanternfall. Each was a day he swore the river had changed its tune. When the last white neck slipped beneath the bridge, Oskar smiled, shut the calendar, and rowed toward the far bank, carrying his strange year with him.";
   it("matches an answer above Codex's completed-turn footer, and only that footer (regression)", () => {
     // a turn as Codex 0.163 records it: the message asked, then the answer it finished on, by the turn's id
-    // finished at a clock of this machine's day (the minute a footer below it shows), by default 7:05 PM today
+    // its finish record carries a time, as Codex writes one, which the earlier clock-only reading compared
     const turn = (id: string, asked: string, answer: string, at = new Date(2026, 9, 30, 19, 5, 41)) => [
       event({ type: "item_completed", turn_id: id, item: { type: "UserMessage", content: [{ type: "text", text: asked }] } }),
       message("assistant", answer, "final_answer"),
@@ -776,6 +776,18 @@ describe("Codex rollout resolution", () => {
     expect(matchCodexTranscript(recordedScreen, [said("elsewhere", ...turn("t9", "Something else entirely", recordedAnswer, new Date(2026, 9, 29, 19, 5, 12)))])).toBeNull();
     // nor one that never finished it (no record of the turn: an older Codex)
     expect(matchCodexTranscript(recordedScreen, [said("untimed", message("assistant", recordedAnswer))])).toBeNull();
+    // nor a turn of its that was asked something else, while another of its turns was asked this prompt
+    expect(matchCodexTranscript(recordedScreen, [said("mixed", ...turn("p", asked, "A different answer, long enough to be looked for on a screen."),
+      ...turn("q", "Something else entirely", recordedAnswer))])).toBeNull();
+    // nor a turn whose prompt it never recorded, below a prompt line that shows nothing
+    expect(matchCodexTranscript(done(recordedAnswer, footer, ""), [said("unasked", message("assistant", recordedAnswer),
+      event({ type: "task_complete", turn_id: "u", last_agent_message: recordedAnswer }))])).toBeNull();
+    // each finished answer pairs with the prompt of its own turn: a turn asked the first prompt that finished on
+    // the second answer is neither
+    const second = "A second answer of this pane, long enough to be looked for on any screen that shows it.";
+    const twoFooted = `${done(recordedAnswer)}\n\n\u203a Second prompt\n\n${shownAs(second)}\n\n  Worked for 1s \u2022 7:10 PM\n\n\u203a Ask Codex to do anything`;
+    expect(matchCodexTranscript(twoFooted, [said("crossed", ...turn("x", asked, second))])).toBeNull();
+    expect(matchCodexTranscript(twoFooted, [said("own2", ...turn("y", "Second prompt", second))])).toBe("own2");
     // and with two conversations asked the same and finished on the same answer, neither wins
     expect(matchCodexTranscript(recordedScreen, [own, said("twin", ...turn("t2", asked, recordedAnswer))])).toBeNull();
     // a footer vouches only for the answer directly above it: another turn's footer, at the minute another

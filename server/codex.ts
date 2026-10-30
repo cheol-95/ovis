@@ -1035,7 +1035,7 @@ function finishedTurn(rollout: string, prompt: string, answer: string): boolean 
       if (payload["type"] === "item_completed" && item?.type === "UserMessage" && Array.isArray(item.content)) {
         asked.set(turn, (asked.get(turn) ?? "") + item.content.map((part: { text?: unknown }) => typeof part?.text === "string" ? part.text : "").join(""));
       } else if (payload["type"] === "task_complete" && typeof payload["last_agent_message"] === "string"
-        && markedDisplay(payload["last_agent_message"]) === shown && promptKey(asked.get(turn) ?? "") === prompt) return true;
+        && markedDisplay(payload["last_agent_message"]) === shown && prompt !== "" && promptKey(asked.get(turn) ?? "") === prompt) return true;
     } catch { /* a record cut by the tail read */ }
   }
   return false;
