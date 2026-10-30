@@ -772,6 +772,9 @@ describe("Codex rollout resolution", () => {
       expect(matchCodexTranscript(done(recordedAnswer, below), [own])).toBe("own");
     }
     expect(matchCodexTranscript(done(recordedAnswer, footer, "\u203a\n  GPT-6-Luna low \u00b7 ~/proj"), [own])).toBe("own");
+    // and only one of this folder: a conversation herdr reported, or a title named, of another folder owns no footer
+    expect(matchCodexTranscript(recordedScreen, [own], new Set(), new Map(), false, new Set(["another-own"]))).toBeNull();
+    expect(matchCodexTranscript(recordedScreen, [own], new Set(), new Map(), false, new Set(["own"]))).toBe("own");
     // only the one conversation whose last finished turn was asked that and ended on exactly that answer
     expect(matchCodexTranscript(recordedScreen, [own, said("twin", ...turn("t2", asked, recordedAnswer))])).toBeNull();
     expect(matchCodexTranscript(recordedScreen, [said("elsewhere", ...turn("t9", "Something else entirely", recordedAnswer))])).toBeNull();

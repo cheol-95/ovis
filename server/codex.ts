@@ -1111,7 +1111,7 @@ function wordsEnding(text: string, length: number): string[] {
  * (loadedConversation), in place of their answers. `blocks`: the screen is shownAnswers', and an
  * answer counts only inside one of its blocks: Codex shows one answer as one block, so text that
  * runs across blocks is answers side by side, another conversation's. */
-export function matchCodexTranscript(screen: string, candidates: { path: string; text: string }[], scrutinized: ReadonlySet<string> = new Set(), said: ReadonlyMap<string, Said> = new Map(), blocks = false): string | null {
+export function matchCodexTranscript(screen: string, candidates: { path: string; text: string }[], scrutinized: ReadonlySet<string> = new Set(), said: ReadonlyMap<string, Said> = new Map(), blocks = false, footerOwners: ReadonlySet<string> | null = null): string | null {
   const partsOf = (text: string) => {
     const lastHeader = text.lastIndexOf("OpenAI Codex (v");
     return blocks ? text.split(/\n(?=\u2022)/)
@@ -1138,7 +1138,9 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
     const last = lastFinishedTurn(text);
     return last !== null && alnum(last.answer) === alnum(footed.text) && (last.asked === null || alnum(last.asked).endsWith(alnum(footed.prompt)));
   });
-  const owner = maybe?.length === 1 ? maybe[0]! : null;
+  // only a conversation of this folder (footerOwners: the store's rows for it) may own the footer; another
+  // candidate (one herdr reported, or a title named, of another folder) can only keep it from owning one
+  const owner = maybe?.length === 1 && (footerOwners === null || footerOwners.has(maybe[0]!.path)) ? maybe[0]! : null;
   const ownerLast = owner === null ? null : lastFinishedTurn(owner.text);
   const footedOwner = owner !== null && ownerLast?.asked != null && collapsed(ownerLast.asked) === footed!.prompt && collapsed(ownerLast.answer) === footed!.text ? owner.path : null;
   // every answer each candidate gave, as answerAnchor reads one (cut at link targets), read once
@@ -2759,6 +2761,8 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   let listed = false;
   /** the conversation only the title offers (titledCandidate), from another folder */
   let titledElsewhere: string | null = null;
+  /** this folder's conversations, as the store lists them: the only ones a footer on screen may belong to */
+  let folderRollouts = new Set<string>();
   try {
     db = new Database(join(home, "state_5.sqlite"), { readonly: true, create: false });
     if (resumed !== null) {
@@ -2786,6 +2790,7 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
     const rollouts = rows.slice(0, 32).map((row) => codexRolloutPath(row.rollout_path, home));
     // a thread whose rollout is gone or outside the store is still a conversation of this cwd
     listed = rows.length <= 32 && !rollouts.includes(null);
+    folderRollouts = new Set(rollouts.filter((path): path is string => path !== null));
     // since Codex 0.157 the shared app-server daemon, not the TUI, holds the rollout open, and a resume
     // through the picker leaves no id on the command line: the title may name a thread of another folder
     paths = [...new Set([...paths, ...(reported !== null ? [reported] : []), ...rollouts.filter((path): path is string => path !== null)])];
@@ -2804,7 +2809,7 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   const candidates = paths.flatMap((path) => {
     try { return [{ path, text: codexHistoryTail(path, 1024 * 1024, home) }]; } catch { return []; }
   });
-  const matched = screen ? matchCodexTranscript(screen.text, candidates, new Set(titledElsewhere === null ? [] : [titledElsewhere])) : null;
+  const matched = screen ? matchCodexTranscript(screen.text, candidates, new Set(titledElsewhere === null ? [] : [titledElsewhere]), new Map(), false, folderRollouts) : null;
   if (matched !== null) {
     boundRollouts.delete(paneId);
     boundRollouts.set(paneId, { processes, path: matched, at: Date.now(), ...(matched === titledElsewhere ? { titled: true } : {}) });
