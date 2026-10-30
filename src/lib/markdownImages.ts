@@ -4,15 +4,11 @@ import { fileUriPath } from "../../shared/fileUri.ts";
 /** Bigger images are offered as a download: a phone decodes an image whole. */
 export const MAX_INLINE_IMAGE_BYTES = 20 * 1024 * 1024;
 
-export type MarkdownImagePreview = { kind: "inline"; url: string; name: string } | { kind: "too-large"; size: number; downloadUrl: string };
+export type MarkdownImagePreview = { kind: "inline"; url: string; name: string }
+  | { kind: "too-large"; size: number; downloadUrl: string } | { kind: "unavailable" };
 
-/**
- * Where an image of a markdown file lives, as a path the file endpoint reads: a `file://` URI or
- * an absolute path as written, a relative one from the folder of the markdown file. Null for what
- * the page cannot load (an http address: the CSP allows own-origin images only) or cannot place
- * (`~`, a Windows drive).
- */
-export function markdownImagePath(src: string, markdownPath: string): string | null {
+/** Decode an eligible local image target once, leaving relative paths relative. */
+function localImageTarget(src: string): string | null {
   const target = src.trim().replace(/[?#].*$/s, "");
   if (target === "" || target.startsWith("//")) return null;
   let path: string;
@@ -25,6 +21,13 @@ export function markdownImagePath(src: string, markdownPath: string): string | n
     try { path = decodeURIComponent(target); } catch { return null; }
   }
   if (path.startsWith("//") || /^~|^[A-Za-z]:|\\|[\u0000-\u001f\u007f]/.test(path)) return null;
+  return path;
+}
+
+/** Resolve file-preview images from their Markdown document, never from the pane cwd. */
+export function markdownImagePath(src: string, markdownPath: string): string | null {
+  let path = localImageTarget(src);
+  if (path === null) return null;
   if (!path.startsWith("/")) {
     const folder = markdownPath.slice(0, markdownPath.lastIndexOf("/") + 1);
     if (!folder.startsWith("/")) return null;
@@ -39,14 +42,14 @@ export function markdownImagePath(src: string, markdownPath: string): string | n
   return `/${parts.join("/")}`;
 }
 
-/** Stat a local markdown image before giving the browser a URL to decode. */
+/** Stat before loading. A null document path delegates relative targets to the pane's file API. */
 export async function markdownImagePreview(
   src: string,
-  markdownPath: string,
+  markdownPath: string | null,
   fetchInfo: (path: string) => Promise<FileInfo | { candidates: string[] }>,
   fileUrl: (path: string, download: boolean) => string,
 ): Promise<MarkdownImagePreview | null> {
-  const path = markdownImagePath(src, markdownPath);
+  const path = markdownPath === null ? localImageTarget(src) : markdownImagePath(src, markdownPath);
   if (path === null) return null;
   try {
     const info = await fetchInfo(path);
@@ -54,7 +57,11 @@ export async function markdownImagePreview(
     return info.size > MAX_INLINE_IMAGE_BYTES
       ? { kind: "too-large", size: info.size, downloadUrl: fileUrl(info.path, true) }
       : { kind: "inline", url: fileUrl(info.path, false), name: info.name };
-  } catch {
+  } catch (error) {
+    // A missing file may still be being written. Other rejected files remain ordinary links.
+    const status = error !== null && typeof error === "object" && "status" in error ? error.status : null;
+    const retryable = status === null || status === 404 || status === 408 || status === 429 || (typeof status === "number" && status >= 500);
+    if (markdownPath === null && retryable) return { kind: "unavailable" };
     return null;
   }
 }

@@ -21,7 +21,7 @@ describe("markdownImagePath", () => {
     expect(markdownImagePath("a.png", "a.md")).toBeNull();
     expect(markdownImagePath("~/a.png", "/tmp/a.md")).toBeNull();
   });
-  it("places chat images without a cwd only when the reference is absolute", () => {
+  it("places images without a document path only when the reference is absolute", () => {
     expect(markdownImagePath("a.png", "")).toBeNull();
     expect(markdownImagePath("/tmp/a.png", "")).toBe("/tmp/a.png");
     expect(markdownImagePath("file:///tmp/a%20b.png", "")).toBe("/tmp/a b.png");
@@ -77,4 +77,27 @@ it("leaves missing, ambiguous and non-image files as links without requesting th
     expect(await markdownImagePreview("a.png", "/tmp/.ovis-chat.md", fetchInfo, fileUrl)).toBeNull();
   }
   expect(filePaths).toEqual([]);
+});
+
+it("leaves relative Chat targets for the pane API and uses its canonical result for bytes", async () => {
+  const paths: string[] = [];
+  const preview = await markdownImagePreview("./out/a%20b.png", null, async (path) => {
+    paths.push(path);
+    return { path: "/repo/subproject/out/a b.png", name: "a b.png", size: 2, modified: "", mime: "image/png", kind: "image" };
+  }, (path) => path);
+  expect(paths).toEqual(["./out/a b.png"]);
+  expect(preview).toEqual({ kind: "inline", url: "/repo/subproject/out/a b.png", name: "a b.png" });
+});
+
+it("distinguishes failed Chat lookups from permanently unsupported references", async () => {
+  const url = () => "must-not-load";
+  for (const status of [404, 408, 429, 500, 503]) {
+    expect(await markdownImagePreview("./late.png", null, async () => { throw Object.assign(new Error("lookup failed"), { status }); }, url)).toEqual({ kind: "unavailable" });
+  }
+  for (const status of [400, 401, 403]) {
+    expect(await markdownImagePreview("./late.png", null, async () => { throw Object.assign(new Error("rejected"), { status }); }, url)).toBeNull();
+  }
+  let stats = 0;
+  expect(await markdownImagePreview("https://example.com/a.png", null, async () => { stats++; throw new Error(); }, url)).toBeNull();
+  expect(stats).toBe(0);
 });

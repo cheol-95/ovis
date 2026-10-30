@@ -10,20 +10,21 @@ export function ChatMarkdownImages({ paneId, cwd, connected, onOpen, children }:
   paneId: string; cwd: string | null; connected: boolean; onOpen: (image: GalleryImage) => void; children: ReactNode;
 }) {
   const { fetchFileInfo, fileUrl } = useMachineApi();
-  const connection = useRef(connected);
-  const [reconnect, setReconnect] = useState(0);
+  const previous = useRef({ connected, cwd, paneId, fetchFileInfo });
+  const [refresh, setRefresh] = useState(0);
   useEffect(() => {
-    const before = connection.current;
-    connection.current = connected;
-    if (connected && !before) setReconnect((epoch) => epoch + 1);
-  }, [connected]);
+    const before = previous.current;
+    previous.current = { connected, cwd, paneId, fetchFileInfo };
+    const sameOwner = before.paneId === paneId && before.fetchFileInfo === fetchFileInfo;
+    if (sameOwner && ((connected && !before.connected) || cwd !== before.cwd)) setRefresh((epoch) => epoch + 1);
+  }, [connected, cwd, paneId, fetchFileInfo]);
   const resolve = useCallback((src: string) => markdownImagePreview(
-    // A virtual document places relative references in cwd; absolute ones need no cwd.
-    src, cwd?.startsWith("/") ? `${cwd.replace(/\/$/, "")}/.ovis-chat.md` : "",
+    // The server prefers foreground_cwd over pane.cwd and returns the canonical byte path.
+    src, null,
     (path) => fetchFileInfo(path, paneId), (path, download) => fileUrl(path, paneId, download),
-  ), [cwd, paneId, fetchFileInfo, fileUrl]);
+  ), [paneId, fetchFileInfo, fileUrl]);
   return <MarkdownImageContext.Provider value={resolve}>
-    <MarkdownImageRetryContext.Provider value={reconnect}>
+    <MarkdownImageRetryContext.Provider value={refresh}>
       <MarkdownImageOpenContext.Provider value={onOpen}>{children}</MarkdownImageOpenContext.Provider>
     </MarkdownImageRetryContext.Provider>
   </MarkdownImageContext.Provider>;

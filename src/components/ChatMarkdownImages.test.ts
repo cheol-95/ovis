@@ -62,14 +62,14 @@ afterEach(async () => {
 it("stats and opens an answer's image on its owning PC and pane, retaining the real filename", async () => {
   await draw({ machine: "other-pc", pane: "w2:p4", cwd: "/project/", text: "![Diagram](./out/chart%20%23%3F.png)" });
   expect(requests[0]!.url.pathname).toBe("/api/machines/other-pc/fs/stat");
-  expect(requests[0]!.url.searchParams.get("path")).toBe("/project/out/chart #?.png");
+  expect(requests[0]!.url.searchParams.get("path")).toBe("./out/chart #?.png");
   expect(requests[0]!.url.searchParams.get("pane_id")).toBe("w2:p4");
   expect(images()).toHaveLength(0);
-  await answer(0, info("/project/out/chart #?.png"));
+  await answer(0, info("/foreground/out/chart #?.png"));
   const src = new URL(images()[0]!.props.src, "http://test.local");
   expect(src.pathname).toBe("/api/machines/other-pc/fs/file");
   expect(src.searchParams.get("pane_id")).toBe("w2:p4");
-  expect(src.searchParams.get("path")).toBe("/project/out/chart #?.png");
+  expect(src.searchParams.get("path")).toBe("/foreground/out/chart #?.png");
   let focused = false;
   expect(buttons()[0]!.props["aria-label"]).toBe("Diagram");
   await act(async () => { buttons()[0]!.props.onClick({ currentTarget: { focus() { focused = true; } } }); });
@@ -88,20 +88,22 @@ it("discards a late answer from the old PC and hides old bytes while the pane or
   expect(images()[0]!.props.src).toContain("/api/machines/new/");
   await draw({ machine: "new", pane: "w2:p2", cwd: "/next" });
   expect(images()).toHaveLength(0);
-  expect(requests[2]!.url.searchParams.get("path")).toBe("/next/diagram.png");
+  expect(requests[2]!.url.searchParams.get("path")).toBe("./diagram.png");
   expect(requests[2]!.url.searchParams.get("pane_id")).toBe("w2:p2");
   await answer(2, info("/next/diagram.png"));
   expect(new URL(images()[0]!.props.src, "http://test.local").searchParams.get("pane_id")).toBe("w2:p2");
 });
 
-it("never guesses a relative image's folder without cwd, but reads absolute paths and file URIs", async () => {
+it("lets the server resolve relative images even when the browser has no cwd hint", async () => {
   await draw({ cwd: null });
-  expect(requests).toHaveLength(0);
-  expect(images()).toHaveLength(0);
+  expect(requests[0]!.url.searchParams.get("path")).toBe("./diagram.png");
+  expect(requests[0]!.url.searchParams.get("pane_id")).toBe("w1:p1");
+  await answer(0, info("/foreground/diagram.png"));
+  expect(images()).toHaveLength(1);
   await draw({ cwd: null, text: "![Absolute](/tmp/a.png)\n\n![URI](file:///tmp/b%20c.png)" });
-  expect(requests.map(({ url }) => url.searchParams.get("path"))).toEqual(["/tmp/a.png", "/tmp/b c.png"]);
-  await answer(0, info("/tmp/a.png"));
-  await answer(1, info("/tmp/b c.png"));
+  expect(requests.slice(1).map(({ url }) => url.searchParams.get("path"))).toEqual(["/tmp/a.png", "/tmp/b c.png"]);
+  await answer(1, info("/tmp/a.png"));
+  await answer(2, info("/tmp/b c.png"));
   expect(images()).toHaveLength(2);
 });
 
@@ -117,7 +119,7 @@ it("offers an oversized image only as a download on the same PC and pane", async
   expect(url.searchParams.get("download")).toBe("1");
 });
 
-it("keeps rejected stat results as text links and requests no image bytes", async () => {
+it("offers a retry only for a failed lookup, retaining other fallback links", async () => {
   for (const [index, body, status] of [
     [0, { error: { message: "missing" } }, 404],
     [1, { error: { candidates: ["/one/a.png", "/two/a.png"] } }, 409],
@@ -127,7 +129,7 @@ it("keeps rejected stat results as text links and requests no image bytes", asyn
     await draw({ text: `![Diagram](./${index}.png)` });
     await answer(index, body, status);
     expect(images()).toHaveLength(0);
-    expect(buttons()).toHaveLength(0);
+    expect(buttons()).toHaveLength(status === 404 ? 1 : 0);
   }
   expect(requests.every(({ url }) => url.pathname === "/api/fs/stat")).toBe(true);
 });
@@ -215,10 +217,51 @@ it("retries failed image bytes only after a fresh stat, without remounting a dec
   // The previous stat is not enough to start new bytes: the file may now be oversized or gone.
   expect(images()).toHaveLength(1);
   expect(requests).toHaveLength(3);
-  expect(requests[2]!.url.searchParams.get("path")).toBe("/project/retry.png");
+  expect(requests[2]!.url.searchParams.get("path")).toBe("./retry.png");
   await answer(2, info("/project/retry.png"));
   expect(images()).toHaveLength(2);
   expect(images().find((node) => node.props.alt === "Good")).toBe(good);
   await act(async () => { images().find((node) => node.props.alt === "Retry")!.props.onLoad(); });
   expect(renderer!.root.findAll((node) => node.props.className === "image-slot is-failed")).toHaveLength(0);
+});
+
+it("lets the reader recover a 503 without reconnecting or remounting the answer", async () => {
+  await draw({ text: "First answer: ![Diagram](./diagram.png)" });
+  await answer(0, { error: { message: "busy" } }, 503);
+  expect(images()).toHaveLength(0);
+  expect(buttons()[0]!.children).toEqual(["Try again"]);
+  await draw({ text: "Updated answer: ![Diagram](./diagram.png)" });
+  expect(requests).toHaveLength(1);
+  await act(async () => { buttons()[0]!.props.onClick(); });
+  expect(requests).toHaveLength(2);
+  expect(buttons()[0]!.props.disabled).toBe(true);
+  await answer(1, info("/foreground/diagram.png"));
+  expect(images()).toHaveLength(1);
+  expect(images()[0]!.props.src).toContain("%2Fforeground%2Fdiagram.png");
+});
+
+it("keeps a decoded canonical image when a browser cwd hint arrives", async () => {
+  await draw({ cwd: null });
+  await answer(0, info("/foreground/diagram.png"));
+  const image = images()[0]!;
+  await act(async () => { image.props.onLoad(); });
+  await draw({ cwd: "/stale-pane-hint" });
+  expect(requests).toHaveLength(1);
+  expect(images()[0]).toBe(image);
+});
+
+it("keeps manual Retry usable after a pending retry fails across reconnects", async () => {
+  await draw();
+  await answer(0, { error: { message: "busy" } }, 503);
+  await act(async () => { buttons()[0]!.props.onClick(); });
+  expect(buttons()[0]!.props.disabled).toBe(true);
+  await draw({ connected: false });
+  await draw({ connected: true });
+  expect(requests).toHaveLength(2);
+  await answer(1, { error: { message: "still busy" } }, 503);
+  expect(buttons()[0]!.props.disabled).toBe(false);
+  await act(async () => { buttons()[0]!.props.onClick(); });
+  expect(requests).toHaveLength(3);
+  await answer(2, info("/foreground/diagram.png"));
+  expect(images()).toHaveLength(1);
 });

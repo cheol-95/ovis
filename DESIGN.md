@@ -3596,8 +3596,11 @@ headless choice; sign-in waits continue reconnecting automatically.
 Chat follows the Codex app's inline image presentation reported by the user: a local
 `![alt](path)` in an answer displays the image in place. It reuses the file viewer's Markdown
 image component and machine-scoped stat/file endpoints, with the pane ID retained. Absolute
-Unix paths and local file URIs resolve without cwd; relative paths resolve against the pane cwd.
-External URLs stay links. Missing, ambiguous or non-image files stay links after the stat check;
+Unix paths and local file URIs resolve without cwd. Relative paths stay relative for the pane file
+API, which prefers foreground_cwd over pane.cwd; bytes use the canonical path its stat returns.
+External URLs stay links. Failed local lookups (network, missing file, timeout, busy server) keep
+their link and offer Try again without a reconnect. The retry is disabled while in flight. Unsupported
+references, ambiguous paths, non-image files and access denials retain their plain fallback;
 images above 20 MiB offer a download. Images use the existing reserved layout while loading and
 unavailable-image state if decoding fails. Windows-drive paths retain the resolver's existing
 link fallback. Encoded filename characters decode once, including literal `#`, `?` and `%`.

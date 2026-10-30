@@ -154,29 +154,41 @@ function MarkdownImage({ src, alt, width, fallback, resolve, interactive, standa
   const t = useT();
   const openImage = useContext(MarkdownImageOpenContext);
   const retry = useContext(MarkdownImageRetryContext);
+  const [attempt, setAttempt] = useState(0);
+  const [pending, setPending] = useState(false);
   const [loaded, setLoaded] = useState<{ src: string; resolve: MarkdownImageResolver; preview: MarkdownImagePreview | null; retry: number } | null>(null);
   const request = useRef<{ src: string; resolve: MarkdownImageResolver; failed: boolean; pending: boolean } | null>(null);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   useEffect(() => () => { request.current = null; }, [src, resolve]);
   useEffect(() => {
-    // A reconnect never supersedes a pending stat or revalidates an image that has not failed.
+    // Reconnects and manual retries never multiply a pending lookup or reload a healthy image.
     if (request.current?.src === src && request.current.resolve === resolve && (request.current.pending || !request.current.failed)) return;
     const current = { src, resolve, failed: false, pending: true };
     request.current = current;
-    const finish = (preview: MarkdownImagePreview | null) => {
+    setPending(true);
+    const finish = (preview: MarkdownImagePreview | null, failed = preview?.kind === "unavailable") => {
       if (request.current !== current) return;
       current.pending = false;
-      current.failed = preview === null;
+      current.failed = failed;
+      setPending(false);
       setFailedUrl(null);
       setLoaded({ src, resolve, preview, retry });
     };
     resolve(src).then(
-      finish,
-      () => finish(null),
+      (preview) => finish(preview),
+      () => finish(null, true),
     );
-  }, [src, resolve, retry]);
+  }, [src, resolve, retry, attempt]);
   const preview = loaded?.src === src && loaded.resolve === resolve ? loaded.preview : undefined;
   if (preview === null) return <>{fallback}</>;
+  if (preview?.kind === "unavailable") return <span className="markdown-image-unavailable" role="group" aria-label={alt || src}>
+    {fallback}
+    {interactive && <button type="button" className="btn markdown-image-retry" disabled={pending} onClick={() => {
+      if (request.current?.pending || !request.current?.failed) return;
+      setPending(true);
+      setAttempt((value) => value + 1);
+    }}>{t("Try again")}</button>}
+  </span>;
   if (preview?.kind === "too-large") {
     const message = t("This image is {size}; download it to view.", { size: formatBytes(preview.size) });
     return interactive ? <a href={preview.downloadUrl} download>{message}</a> : <span>{message}</span>;
