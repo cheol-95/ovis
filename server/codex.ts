@@ -987,22 +987,34 @@ const CODEX_TURN_FOOTER = new RegExp(`^[ \\t]*Worked for <?\\d+(?:ms|s|m|h)(?: \
 /** Whether a text's last line is shaped like that footer: an answer may end in one of its own. */
 const endsInTurnFooter = (text: string): boolean => CODEX_TURN_FOOTER.test(text.trimEnd().split("\n").at(-1) ?? "");
 
+/** A text with each run of whitespace one space: how the footer path compares a prompt (`a b` is not `ab`). */
+const collapsed = (text: string): string => text.normalize("NFKC").replace(/\s+/g, " ").trim();
 /**
- * The answers a screen shows finished, each with the prompt of its turn (promptKey): an answer block (its
- * "\u2022" line and the indented lines it wraps onto) with Codex's completed-turn footer (CODEX_TURN_FOOTER)
- * directly under it, one blank line between, and only blank lines below the footer up to the next prompt (a
- * "\u203a" line: the composer, or the next message sent); its prompt is the last "\u203a" line above it, with
- * the indented lines it wraps onto. A footer vouches for that answer alone. A line of that shape anywhere else
- * is not one, as it may be an answer's own text: one an answer still being written ends in has Codex's
- * working line below it, and a read that ends before the composer shows no finished turn. A screen without
- * its prompts (shownAnswers) shows none, so its finished answers fall back.
+ * An answer as the footer path compares it: each run of whitespace one space (`a b` is not `ab`), without the
+ * emphasis and code marks Codex renders away (`**1887**` shows as 1887); every other character counts, so
+ * `base + 1` is not `base - 1`, nor `base_value` `basevalue`. An answer Codex renders otherwise (a list, a heading, a link) falls back.
  */
-function footedAnswers(screen: string): { answer: string; prompt: string }[] {
+const spoken = (text: string): string => collapsed(text.normalize("NFKC").replace(/[*\u0060]/g, ""));
+
+/**
+ * The answer a screen shows finished last, with the prompt of its turn: an answer block (its "\u2022" line and
+ * the indented lines it wraps onto) with Codex's completed-turn footer (CODEX_TURN_FOOTER) directly under it,
+ * one blank line between, and only blank lines below the footer down to Codex's composer, waiting: below it
+ * only Codex's own indented status lines (a message sent since is a turn under way; a shell prompt or Codex's
+ * exit line, a Codex gone, whose screen a new one has not drawn over yet). Its prompt is
+ * the last "\u203a" line above it, with the indented lines it wraps onto. `text` is the answer as shown,
+ * `whole` with the footer line too, and both and `prompt` compare with whitespace collapsed (collapsed). A
+ * line of that shape anywhere else is not one, as it may be an answer's own text. A screen without its
+ * prompts (shownAnswers) shows none, so its finished answers fall back.
+ */
+function footedAnswers(screen: string): { text: string; whole: string; prompt: string }[] {
   const lines = screen.split("\n").map((line) => line.replace(/\r$/, ""));
-  const footed: { answer: string; prompt: string }[] = [];
+  const footed: { text: string; whole: string; prompt: string }[] = [];
   for (const [index, line] of lines.entries()) {
-    if (index < 2 || !CODEX_TURN_FOOTER.test(line) || lines[index - 1]!.trim() !== "" || lines[index - 2]!.trim() === ""
-      || !(lines.slice(index + 1).find((after) => after.trim() !== "") ?? "").startsWith("\u203a")) continue;
+    if (index < 2 || !CODEX_TURN_FOOTER.test(line) || lines[index - 1]!.trim() !== "" || lines[index - 2]!.trim() === "") continue;
+    const composer = lines.findIndex((after, at) => at > index && after.trim() !== "");
+    if (composer < 0 || !lines[composer]!.startsWith("\u203a")
+      || !lines.slice(composer + 1).every((after) => after.trim() === "" || /^\s/.test(after))) continue;
     let start = index - 2;
     while (start > 0 && /^(?:\s|$)/.test(lines[start]!)) start--;
     if (!lines[start]!.startsWith("\u2022 ")) continue;
@@ -1011,20 +1023,32 @@ function footedAnswers(screen: string): { answer: string; prompt: string }[] {
     if (prompt < 0) continue;
     let end = prompt + 1;
     while (end < start && /^\s+\S/.test(lines[end]!)) end++;
-    footed.push({ answer: markedDisplay(lines.slice(start, index - 1).join("\n").slice(2)), prompt: promptKey(lines.slice(prompt, end).join("\n")) });
+    const shown = lines.slice(start, index - 1).join("\n").slice(2);
+    footed.push({ text: spoken(shown), whole: spoken(lines.slice(start, index + 1).join("\n").slice(2)),
+      prompt: collapsed(lines.slice(prompt, end).join("\n").slice(1)) });
   }
   return footed;
 }
 
+/** The answers a conversation's rollout records its turns finished on (task_complete), as spoken (spoken). */
+function finishedAnswers(rollout: string): string[] {
+  return rollout.split("\n").flatMap((line) => {
+    if (!line.includes('"task_complete"')) return [];
+    try {
+      const payload = (JSON.parse(line) as { payload?: Record<string, unknown> }).payload ?? {};
+      return payload["type"] === "task_complete" && typeof payload["last_agent_message"] === "string" ? [spoken(payload["last_agent_message"])] : [];
+    } catch { return []; }
+  });
+}
+
 /**
  * Whether a conversation's rollout records a turn, by its id, that was asked this prompt and finished on
- * exactly this answer (task_complete): what ties an answer shown above a footer to that conversation's own
- * turn, rather than another's that said the same. No clock is compared, so neither a day nor a time zone can
+ * exactly this answer (task_complete), the prompt with whitespace collapsed and the answer as spoken: what ties an answer shown
+ * above a footer to that conversation's own turn. No clock is compared, so neither a day nor a time zone can
  * mislead it. A rollout that records no such turn (an older Codex) ties none.
  */
 function finishedTurn(rollout: string, prompt: string, answer: string): boolean {
   const asked = new Map<string, string>();
-  const shown = markedDisplay(answer);
   for (const line of rollout.split("\n")) {
     if (!line.includes('"item_completed"') && !line.includes('"task_complete"')) continue;
     try {
@@ -1035,7 +1059,7 @@ function finishedTurn(rollout: string, prompt: string, answer: string): boolean 
       if (payload["type"] === "item_completed" && item?.type === "UserMessage" && Array.isArray(item.content)) {
         asked.set(turn, (asked.get(turn) ?? "") + item.content.map((part: { text?: unknown }) => typeof part?.text === "string" ? part.text : "").join(""));
       } else if (payload["type"] === "task_complete" && typeof payload["last_agent_message"] === "string"
-        && markedDisplay(payload["last_agent_message"]) === shown && prompt !== "" && promptKey(asked.get(turn) ?? "") === prompt) return true;
+        && spoken(payload["last_agent_message"]) === answer && prompt !== "" && collapsed(asked.get(turn) ?? "") === prompt) return true;
     } catch { /* a record cut by the tail read */ }
   }
   return false;
@@ -1091,7 +1115,7 @@ function wordsEnding(text: string, length: number): string[] {
  * (loadedConversation), in place of their answers. `blocks`: the screen is shownAnswers', and an
  * answer counts only inside one of its blocks: Codex shows one answer as one block, so text that
  * runs across blocks is answers side by side, another conversation's. */
-export function matchCodexTranscript(screen: string, candidates: { path: string; text: string }[], scrutinized: ReadonlySet<string> = new Set(), said: ReadonlyMap<string, Said> = new Map(), blocks = false): string | null {
+export function matchCodexTranscript(screen: string, candidates: { path: string; text: string }[], scrutinized: ReadonlySet<string> = new Set(), said: ReadonlyMap<string, Said> = new Map(), blocks = false, elsewhere: readonly { text: string }[] = []): string | null {
   const partsOf = (text: string) => {
     const lastHeader = text.lastIndexOf("OpenAI Codex (v");
     return blocks ? text.split(/\n(?=\u2022)/)
@@ -1104,7 +1128,11 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
   const wholeBlocks = answerParts.flatMap(shownBlocks);
   // the answers the Codex the screen shows last finished, each with Codex's footer directly under it and the
   // prompt of its turn (footedAnswers), for a candidate whose own turn was asked that and finished on it
-  const footed = blocks ? [] : footedAnswers(screen.slice(Math.max(0, screen.lastIndexOf("OpenAI Codex (v"))));
+  // A footer-shaped line a conversation finished its answer on (a candidate, or one of the store's other
+  // recent conversations, `elsewhere`: the pane's own may be one of another folder) is that answer's text
+  const shownFooted = blocks ? [] : footedAnswers(screen.slice(Math.max(0, screen.lastIndexOf("OpenAI Codex (v"))));
+  const finishedOn = shownFooted.length === 0 ? new Set<string>() : new Set([...candidates, ...elsewhere].flatMap(({ text }) => finishedAnswers(text)));
+  const footed = shownFooted.filter(({ whole }) => !finishedOn.has(whole));
   const answersOf = (turns: ConversationTurn[]) => turns.filter((turn) => turn.role === "assistant")
     .flatMap((turn) => turn.parts).filter((part) => part.kind === "text").map((part) => part.text);
   const parsed = candidates.map((candidate) => parseCodexTranscript(candidate.text, Infinity));
@@ -1120,7 +1148,7 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
       const found = answerAnchor(text);
       return found !== null && displays.some((display) => display.includes(found.anchor))
         && (wholeBlocks.some((block) => found.whole.test(block))
-          || (!endsInTurnFooter(text) && footed.some(({ answer, prompt }) => found.whole.test(answer) && finishedTurn(candidate.text, prompt, text)))) ? [found] : [];
+          || (!endsInTurnFooter(text) && footed.some(({ text: shown, prompt }) => spoken(text) === shown && finishedTurn(candidate.text, prompt, shown)))) ? [found] : [];
     });
     if (anchors.length === 0) continue;
     if (!scrutinized.has(candidate.path) || anchors.some((anchor) => !givenElsewhere(index, anchor))) matching.add(candidate.path);
@@ -2726,6 +2754,8 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   let listed = false;
   /** the conversation only the title offers (titledCandidate), from another folder */
   let titledElsewhere: string | null = null;
+  /** the store's recent conversations of other folders, for what the screen's footer may be (matchCodexTranscript) */
+  let otherFolders: string[] = [];
   try {
     db = new Database(join(home, "state_5.sqlite"), { readonly: true, create: false });
     if (resumed !== null) {
@@ -2758,6 +2788,9 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
     paths = [...new Set([...paths, ...(reported !== null ? [reported] : []), ...rollouts.filter((path): path is string => path !== null)])];
     const titled = titledCandidate(agent, codexProcesses, db, home);
     if (titled !== null && !paths.includes(titled)) { titledElsewhere = titled; paths.push(titled); }
+    // of other folders only, so this folder's own many cannot crowd the pane's own of another out of the 32
+    otherFolders = db.query<{ rollout_path: string }, string[]>(`SELECT rollout_path FROM threads WHERE NOT (${where}) AND archived = 0 AND agent_role IS NULL ORDER BY updated_at DESC LIMIT 32`).all(...params)
+      .map((row) => codexRolloutPath(row.rollout_path, home)).filter((path): path is string => path !== null && !paths.includes(path));
   } catch { /* Older installations can still resolve their open descriptors. */ }
   finally { db?.close(); }
   if (reported !== null && !paths.includes(reported)) paths.push(reported);
@@ -2771,7 +2804,11 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   const candidates = paths.flatMap((path) => {
     try { return [{ path, text: codexHistoryTail(path, 1024 * 1024, home) }]; } catch { return []; }
   });
-  const matched = screen ? matchCodexTranscript(screen.text, candidates, new Set(titledElsewhere === null ? [] : [titledElsewhere])) : null;
+  // their last turns only, and only when the screen shows Codex's footer
+  const elsewhere = screen && /Worked for/.test(screen.text) ? otherFolders.flatMap((path) => {
+    try { return [{ text: codexHistoryTail(path, 64 * 1024, home) }]; } catch { return []; }
+  }) : [];
+  const matched = screen ? matchCodexTranscript(screen.text, candidates, new Set(titledElsewhere === null ? [] : [titledElsewhere]), new Map(), false, elsewhere) : null;
   if (matched !== null) {
     boundRollouts.delete(paneId);
     boundRollouts.set(paneId, { processes, path: matched, at: Date.now(), ...(matched === titledElsewhere ? { titled: true } : {}) });
