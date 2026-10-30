@@ -23,7 +23,7 @@ export function parseTerminalProcesses(text: string): TerminalProcess[] {
   });
 }
 
-/** Only the wrapper's one direct login shell and its one foreground Codex, never arbitrary descendants. */
+/** Only the wrapper's one direct shell and its one foreground Codex, never arbitrary descendants. */
 export function nestedCodex(info: ProcessInfo | undefined, rows: readonly TerminalProcess[]): { shell: TerminalProcess; codex: TerminalProcess } | null {
   const pid = wrapperPid(info);
   if (pid === null) return null;

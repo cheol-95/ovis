@@ -108,6 +108,11 @@ it("reads an unlabelled pane only when the Kiro foreground check proves its nest
   const snapshot = { panes: [{ pane_id: root, cwd: root, agent_status: "unknown" }] } as SessionSnapshot;
   try {
     expect(await paneTranscript(root, home, snapshot)).toMatchObject({ source: "codex-transcript", path });
+    // Without a substantial answer, do not fall through to weaker short-exchange heuristics.
+    foreground = [{ pid: 2147483645, argv: ["zsh (kiro-cli-term)"] }];
+    nested.mockResolvedValue({ pid: 2147483644, argv: ["codex"] });
+    screen = "OpenAI Codex (v0.165.0)\n› hello\n• Hello!\n› ";
+    await expect(paneTranscript(root, home, snapshot)).rejects.toMatchObject({ message: "no_session_path" });
     nested.mockResolvedValue(null);
     await expect(paneTranscript(root, home, snapshot)).rejects.toMatchObject({ message: "no_recognized_transcript" });
   } finally { nested.mockRestore(); }

@@ -2071,14 +2071,14 @@ async function codexProcessesOf(paneId: string): Promise<{ list: { pid: number; 
 }
 
 /** A missing label is expected for Kiro's outer PTY, but only its proven live Codex can use this fallback. */
-async function codexAgentInfo(paneId: string): Promise<Pick<AgentInfo, "agent_session" | "terminal_title" | "terminal_title_stripped" | "cwd" | "foreground_cwd">> {
+async function codexAgentInfo(paneId: string): Promise<Pick<AgentInfo, "agent_session" | "terminal_title" | "terminal_title_stripped" | "cwd" | "foreground_cwd"> & { nestedTerminal?: true }> {
   try { return await agentGet(paneId); }
   catch (error) {
     if (!(error instanceof HerdrError) || error.code !== "agent_not_found"
       || await kiroCodexProcess(await paneProcessInfo(paneId)) === null) throw error;
     const pane = await paneGet(paneId);
     // Never revive an earlier occupant's session report through a shell wrapper.
-    return { ...pane, agent_session: undefined };
+    return { ...pane, agent_session: undefined, nestedTerminal: true };
   }
 }
 
@@ -2577,6 +2577,9 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   }
   if (reported !== null) return reported;
   if (resumed !== null) return resumedNewer.length === 0 ? resumedPath : null;
+  // Other nested terminals may have no agent labels either, so the weaker exchange/peer
+  // heuristics cannot establish ownership. Only a substantial screen match (or its binding) can.
+  if (agent.nestedTerminal) return null;
   // Nothing ties this pane to a rollout at all: no session herdr names, no resume, no match by a
   // long answer for this process, and so no /new to be unsure about. Short answers on screen may
   // tell (#283). Never remembered as a binding: what it shows is read again each time, and only a
