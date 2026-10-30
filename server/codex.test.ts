@@ -759,13 +759,32 @@ describe("Codex rollout resolution", () => {
 
   it("matches rendered local file links containing spaces without selecting an ambiguous conversation", () => {
     for (const target of ["/home/user/My Project/Daily notes/report.md", "C:/Users/User/My Project/report.md",
-      "</home/user/My Project/Daily notes/report.md>", "<C:/Users/User/My Project/report.md>"]) {
+      "C:\\Users\\User\\My Project\\report.md", "</home/user/My Project/Daily notes/report.md>",
+      "<C:/Users/User/My Project/report.md>", "<C:\\Users\\User\\My Project\\report.md>"]) {
       const linked = `${answer} [Daily report](${target})`;
       const candidates = [{ path: "own", text: jsonl(message("assistant", linked, "final_answer")) }];
       const screen = `• ${answer} Daily report (Daily notes/report.md)`;
       expect(matchCodexTranscript(screen, candidates)).toBe("own");
       expect(matchCodexTranscript(screen, [...candidates, { ...candidates[0]!, path: "copy" }])).toBeNull();
       expect(matchCodexTranscript("• Daily report (Daily notes/report.md)", candidates)).toBeNull();
+    }
+  });
+
+  it("keeps local link destinations containing a line break as literal answer text", () => {
+    for (const newline of ["\n", "\r", "\r\n"]) {
+      const literal = `${answer} [Daily report](/home/user/My Project${newline}Daily notes/report.md)`;
+      const candidates = [{ path: "own", text: jsonl(message("assistant", literal, "final_answer")) }];
+      expect(matchCodexTranscript(`• ${answer} Daily report`, candidates)).toBeNull();
+      expect(matchCodexTranscript(`• ${literal}`, candidates)).toBe("own");
+    }
+  });
+
+  it("keeps unclosed local file links as literal answer text", () => {
+    for (const target of ["/home/user/My Project/Daily notes/report.md", "</home/user/My Project/Daily notes/report.md>"]) {
+      const literal = `${answer} [Daily report](${target}`;
+      const candidates = [{ path: "own", text: jsonl(message("assistant", literal, "final_answer")) }];
+      expect(matchCodexTranscript(`• ${answer} Daily report`, candidates)).toBeNull();
+      expect(matchCodexTranscript(`• ${literal}`, candidates)).toBe("own");
     }
   });
 
