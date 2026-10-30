@@ -18,6 +18,7 @@ import { copyText } from "../lib/clipboard.ts";
 import { lazyChunk } from "../lib/lazyChunk.ts";
 import type { SkillMatcher } from "../lib/skillMentions.ts";
 import { previewChunks } from "../lib/textPreview.ts";
+import type { GalleryImage } from "../lib/imageViewer.ts";
 
 /** The pane's skill names: a name in an answer's plain text, in its trigger form, reads as a chip. */
 const SkillMatcherContext = createContext<SkillMatcher | null>(null);
@@ -110,6 +111,10 @@ function MermaidDiagram({ value }: { value: string }) {
 /** Stats an image before it can load; null context keeps image references as links. */
 type MarkdownImageResolver = (src: string) => Promise<MarkdownImagePreview | null>;
 export const MarkdownImageContext = createContext<MarkdownImageResolver | null>(null);
+/** Chat holds its viewer above virtualized rows; file previews keep their own image behavior. */
+export const MarkdownImageOpenContext = createContext<((image: GalleryImage) => void) | null>(null);
+/** A reconnect revalidates the same owner's image without hiding its decoded bytes. */
+export const MarkdownImageRetryContext = createContext(0);
 
 /**
  * An image that holds its box until it decodes (lib/imageBox.ts). With `slot`, the wrapper is the
@@ -147,6 +152,8 @@ export function ReservedImage({ src, alt, width, className, slot, slotStyle, fal
 
 function MarkdownImage({ src, alt, width, fallback, resolve, interactive, standalone }: { src: string; alt: string; width?: number; fallback: ReactNode; resolve: MarkdownImageResolver; interactive: boolean; standalone: boolean }) {
   const t = useT();
+  const openImage = useContext(MarkdownImageOpenContext);
+  const retry = useContext(MarkdownImageRetryContext);
   const [loaded, setLoaded] = useState<{ src: string; resolve: MarkdownImageResolver; preview: MarkdownImagePreview | null } | null>(null);
   useEffect(() => {
     let live = true;
@@ -155,7 +162,7 @@ function MarkdownImage({ src, alt, width, fallback, resolve, interactive, standa
       () => { if (live) setLoaded({ src, resolve, preview: null }); },
     );
     return () => { live = false; };
-  }, [src, resolve]);
+  }, [src, resolve, retry]);
   const preview = loaded?.src === src && loaded.resolve === resolve ? loaded.preview : undefined;
   if (preview === null) return <>{fallback}</>;
   if (preview?.kind === "too-large") {
@@ -164,7 +171,12 @@ function MarkdownImage({ src, alt, width, fallback, resolve, interactive, standa
   }
   // still being stat'ed: a standalone image's slot stands from the first paint, a badge shows its alt
   if (preview === undefined && !standalone) return <span>{alt}</span>;
-  return <ReservedImage src={preview?.url ?? null} alt={alt} width={width} className="markdown-image" slot={standalone} slotStyle={standalone ? imageSlotStyle(width) : undefined} fallback={fallback} />;
+  const image = <ReservedImage src={preview?.url ?? null} alt={alt} width={width} className="markdown-image" slot={standalone} slotStyle={standalone ? imageSlotStyle(width) : undefined} fallback={fallback} />;
+  if (preview === undefined || !interactive || openImage === null) return image;
+  return <button type="button" className={`markdown-image-open${standalone ? " is-standalone" : ""}`} aria-label={alt || preview.name} title={t("Open image")} onClick={(event) => {
+    event.currentTarget.focus({ preventScroll: true });
+    openImage({ src: preview.url, name: alt || preview.name, file: preview.name });
+  }}>{image}</button>;
 }
 
 /**

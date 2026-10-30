@@ -41,6 +41,7 @@ const chatImages = [
   "![Chat relative](./preview.svg)",
   `![Chat absolute](${join(root, "preview.svg")})`,
   `![Chat URI](${new URL(`file://${join(root, "preview.svg")}`).href})`,
+  "![Chat encoded](./chart%20%23%3F%20%25%20%ED%95%9C%EA%B8%80.svg)",
   "![Chat missing](./missing.png)",
   "![Chat text](./notes.txt)",
   "![Chat external](https://example.com/unrequested.png)",
@@ -145,6 +146,7 @@ const markdownPath = join(root, "preview #1 & 한글.MD");
 const markdownSource = "<p align=\"center\">\n  <img src=\"./preview.svg\" alt=\"Logo\" width=\"64\">\n</p>\n\n<p align=\"center\"><a href=\"https://example.com/\">website</a> &middot; <strong>bold</strong></p>\n\n# Markdown preview\n\n한글 문서도 새 탭에서 읽을 수 있습니다.\n\n| Item | State |\n| --- | --- |\n| Preview | Ready |\n\n- [x] Rendered\n\nSee [the other notes](other.md).\n\n```ts\nconst answer = 42;\n```\n\n![Local image](./preview.svg)\n\n```mermaid\ngraph LR\n  A[Read] --> B[Preview]\n```\n";
 writeFileSync(markdownPath, markdownSource);
 writeFileSync(join(root, "other.md"), "# Other notes\n\nLinked from the preview.\n");
+writeFileSync(join(root, "chart #? % 한글.svg"), '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="80"><rect width="240" height="80" fill="teal"/></svg>');
 writeFileSync(join(root, "preview.svg"), '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="80"><rect width="240" height="80" fill="teal"/></svg>');
 let workspace: string | undefined;
 // a second workspace, for the pane moves of the docked block alone
@@ -197,14 +199,20 @@ try {
   await page.locator(".markdown-code").first().locator(".hl-keyword", { hasText: "const" }).waitFor();
   await page.locator(".markdown-code .hl-number", { hasText: "42" }).waitFor();
   console.log("PASS Chat fenced code block is syntax highlighted");
-  for (const alt of ["Chat relative", "Chat absolute", "Chat URI"]) {
+  // A reader's wheel stops follow before lazy images above the newest turn are brought into view.
+  await page.mouse.move(195, 300);
+  await page.mouse.wheel(0, -10_000);
+  for (const alt of ["Chat relative", "Chat absolute", "Chat URI", "Chat encoded"]) {
     const image = page.locator(`.chat-transcript img.markdown-image[alt="${alt}"]`);
     await image.scrollIntoViewIfNeeded();
-    await image.evaluate((node: HTMLImageElement) => node.decode());
+    await page.waitForFunction((alt) => {
+      const image = document.querySelector<HTMLImageElement>(`.chat-transcript img.markdown-image[alt="${alt}"]`);
+      return image?.complete && image.naturalWidth > 0;
+    }, alt, { timeout: 10_000 });
     assert.equal(await image.evaluate((node: HTMLImageElement) => node.naturalWidth), 240);
     const url = new URL((await image.getAttribute("src"))!, origin);
     assert.equal(url.pathname, "/api/fs/file");
-    assert.equal(url.searchParams.get("path"), join(root, "preview.svg"));
+    assert.equal(url.searchParams.get("path"), join(root, alt === "Chat encoded" ? "chart #? % 한글.svg" : "preview.svg"));
     assert.equal(url.searchParams.get("pane_id"), pane);
   }
   for (const name of ["Chat missing", "Chat text", "Chat external"]) {
@@ -1601,6 +1609,38 @@ try {
     delete pageFileHooks.opened;
     delete pageFileHooks.closed;
   }
+  // Own document: a closed image sheet leaves forward entries, while the file-history checks
+  // above deliberately begin with no forward entry.
+  const imagePage = await context.newPage();
+  imagePage.setDefaultTimeout(10_000);
+  const imageErrors: string[] = [];
+  imagePage.on("pageerror", (error) => imageErrors.push(error.message));
+  await imagePage.goto(`${origin}/?pane=${encodeURIComponent(pane)}&view=chat`);
+  const markdownThumb = imagePage.getByRole("button", { name: "Chat relative", exact: true });
+  await markdownThumb.click();
+  const markdownGallery = imagePage.getByRole("dialog", { name: "Image viewer" });
+  await markdownGallery.waitFor();
+  await imagePage.waitForFunction(() => {
+    const image = document.querySelector<HTMLImageElement>(".image-lightbox img");
+    return image?.complete && image.naturalWidth === 240;
+  }, undefined, { timeout: 10_000 });
+  assert.equal(await markdownGallery.getByRole("link", { name: "Download", exact: true }).getAttribute("download"), "preview.svg");
+  await imagePage.goBack();
+  await markdownGallery.waitFor({ state: "detached" });
+  assert.equal(await markdownThumb.evaluate((node) => node === document.activeElement), true);
+  await imagePage.keyboard.press("Enter");
+  await markdownGallery.waitFor();
+  await imagePage.keyboard.press("Escape");
+  await markdownGallery.waitFor({ state: "detached" });
+  assert.equal(await markdownThumb.evaluate((node) => node === document.activeElement), true);
+  await imagePage.keyboard.press("Space");
+  await markdownGallery.waitFor();
+  await markdownGallery.getByRole("button", { name: "Close", exact: true }).click();
+  await markdownGallery.waitFor({ state: "detached" });
+  assert.equal(await markdownThumb.evaluate((node) => node === document.activeElement), true);
+  assert.deepEqual(imageErrors, []);
+  await imagePage.close();
+  console.log("PASS Chat Markdown image opens by touch, Enter and Space with its filename; Back, Close and Escape restore the thumbnail");
 } finally {
   await browser?.close();
   server?.stop();

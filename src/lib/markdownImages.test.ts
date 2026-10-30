@@ -28,6 +28,15 @@ describe("markdownImagePath", () => {
     expect(markdownImagePath("./a.png", "/.ovis-chat.md")).toBe("/a.png");
     expect(markdownImagePath("../a.png", "/tmp/project/.ovis-chat.md")).toBe("/tmp/a.png");
   });
+  it("decodes reserved filename characters once, after removing URL suffixes", () => {
+    expect(markdownImagePath("./chart%20%23%3F%20%25%20%ED%95%9C%EA%B8%80.png?raw=1#view", "/tmp/.ovis-chat.md")).toBe("/tmp/chart #? % 한글.png");
+    expect(markdownImagePath("./literal%2523.png", "/tmp/.ovis-chat.md")).toBe("/tmp/literal%23.png");
+  });
+  it("does not stat malformed, nonlocal or control-character references", () => {
+    for (const src of ["file://other/tmp/a.png", "file:///tmp/a%00.png", "./a%00b.png", "./bad%.png", "javascript:bad", "ftp://other/a.png", "blob:local", "//other/a.png", "%2F%2Fother/a.png", "./a%5Cb.png", "C:/a.png", "file:///C:/a.png"]) {
+      expect(markdownImagePath(src, "/tmp/.ovis-chat.md")).toBeNull();
+    }
+  });
 });
 
 it("stats markdown images before loading them and offers oversized ones as downloads", async () => {
@@ -43,7 +52,7 @@ it("stats markdown images before loading them and offers oversized ones as downl
     return download ? "download-url" : "inline-url";
   };
 
-  expect(await markdownImagePreview("img/a.png", "/tmp/doc/README.md", fetchInfo, fileUrl)).toEqual({ kind: "inline", url: "inline-url" });
+  expect(await markdownImagePreview("img/a.png", "/tmp/doc/README.md", fetchInfo, fileUrl)).toEqual({ kind: "inline", url: "inline-url", name: "a.png" });
   size++;
   expect(await markdownImagePreview("img/a.png", "/tmp/doc/README.md", fetchInfo, fileUrl)).toEqual({
     kind: "too-large", size, downloadUrl: "download-url",

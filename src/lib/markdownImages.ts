@@ -4,7 +4,7 @@ import { fileUriPath } from "../../shared/fileUri.ts";
 /** Bigger images are offered as a download: a phone decodes an image whole. */
 export const MAX_INLINE_IMAGE_BYTES = 20 * 1024 * 1024;
 
-export type MarkdownImagePreview = { kind: "inline"; url: string } | { kind: "too-large"; size: number; downloadUrl: string };
+export type MarkdownImagePreview = { kind: "inline"; url: string; name: string } | { kind: "too-large"; size: number; downloadUrl: string };
 
 /**
  * Where an image of a markdown file lives, as a path the file endpoint reads: a `file://` URI or
@@ -14,11 +14,17 @@ export type MarkdownImagePreview = { kind: "inline"; url: string } | { kind: "to
  */
 export function markdownImagePath(src: string, markdownPath: string): string | null {
   const target = src.trim().replace(/[?#].*$/s, "");
-  if (target === "" || /^(?:https?:|data:|blob:|\/\/)/i.test(src.trim())) return null;
-  let path = fileUriPath(target);
-  // a file URI comes decoded; any other path is decoded here, once
-  if (path === null) { try { path = decodeURI(target); } catch { return null; } }
-  if (/^~|^[A-Za-z]:|\\/.test(path)) return null;
+  if (target === "" || target.startsWith("//")) return null;
+  let path: string;
+  if (/^[a-z][a-z\d+.-]*:/i.test(target)) {
+    const local = fileUriPath(target);
+    if (local === null) return null;
+    path = local;
+  } else {
+    // The destination is URL-encoded, including literal # and ? in a filename. Decode once.
+    try { path = decodeURIComponent(target); } catch { return null; }
+  }
+  if (path.startsWith("//") || /^~|^[A-Za-z]:|\\|[\u0000-\u001f\u007f]/.test(path)) return null;
   if (!path.startsWith("/")) {
     const folder = markdownPath.slice(0, markdownPath.lastIndexOf("/") + 1);
     if (!folder.startsWith("/")) return null;
@@ -47,7 +53,7 @@ export async function markdownImagePreview(
     if ("candidates" in info || info.kind !== "image") return null;
     return info.size > MAX_INLINE_IMAGE_BYTES
       ? { kind: "too-large", size: info.size, downloadUrl: fileUrl(info.path, true) }
-      : { kind: "inline", url: fileUrl(info.path, false) };
+      : { kind: "inline", url: fileUrl(info.path, false), name: info.name };
   } catch {
     return null;
   }

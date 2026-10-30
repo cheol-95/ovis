@@ -3600,4 +3600,11 @@ Unix paths and local file URIs resolve without cwd; relative paths resolve again
 External URLs stay links. Missing, ambiguous or non-image files stay links after the stat check;
 images above 20 MiB offer a download. Images use the existing reserved layout while loading and
 unavailable-image state if decoding fails. Windows-drive paths retain the resolver's existing
-link fallback. No new setting, endpoint or permission grant is introduced.
+link fallback. Encoded filename characters decode once, including literal `#`, `?` and `%`.
+Only local file references are stat'ed; other URI schemes and control characters stay fallback.
+A standalone or inline image opens ChatView's existing image viewer on click or keyboard activation,
+with its alt text as caption and its actual filename for download. The opener regains focus on close.
+An image inside an authored link or a read-only label keeps that container's action, with no nested
+button. File previews do not get Chat's opener. A reconnect retries image stat resolutions that
+may have failed while offline; losing the socket alone keeps already decoded images in place. No new setting, endpoint or permission grant is
+introduced.
