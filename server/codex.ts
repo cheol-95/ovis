@@ -2073,7 +2073,11 @@ async function codexProcessesOf(paneId: string): Promise<{ list: { pid: number; 
 
 /** A missing label is expected for Kiro's outer PTY, but only its proven live Codex can use this fallback. */
 async function codexAgentInfo(paneId: string): Promise<Pick<AgentInfo, "agent_session" | "terminal_title" | "terminal_title_stripped" | "cwd" | "foreground_cwd"> & { nestedTerminal?: true }> {
-  try { return await agentGet(paneId); }
+  try {
+    const agent = await agentGet(paneId);
+    const nested = await kiroCodexProcess(await paneProcessInfo(paneId));
+    return nested === null ? agent : { ...agent, nestedTerminal: true };
+  }
   catch (error) {
     if (!(error instanceof HerdrError) || error.code !== "agent_not_found"
       || await kiroCodexProcess(await paneProcessInfo(paneId)) === null) throw error;

@@ -118,6 +118,44 @@ it("reads an unlabelled pane only when the Kiro foreground check proves its nest
   } finally { nested.mockRestore(); }
 });
 
+for (const agentFound of [true, false]) {
+  it(`rejects another nested pane's short answers when agent.get ${agentFound ? "succeeds without a session" : "reports agent_not_found"}`, async () => {
+    // Given two unlabelled nested panes with identical short answers but different prompts.
+    unlabelled = !agentFound;
+    agentFolders = { cwd: root };
+    foreground = [{ pid: 2147483647, argv: ["zsh (kiro-cli-term)"] }];
+    const otherThread = "01a0c7a1-56d9-7e20-9f08-f7a2d973bc02";
+    const otherCwd = join(root, "elsewhere");
+    const otherPath = join(home, "sessions", `rollout-${otherThread}.jsonl`);
+    const replies = ["The first fixture is ready for careful inspection.", "The second fixture check is now fully complete."];
+    for (const [id, file, cwd, owner] of [[thread, path, root, "Peer A"], [otherThread, otherPath, otherCwd, "Selected B"]] as const) {
+      writeFileSync(file, [
+        { type: "session_meta", payload: { id, cwd } },
+        ...replies.flatMap((message, index) => [
+          { type: "event_msg", payload: { type: "user_message", message: `${owner} request ${index}` } },
+          { type: "event_msg", payload: { type: "agent_message", message } },
+        ]),
+      ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    }
+    const db = new Database(join(home, "state_5.sqlite"));
+    db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, 1, 1, 'cli')").run(otherThread, otherPath, otherCwd);
+    db.close();
+    screen = "OpenAI Codex (v0.165.0)\n"
+      + replies.map((reply, index) => `› Selected B request ${index}\n\n• ${reply}\n\n`).join("") + "› ";
+    const snapshot = { panes: [root, "peer-A"].map((pane_id) => ({
+      pane_id, workspace_id: root, tab_id: root, terminal_id: pane_id,
+      cwd: root, agent_status: "unknown", focused: false, revision: 0,
+    })), workspaces: [], tabs: [], agents: [], layouts: [], protocol: 1, version: "test" } satisfies SessionSnapshot;
+    const nested = spyOn(kiro, "kiroCodexProcess").mockResolvedValue({
+      pid: 2147483646, argv: ["codex"], identity: "10:1,20:1,2147483646:1",
+    });
+    try {
+      // When resolving selected B, then neither the cwd nor shared answers prove ownership of A.
+      await expect(paneTranscript(root, home, snapshot)).rejects.toMatchObject({ message: "no_session_path" });
+    } finally { nested.mockRestore(); }
+  });
+}
+
 it("does not reuse a nested conversation binding after a process birth changes with the same PIDs", async () => {
   unlabelled = true;
   foreground = [{ pid: 2147483647, argv: ["zsh (kiro-cli-term)"] }];
