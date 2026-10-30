@@ -112,9 +112,17 @@ const resolve = () => codexTranscriptPath(root, root, home, [{
   agent: "codex", agent_status: "working", cwd: root, focused: false, revision: 0,
 }]);
 
+/** kiroWrapper as on macOS, where Kiro's wrapper is proven: the real check, with the platform pinned. */
+function asOnMac() {
+  const real = kiro.kiroWrapper;
+  return spyOn(kiro, "kiroWrapper").mockImplementation((info) => real(info, "darwin"));
+}
+
 it("reads an unlabelled pane only when the Kiro foreground check proves its nested Codex", async () => {
   unlabelled = true;
   foreground = [{ pid: 2147483647, argv: ["zsh (kiro-cli-term)"] }];
+  shellPid = 2147483647;
+  const mac = asOnMac();
   screen = answer;
   const nested = spyOn(kiro, "kiroCodexProcess").mockResolvedValue({ pid: 2147483646, argv: ["codex"], identity: "10:1,20:1,2147483646:1" });
   const snapshot = { panes: [{ pane_id: root, cwd: root, agent_status: "unknown" }] } as SessionSnapshot;
@@ -122,12 +130,13 @@ it("reads an unlabelled pane only when the Kiro foreground check proves its nest
     expect(await paneTranscript(root, home, snapshot)).toMatchObject({ source: "codex-transcript", path });
     // Without a substantial answer, do not fall through to weaker short-exchange heuristics.
     foreground = [{ pid: 2147483645, argv: ["zsh (kiro-cli-term)"] }];
+    shellPid = 2147483645;
     nested.mockResolvedValue({ pid: 2147483644, argv: ["codex"], identity: "10:1,20:1,2147483644:1" });
     screen = "OpenAI Codex (v0.165.0)\n› hello\n• Hello!\n› ";
     await expect(paneTranscript(root, home, snapshot)).rejects.toMatchObject({ message: "no_session_path" });
     nested.mockResolvedValue(null);
     await expect(paneTranscript(root, home, snapshot)).rejects.toMatchObject({ message: "no_recognized_transcript" });
-  } finally { nested.mockRestore(); }
+  } finally { nested.mockRestore(); mac.mockRestore(); }
 });
 
 for (const agentFound of [true, false]) {
@@ -136,6 +145,8 @@ for (const agentFound of [true, false]) {
     unlabelled = !agentFound;
     agentFolders = { cwd: root };
     foreground = [{ pid: 2147483647, argv: ["zsh (kiro-cli-term)"] }];
+    shellPid = 2147483647;
+    const mac = asOnMac();
     const otherThread = "01a0c7a1-56d9-7e20-9f08-f7a2d973bc02";
     const otherCwd = join(root, "elsewhere");
     const otherPath = join(home, "sessions", `rollout-${otherThread}.jsonl`);
@@ -164,7 +175,7 @@ for (const agentFound of [true, false]) {
     try {
       // When resolving selected B, then neither the cwd nor shared answers prove ownership of A.
       await expect(paneTranscript(root, home, snapshot)).rejects.toMatchObject({ message: "no_session_path" });
-    } finally { nested.mockRestore(); }
+    } finally { nested.mockRestore(); mac.mockRestore(); }
   });
 }
 
@@ -189,13 +200,14 @@ it("keeps a nested pane's guard when one Kiro probe in the middle cannot prove C
   }], workspaces: [], tabs: [], agents: [], layouts: [], protocol: 1, version: "test" } satisfies SessionSnapshot;
   const live = { pid: 2147483646, argv: ["codex"], identity: "10:1,20:1,2147483646:1" };
   let probes = 0;
-  // When the middle probe (agent.get's: a bounded process-table read can fail) proves nothing, the
-  // routing one before it and the process lookup after it do
+  // When the second probe proves nothing (on the PR's own code, agent.get's; it now rests on herdr's
+  // wrapper fact, so the second probe is the process lookup), with probes before and after it that do
   const nested = spyOn(kiro, "kiroCodexProcess").mockImplementation(async () => ++probes === 2 ? null : live);
+  const mac = asOnMac();
   try {
     // Then the pane keeps its nested provenance: no weak match, the terminal stands in
     await expect(paneTranscript(root, home, snapshot)).rejects.toMatchObject({ message: "no_session_path" });
-  } finally { nested.mockRestore(); }
+  } finally { nested.mockRestore(); mac.mockRestore(); }
 });
 
 it("takes no thread herdr reports for a nested pane on the report alone, however fresh it looks", async () => {
@@ -215,6 +227,7 @@ it("takes no thread herdr reports for a nested pane on the report alone, however
   const nested = spyOn(kiro, "kiroCodexProcess").mockResolvedValue({ pid: 2147483646, argv: ["codex"], identity: "10:1,20:1,2147483646:1" });
   const lower = spyOn(processStart, "processStartLowerBound").mockReturnValue(1_000_000);
   const upper = spyOn(processStart, "processStartUpperBound").mockReturnValue(1_000_000);
+  const mac = asOnMac();
   try {
     for (const kind of ["path", "id"] as const) {
       reportedSession = { source: "herdr:codex", agent: "codex", kind, value: kind === "path" ? path : thread };
@@ -222,7 +235,7 @@ it("takes no thread herdr reports for a nested pane on the report alone, however
       await expect(paneTranscript(root, home, snapshot)).rejects.toMatchObject({ message: "no_session_path" });
       expect(await codexOpenRollout(root, root, home)).toBeNull();
     }
-  } finally { nested.mockRestore(); lower.mockRestore(); upper.mockRestore(); }
+  } finally { nested.mockRestore(); lower.mockRestore(); upper.mockRestore(); mac.mockRestore(); }
 });
 
 it("takes no long answer a nested pane only quotes in a prompt or a queued message", async () => {
@@ -234,6 +247,7 @@ it("takes no long answer a nested pane only quotes in a prompt or a queued messa
     cwd: root, agent_status: "unknown", focused: false, revision: 0,
   }], workspaces: [], tabs: [], agents: [], layouts: [], protocol: 1, version: "test" } satisfies SessionSnapshot;
   const nested = spyOn(kiro, "kiroCodexProcess").mockResolvedValue({ pid: 2147483646, argv: ["codex"], identity: "10:1,20:1,2147483646:1" });
+  const mac = asOnMac();
   try {
     for (const quoted of [
       `OpenAI Codex (v0.165.0)\n\n› Explain this quoted answer: ${answer}\n\n• Working (2s • esc to interrupt)\n\n› `,
@@ -245,12 +259,84 @@ it("takes no long answer a nested pane only quotes in a prompt or a queued messa
     // its own answer shown as one still tells
     screen = `OpenAI Codex (v0.165.0)\n\n› Explain the selection\n\n• ${answer}\n\n› `;
     expect(await paneTranscript(root, home, snapshot)).toMatchObject({ source: "codex-transcript", path });
-  } finally { nested.mockRestore(); }
+  } finally { nested.mockRestore(); mac.mockRestore(); }
+});
+
+it("keeps a nested pane's guard when herdr's process facts are missing for agent.get's read", async () => {
+  // Given an unlabelled Kiro pane routed to Codex, whose agent.get succeeds without a label, showing its
+  // cwd thread's own prompts and short answers
+  agentFolders = { cwd: root };
+  foreground = [{ pid: 2147483647, argv: ["zsh (kiro-cli-term)"] }];
+  shellPid = 2147483647;
+  const replies = ["The first fixture is ready for careful inspection.", "The second fixture check is now fully complete."];
+  writeFileSync(path, [
+    { type: "session_meta", payload: { id: thread, cwd: root } },
+    ...replies.flatMap((message, index) => [
+      { type: "event_msg", payload: { type: "user_message", message: `Fixture request ${index}` } },
+      { type: "event_msg", payload: { type: "agent_message", message } },
+    ]),
+  ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+  screen = "OpenAI Codex (v0.165.0)\n" + replies.map((reply, index) => `› Fixture request ${index}\n\n• ${reply}\n\n`).join("") + "› ";
+  const snapshot = { panes: [{
+    pane_id: root, workspace_id: root, tab_id: root, terminal_id: root,
+    cwd: root, agent_status: "unknown", focused: false, revision: 0,
+  }], workspaces: [], tabs: [], agents: [], layouts: [], protocol: 1, version: "test" } satisfies SessionSnapshot;
+  // When herdr's process_info is missing for agent.get's read (the third: routing reads it twice first),
+  // and every probe proves Codex
+  processReads = [foreground, foreground, null];
+  const nested = spyOn(kiro, "kiroCodexProcess").mockResolvedValue({ pid: 2147483646, argv: ["codex"], identity: "10:1,20:1,2147483646:1" });
+  const mac = asOnMac();
+  try {
+    // Then the pane stays nested: an inferred Codex without its process facts gets no weak reading
+    await expect(paneTranscript(root, home, snapshot)).rejects.toMatchObject({ message: "no_session_path" });
+  } finally { nested.mockRestore(); mac.mockRestore(); }
+});
+
+it.skipIf(process.platform !== "linux")("reads no conversation from the default store chosen while the pane's Codex was not proven", async () => {
+  // Given a nested Codex that writes to a store of its own, and the server's default store (this
+  // fixture's) holding a conversation the pane's screen shows
+  const own = join(root, "own-store");
+  mkdirSync(own, { recursive: true });
+  const child = Bun.spawn(["/bin/bash", "-c", 'exec -a codex sleep 600'], { env: { ...process.env, CODEX_HOME: own }, stdout: "ignore", stderr: "ignore" });
+  children.push(child);
+  const defaultBefore = process.env["CODEX_HOME"];
+  process.env["CODEX_HOME"] = home;
+  agentFolders = { cwd: root };
+  foreground = [{ pid: 2147483647, argv: ["zsh (kiro-cli-term)"] }];
+  shellPid = 2147483647;
+  screen = answer;
+  const snapshot = { panes: [{
+    pane_id: root, workspace_id: root, tab_id: root, terminal_id: root,
+    cwd: root, agent_status: "unknown", focused: false, revision: 0,
+  }], workspaces: [], tabs: [], agents: [], layouts: [], protocol: 1, version: "test" } satisfies SessionSnapshot;
+  let probes = 0;
+  // When only the probe that chooses the store (the second, paneCodexHome's) fails to prove the Codex
+  const nested = spyOn(kiro, "kiroCodexProcess").mockImplementation(async () => ++probes === 2 ? null : { pid: child.pid, argv: ["codex"], identity: `10:1,20:1,${child.pid}:1` });
+  const mac = asOnMac();
+  try {
+    // Then the conversation found in the default store is not taken for the pane's
+    await expect(paneTranscript(root, undefined, snapshot)).rejects.toMatchObject({ message: "no_session_path" });
+  } finally {
+    nested.mockRestore(); mac.mockRestore();
+    if (defaultBefore === undefined) delete process.env["CODEX_HOME"]; else process.env["CODEX_HOME"] = defaultBefore;
+  }
+});
+
+it("takes no long answer the screen shows only as a tool's output", async () => {
+  foreground = [{ pid: 2147483647, argv: ["/usr/bin/codex"] }];
+  // Given a pane still working, whose `cat` printed another conversation's long answer
+  screen = `OpenAI Codex (v0.165.0)\n\n› Show the notes\n\n• Ran cat notes.txt\n  └ ${answer}\n    (2 more lines)\n\n• Working (3s • esc to interrupt)\n\n› `;
+  expect(await resolve()).toBeNull();
+  // its own answer shown as one still tells
+  screen = `OpenAI Codex (v0.165.0)\n\n› Show the notes\n\n• ${answer}\n\n› `;
+  expect(await resolve()).toBe(path);
 });
 
 it("does not reuse a nested conversation binding after a process birth changes with the same PIDs", async () => {
   unlabelled = true;
   foreground = [{ pid: 2147483647, argv: ["zsh (kiro-cli-term)"] }];
+  shellPid = 2147483647;
+  const mac = asOnMac();
   const original = { pid: 2147483646, argv: ["codex"], identity: "10:1,20:1,2147483646:1" };
   const nested = spyOn(kiro, "kiroCodexProcess").mockResolvedValue(original);
   try {
@@ -268,15 +354,18 @@ it("does not reuse a nested conversation binding after a process birth changes w
       screen = answer;
       expect(await resolve()).toBe(path);
     }
-  } finally { nested.mockRestore(); }
+  } finally { nested.mockRestore(); mac.mockRestore(); }
 });
 
 it("chooses no native chat when the final Kiro process probe cannot prove Codex", async () => {
   unlabelled = true;
   foreground = [{ pid: 2147483647, argv: ["zsh (kiro-cli-term)"] }];
+  shellPid = 2147483647;
+  const mac = asOnMac();
   screen = answer;
+  // routing proves the Codex; the final process lookup does not (agent_not_found is decided by herdr's
+  // wrapper fact now, without a probe of its own, so the lookup is the second probe)
   const nested = spyOn(kiro, "kiroCodexProcess")
-    .mockResolvedValueOnce({ pid: 2147483646, argv: ["codex"], identity: "10:1,20:1,2147483646:1" })
     .mockResolvedValueOnce({ pid: 2147483646, argv: ["codex"], identity: "10:1,20:1,2147483646:1" })
     .mockResolvedValue(null);
   const snapshot = { panes: [{
@@ -285,7 +374,7 @@ it("chooses no native chat when the final Kiro process probe cannot prove Codex"
   }], workspaces: [], tabs: [], agents: [], layouts: [], protocol: 1, version: "test" } satisfies SessionSnapshot;
   try {
     await expect(paneTranscript(root, home, snapshot)).rejects.toMatchObject({ message: "no_session_path" });
-  } finally { nested.mockRestore(); }
+  } finally { nested.mockRestore(); mac.mockRestore(); }
 });
 
 /** A fixture's first line, whole: a busy pipe can hand "READY" and its newline over in two reads. */

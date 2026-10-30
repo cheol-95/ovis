@@ -469,14 +469,23 @@ export function codexHomeInPsLine(text: string): string | null {
  * an explicit `configured` store wins, then the pane's Codex process's own, then the default.
  */
 export async function paneCodexHome(paneId: string, configured?: string): Promise<string> {
-  if (configured) return configured;
+  return (await paneCodexHomePlaced(paneId, configured)).home;
+}
+
+/**
+ * paneCodexHome, and whether it was `placed`: configured, or told by a Codex process of the pane. One not
+ * placed is the default store only because no Codex process was seen (a probe failed or raced): a reader
+ * that finds a conversation there asks again, as a Codex proven since may keep its store elsewhere.
+ */
+export async function paneCodexHomePlaced(paneId: string, configured?: string): Promise<{ home: string; placed: boolean }> {
+  if (configured) return { home: configured, placed: true };
   try {
     // the first Codex listed decides, with or without a home of its own: a child or wrapper it
     // started with another CODEX_HOME writes to a store that is not this pane's conversation
     const [first] = (await codexProcessesOf(paneId)).list;
-    if (first !== undefined) return (await processCodexHome(first.pid, first.argv)) ?? defaultCodexHome();
+    if (first !== undefined) return { home: (await processCodexHome(first.pid, first.argv)) ?? defaultCodexHome(), placed: true };
   } catch { /* herdr busy: the default store */ }
-  return defaultCodexHome();
+  return { home: defaultCodexHome(), placed: false };
 }
 
 /**
@@ -923,17 +932,21 @@ const promptKey = (text: string): string => text.normalize("NFKC").replace(/^\s*
 /**
  * A Codex screen cut at what was typed: each prompt (a line Codex starts with "›", a prompt sent or
  * the input box, or an indented "↳", a message queued to be sent; with the indented and blank lines
- * it wraps onto) and the stretches between them. A prompt is no evidence of the conversation shown:
- * it may quote any conversation's answer.
+ * it wraps onto), each tool's output (an indented "└" and the lines below it) and the stretches
+ * between them. Neither a prompt nor a tool's output is evidence of the conversation shown: either may
+ * quote any conversation's answer.
  */
-function codexScreenParts(screen: string): { prompt: boolean; text: string }[] {
-  const parts: { prompt: boolean; text: string }[] = [];
+function codexScreenParts(screen: string): { prompt: boolean; tool?: true; text: string }[] {
+  const parts: { prompt: boolean; tool?: true; text: string }[] = [];
   for (const line of screen.split("\n")) {
     const last = parts.at(-1);
-    const begins = /^(?:\u203a|\s*\u21b3(?:\s|$))/.test(line);
-    const prompt = begins || (last?.prompt === true && /^(?:\s|$)/.test(line));
-    if (last !== undefined && last.prompt === prompt && !begins) last.text += `\n${line}`;
-    else parts.push({ prompt, text: line });
+    const prompt = /^(?:\u203a|\s*\u21b3(?:\s|$))/.test(line);
+    // a tool's output: an indented "\u2514" and the lines indented below it, which may hold any text
+    const tool = !prompt && /^\s+\u2514(?:\s|$)/.test(line);
+    if (prompt || tool) parts.push({ prompt, ...(tool ? { tool } : {}), text: line });
+    else if (last !== undefined && (last.prompt || last.tool) && /^(?:\s|$)/.test(line)) last.text += `\n${line}`;
+    else if (last !== undefined && !last.prompt && !last.tool) last.text += `\n${line}`;
+    else parts.push({ prompt: false, text: line });
   }
   return parts;
 }
@@ -981,7 +994,7 @@ function wordsEnding(text: string, length: number): string[] {
 export function matchCodexTranscript(screen: string, candidates: { path: string; text: string }[], scrutinized: ReadonlySet<string> = new Set(), said: ReadonlyMap<string, Said> = new Map(), blocks = false): string | null {
   const lastHeader = screen.lastIndexOf("OpenAI Codex (v");
   const displays = blocks ? screen.split(/\n(?=\u2022)/).map(normalizeDisplay)
-    : [normalizeDisplay(codexScreenParts(lastHeader >= 0 ? screen.slice(lastHeader) : screen).filter((part) => !part.prompt).map((part) => part.text).join("\n"))];
+    : [normalizeDisplay(codexScreenParts(lastHeader >= 0 ? screen.slice(lastHeader) : screen).filter((part) => !part.prompt && !part.tool).map((part) => part.text).join("\n"))];
   const answersOf = (turns: ConversationTurn[]) => turns.filter((turn) => turn.role === "assistant")
     .flatMap((turn) => turn.parts).filter((part) => part.kind === "text").map((part) => part.text);
   const parsed = candidates.map((candidate) => parseCodexTranscript(candidate.text, Infinity));
@@ -1198,7 +1211,7 @@ export function matchShortCodexAnswers(screen: string, candidates: { path: strin
   for (const part of codexScreenParts(lastHeader >= 0 ? screen.slice(lastHeader) : screen)) {
     // only one typed and sent is what an answer below it answered; a queued one is not sent yet
     if (part.prompt && part.text.startsWith("\u203a")) prompts.push({ at: display.length, text: promptKey(part.text) });
-    display += part.prompt ? "\0" : normalizeDisplay(part.text);
+    display += part.prompt || part.tool ? "\0" : normalizeDisplay(part.text);
   }
   // every turn of what was read, not the newest 100: an answer said long ago is said; with the prompt it answered
   const exchanges = candidates.map((candidate) => {
@@ -2132,13 +2145,17 @@ async function codexProcessesOf(paneId: string): Promise<{ list: { pid: number; 
 async function codexAgentInfo(paneId: string): Promise<Pick<AgentInfo, "agent_session" | "terminal_title" | "terminal_title_stripped" | "cwd" | "foreground_cwd"> & { nestedTerminal?: true }> {
   try {
     const agent = await agentGet(paneId);
+    const info = await paneProcessInfo(paneId).catch(() => undefined);
     // herdr's own report that the outer PTY is Kiro's wrapper keeps the guard, whether or not one more
-    // process-table probe proves its Codex: a failed or racing probe must not make this a plain pane
-    return kiroWrapper(await paneProcessInfo(paneId)) ? { ...agent, nestedTerminal: true } : agent;
+    // process-table probe proves its Codex: a failed or racing probe must not make this a plain pane.
+    // A pane herdr does not label Codex is one whose Codex was inferred: without its process facts, the
+    // guard stays too
+    return kiroWrapper(info) || (info === undefined && agent.agent !== "codex") ? { ...agent, nestedTerminal: true } : agent;
   }
   catch (error) {
+    // herdr's wrapper fact, as above: the process lookup that follows proves the Codex or finds none
     if (!(error instanceof HerdrError) || error.code !== "agent_not_found"
-      || await kiroCodexProcess(await paneProcessInfo(paneId)) === null) throw error;
+      || !kiroWrapper(await paneProcessInfo(paneId).catch(() => undefined))) throw error;
     const pane = await paneGet(paneId);
     // Never revive an earlier occupant's session report through a shell wrapper.
     return { ...pane, agent_session: undefined, nestedTerminal: true };

@@ -16,11 +16,12 @@ function wrapperPid(info: ProcessInfo | undefined): number | null {
 }
 
 /**
- * Whether herdr reports Kiro's shell-integration wrapper as the pane's one foreground process: a fact of
- * herdr's own, so the pane stays a nested terminal while a process-table probe fails or races.
+ * Whether herdr reports Kiro's shell-integration wrapper as the pane's one foreground process, on macOS:
+ * a fact of herdr's own, so the pane stays a nested terminal while a process-table probe fails or races.
  */
-export function kiroWrapper(info: ProcessInfo | undefined): boolean {
-  return wrapperPid(info) !== null;
+export function kiroWrapper(info: ProcessInfo | undefined, platform = process.platform): boolean {
+  // the nested Codex behind it is proven on macOS alone: elsewhere the pane stays a plain one
+  return platform === "darwin" && wrapperPid(info) !== null;
 }
 
 export function parseTerminalProcesses(text: string): TerminalProcess[] {
