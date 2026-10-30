@@ -127,8 +127,9 @@ export const MarkdownImageRetryContext = createContext(0);
  * shows `fallback`. `src` is null while an address is still being resolved: the slot stands from
  * the first paint.
  */
-export function ReservedImage({ src: address, alt, width, className, slot, slotStyle, fallback, onError, retry = 0 }: {
+export function ReservedImage({ src: address, alt, width, className, slot, slotStyle, fallback, onError, retry = 0, renderImage }: {
   src: string | null; alt: string; width?: number; className?: string; slot: boolean; slotStyle?: CSSProperties; fallback?: ReactNode; onError?: () => void; retry?: number;
+  renderImage?: (image: ReactNode) => ReactNode;
 }) {
   const t = useT();
   const resource = useResourceUrlState(address, retry);
@@ -146,14 +147,15 @@ export function ReservedImage({ src: address, alt, width, className, slot, slotS
   if (phase === "failed" && !slot) return <>{fallback}</>;
   const image = src === null ? null : <img ref={complete} className={className} src={src} alt={alt} width={width} loading="lazy"
     onLoad={() => setSettled({ src, failed: false })} onError={() => { setSettled({ src, failed: true, attempt: retry }); onError?.(); }} />;
-  if (!slot) return image;
-  if (phase === "failed") {
-    return <span className="image-slot is-failed" style={slotStyle}>
+  // Only the image or its reserved slot can be wrapped in a viewer control, never the fallback.
+  const content = !slot ? image : phase === "failed"
+    ? <span className="image-slot is-failed" style={slotStyle}>
       <span className="image-slot-note"><ImageOff aria-hidden="true" /><span>{t("Image unavailable")}</span>{alt !== "" && <span>{alt}</span>}</span>
-    </span>;
-  }
-  if (phase === "loading") return <span className="image-slot is-loading" style={slotStyle} role="status" aria-label={t("Loading image")}>{image}</span>;
-  return <span className="image-slot">{image}</span>;
+    </span>
+    : phase === "loading"
+      ? <span className="image-slot is-loading" style={slotStyle} role="status" aria-label={t("Loading image")}>{image}</span>
+      : <span className="image-slot">{image}</span>;
+  return content !== null && renderImage ? renderImage(content) : content;
 }
 
 function MarkdownImage({ src, alt, width, fallback, resolve, interactive, standalone }: { src: string; alt: string; width?: number; fallback: ReactNode; resolve: MarkdownImageResolver; interactive: boolean; standalone: boolean }) {
@@ -203,15 +205,15 @@ function MarkdownImage({ src, alt, width, fallback, resolve, interactive, standa
   if (preview === undefined && !standalone) return <span>{alt}</span>;
   if (!standalone && preview?.url === failedUrl) return <>{fallback}</>;
   // A failed byte load retries only after the new stat has passed the same size/type checks.
-  const image = <ReservedImage src={preview?.url ?? null} alt={alt} width={width} className="markdown-image" slot={standalone} slotStyle={standalone ? imageSlotStyle(width) : undefined} fallback={fallback} retry={loaded?.retry ?? 0} onError={() => {
+  return <ReservedImage src={preview?.url ?? null} alt={alt} width={width} className="markdown-image" slot={standalone} slotStyle={standalone ? imageSlotStyle(width) : undefined} fallback={fallback} retry={loaded?.retry ?? 0} renderImage={preview === undefined || !interactive || openImage === null ? undefined : (image) =>
+    <button type="button" className={`markdown-image-open${standalone ? " is-standalone" : ""}`} aria-label={alt || preview.name} title={t("Open image")} onClick={(event) => {
+      event.currentTarget.focus({ preventScroll: true });
+      openImage({ src: preview.url, name: alt || preview.name, file: preview.name });
+    }}>{image}</button>
+  } onError={() => {
     if (request.current?.src === src && request.current.resolve === resolve && !request.current.pending) request.current.failed = true;
     setFailedUrl(preview?.url ?? null);
   }} />;
-  if (preview === undefined || !interactive || openImage === null) return image;
-  return <button type="button" className={`markdown-image-open${standalone ? " is-standalone" : ""}`} aria-label={alt || preview.name} title={t("Open image")} onClick={(event) => {
-    event.currentTarget.focus({ preventScroll: true });
-    openImage({ src: preview.url, name: alt || preview.name, file: preview.name });
-  }}>{image}</button>;
 }
 
 /**

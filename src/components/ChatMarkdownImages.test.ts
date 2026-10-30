@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it } from "bun:test";
-import { act, createElement } from "react";
+import { act, createElement, Profiler } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 
 import type { FileInfo } from "../../shared/protocol.ts";
@@ -83,19 +83,26 @@ it("uses the shared transport for pane stats and resolves inline bytes once", as
 it("keeps transport byte failures out of inline viewer controls and retries them after reconnect", async () => {
   // Given inline and standalone failures beside a healthy image, all using transport bytes.
   const files: string[] = [];
+  const nestedControls: number[] = [];
+  const recordCommit = () => {
+    if (!renderer) return;
+    nestedControls.push(buttons().flatMap((button) => button.findAll((node) =>
+      node !== button && (node.type === "button" || node.type === "a" || node.type === "input"),
+    )).length);
+  };
   const bytes: Array<{ path: string; resolve: (url: string) => void; reject: (error: Error) => void }> = [];
   setTransport({ ...nativeTransport, kind: "relay", resourceUrl: (path) => new Promise<string>((resolve, reject) => {
     bytes.push({ path, resolve, reject });
   }) });
   const render = async (connected: boolean) => {
     await act(async () => {
-      const tree = createElement(SettingsProvider, { children:
+      const tree = createElement(Profiler, { id: "image-failures", onRender: recordCommit, children: createElement(SettingsProvider, { children:
         createElement(OpenFileContext.Provider, { value: (path: string) => { files.push(path); }, children:
           createElement(ChatMarkdownImages, { paneId: "w1:p1", cwd: "/project", connected, onOpen,
             children: createElement(Markdown, { children: "Before ![Inline](./inline.png) after\n\n![Slot](./slot.png)\n\n![Good](./good.png)" }),
           }),
         }),
-      });
+      }) });
       if (renderer) renderer.update(tree); else renderer = create(tree);
     });
   };
@@ -114,6 +121,8 @@ it("keeps transport byte failures out of inline viewer controls and retries them
   });
 
   // Then the inline fallback is one file action, not nested in an image action.
+  expect(nestedControls.length).toBeGreaterThan(0);
+  expect(nestedControls.every((count) => count === 0)).toBe(true);
   expect(buttons().filter((node) => node.props.className === "markdown-image-open")).toHaveLength(0);
   const file = buttons().find((node) => node.props.className === "markdown-file")!;
   expect(file.findAll((node) => node !== file && node.type === "button")).toHaveLength(0);
@@ -150,6 +159,7 @@ it("keeps transport byte failures out of inline viewer controls and retries them
   await act(async () => { bytes[5]!.resolve("blob:slot"); });
   expect(images()).toHaveLength(3);
   expect(images().find((node) => node.props.alt === "Good")).toBe(good);
+  expect(nestedControls.every((count) => count === 0)).toBe(true);
 });
 
 it("stats and opens an answer's image on its owning PC and pane, retaining the real filename", async () => {
