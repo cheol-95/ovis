@@ -113,7 +113,7 @@ type MarkdownImageResolver = (src: string) => Promise<MarkdownImagePreview | nul
 export const MarkdownImageContext = createContext<MarkdownImageResolver | null>(null);
 /** Chat holds its viewer above virtualized rows; file previews keep their own image behavior. */
 export const MarkdownImageOpenContext = createContext<((image: GalleryImage) => void) | null>(null);
-/** A reconnect retries only failed stats; resolved images and pending stats stay as they are. */
+/** A reconnect retries only failed images; decoded images and pending stats stay as they are. */
 export const MarkdownImageRetryContext = createContext(0);
 
 /**
@@ -126,20 +126,20 @@ export const MarkdownImageRetryContext = createContext(0);
  * shows `fallback`. `src` is null while an address is still being resolved: the slot stands from
  * the first paint.
  */
-export function ReservedImage({ src, alt, width, className, slot, slotStyle, fallback, onError }: {
-  src: string | null; alt: string; width?: number; className?: string; slot: boolean; slotStyle?: CSSProperties; fallback?: ReactNode; onError?: () => void;
+export function ReservedImage({ src, alt, width, className, slot, slotStyle, fallback, onError, retry = 0 }: {
+  src: string | null; alt: string; width?: number; className?: string; slot: boolean; slotStyle?: CSSProperties; fallback?: ReactNode; onError?: () => void; retry?: number;
 }) {
   const t = useT();
   // keyed by address: another one starts from the slot again and never takes the old one's answer
-  const [settled, setSettled] = useState<{ src: string; failed: boolean } | null>(null);
-  const phase = src !== null && settled?.src === src ? (settled.failed ? "failed" : "decoded") : "loading";
+  const [settled, setSettled] = useState<{ src: string; failed: boolean; attempt?: number } | null>(null);
+  const phase = src !== null && settled?.src === src && (!settled.failed || settled.attempt === retry) ? (settled.failed ? "failed" : "decoded") : "loading";
   // a cached image is complete before `onLoad` can fire
   const complete = useCallback((image: HTMLImageElement | null) => {
     if (image !== null && src !== null && image.complete && image.naturalWidth > 0) setSettled({ src, failed: false });
   }, [src]);
   if (phase === "failed" && !slot) return <>{fallback}</>;
   const image = src === null ? null : <img ref={complete} className={className} src={src} alt={alt} width={width} loading="lazy"
-    onLoad={() => setSettled({ src, failed: false })} onError={() => { setSettled({ src, failed: true }); onError?.(); }} />;
+    onLoad={() => setSettled({ src, failed: false })} onError={() => { setSettled({ src, failed: true, attempt: retry }); onError?.(); }} />;
   if (!slot) return image;
   if (phase === "failed") {
     return <span className="image-slot is-failed" style={slotStyle}>
@@ -154,19 +154,21 @@ function MarkdownImage({ src, alt, width, fallback, resolve, interactive, standa
   const t = useT();
   const openImage = useContext(MarkdownImageOpenContext);
   const retry = useContext(MarkdownImageRetryContext);
-  const [loaded, setLoaded] = useState<{ src: string; resolve: MarkdownImageResolver; preview: MarkdownImagePreview | null } | null>(null);
-  const request = useRef<{ src: string; resolve: MarkdownImageResolver; failed: boolean } | null>(null);
+  const [loaded, setLoaded] = useState<{ src: string; resolve: MarkdownImageResolver; preview: MarkdownImagePreview | null; retry: number } | null>(null);
+  const request = useRef<{ src: string; resolve: MarkdownImageResolver; failed: boolean; pending: boolean } | null>(null);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   useEffect(() => () => { request.current = null; }, [src, resolve]);
   useEffect(() => {
-    // A reconnect never supersedes a pending stat or revalidates a successful one.
-    if (request.current?.src === src && request.current.resolve === resolve && !request.current.failed) return;
-    const current = { src, resolve, failed: false };
+    // A reconnect never supersedes a pending stat or revalidates an image that has not failed.
+    if (request.current?.src === src && request.current.resolve === resolve && (request.current.pending || !request.current.failed)) return;
+    const current = { src, resolve, failed: false, pending: true };
     request.current = current;
     const finish = (preview: MarkdownImagePreview | null) => {
       if (request.current !== current) return;
+      current.pending = false;
       current.failed = preview === null;
-      setLoaded({ src, resolve, preview });
+      setFailedUrl(null);
+      setLoaded({ src, resolve, preview, retry });
     };
     resolve(src).then(
       finish,
@@ -182,7 +184,11 @@ function MarkdownImage({ src, alt, width, fallback, resolve, interactive, standa
   // still being stat'ed: a standalone image's slot stands from the first paint, a badge shows its alt
   if (preview === undefined && !standalone) return <span>{alt}</span>;
   if (!standalone && preview?.url === failedUrl) return <>{fallback}</>;
-  const image = <ReservedImage src={preview?.url ?? null} alt={alt} width={width} className="markdown-image" slot={standalone} slotStyle={standalone ? imageSlotStyle(width) : undefined} fallback={fallback} onError={() => setFailedUrl(preview?.url ?? null)} />;
+  // A failed byte load retries only after the new stat has passed the same size/type checks.
+  const image = <ReservedImage src={preview?.url ?? null} alt={alt} width={width} className="markdown-image" slot={standalone} slotStyle={standalone ? imageSlotStyle(width) : undefined} fallback={fallback} retry={loaded?.retry ?? 0} onError={() => {
+    if (request.current?.src === src && request.current.resolve === resolve && !request.current.pending) request.current.failed = true;
+    setFailedUrl(preview?.url ?? null);
+  }} />;
   if (preview === undefined || !interactive || openImage === null) return image;
   return <button type="button" className={`markdown-image-open${standalone ? " is-standalone" : ""}`} aria-label={alt || preview.name} title={t("Open image")} onClick={(event) => {
     event.currentTarget.focus({ preventScroll: true });
