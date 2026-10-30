@@ -7,6 +7,7 @@ import "./NewSessionDialog.css";
 import type { AgentKind, SlashCommand } from "../../shared/protocol.ts";
 import { MAX_LABEL_CHARS } from "../../shared/labels.ts";
 import { ApiError } from "../lib/api.ts";
+import { AddAgentPanel } from "./AddAgentPanel.tsx";
 import { AgentPicker, rememberAgent, rememberedAgent } from "./AgentPicker.tsx";
 import { DirectoryBrowser, homeRelative } from "./DirectoryBrowser.tsx";
 import { RecentFolderChips } from "./RecentFolderChips.tsx";
@@ -14,6 +15,7 @@ import { Toggle } from "./SettingsControls.tsx";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { useAgentSkills } from "../lib/useAgentSkills.ts";
 import { useT } from "../lib/i18n.ts";
+import { latestRead } from "../lib/latestRead.ts";
 import { useSettings } from "../lib/settings.ts";
 import { launchCapabilities, modelSuggestions } from "../lib/agentLaunchMode.ts";
 import { MAX_COMPOSER_CHARS } from "../lib/compose.ts";
@@ -54,6 +56,10 @@ export interface NewSessionDialogProps {
   onDraft?: (fields: DialogFields) => void;
   /** the PC's open linked worktree checkouts: no project to offer among the recent folders */
   worktrees?: readonly string[];
+  /** shows a pane of this dialog's PC in its terminal: an agent's install or sign-in tab, from Add another agent */
+  onOpenPane?: (paneId: string) => void;
+  /** this device only watches: a setup types into the PC's terminal, so Add another agent is not offered */
+  watching?: boolean;
 }
 
 export interface DialogFields {
@@ -85,7 +91,7 @@ export function insertToken(text: string, at: number, token: string): { text: st
   return { text: `${head}${after}`.slice(0, MAX_COMPOSER_CHARS), caret: Math.min(head.length, MAX_COMPOSER_CHARS) };
 }
 
-export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCreated, machineName, prefill = null, onDraft, worktrees = [] }: NewSessionDialogProps) {
+export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCreated, machineName, prefill = null, onDraft, worktrees = [], onOpenPane, watching = false }: NewSessionDialogProps) {
   const t = useT();
   const { settings } = useSettings();
   const machineId = useMachineId();
@@ -110,6 +116,14 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
   /** the first message was not queued and waits in the made pane's chat box: Open shows the chat */
   const [createdKept, setCreatedKept] = useState(false);
   const [browsing, setBrowsing] = useState(false);
+  // Add another agent shows in place of the fields, which keep what was typed
+  const [adding, setAdding] = useState(false);
+  // the PC's agents read again after a setup: nothing is started until the picker shows the result
+  const [refreshing, setRefreshing] = useState(false);
+  // counts openings and closings, so an answer for an earlier opening changes nothing
+  const openings = useRef(0);
+  // the agent list as read last: the read as the dialog opened may answer after the one an install asked for
+  const agentReads = useRef(latestRead());
   const [recentFolders, setRecentFolders] = useState(() => recentDirectories.read(machineId));
   // folders kept before worktrees and temporary folders were left out are left out here too
   const shownFolders = recentFolders.filter((path) => !passingFolder(path, worktrees)).slice(0, RECENT_FOLDERS_SHOWN);
@@ -152,14 +166,17 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
     setCreatedStarted(false);
     setCreatedKept(false);
     setBrowsing(false);
+    setAdding(false);
+    setRefreshing(false);
     setRecentFolders(recentDirectories.read(machineId));
     const remembered = rememberedAgent();
     const stored = filled?.agent ?? remembered;
     setAgentKind(stored);
     let cancelled = false;
+    const latest = agentReads.current();
     void fetchAgentKinds()
       .then((next) => {
-        if (cancelled) return;
+        if (cancelled || !latest()) return;
         setAgents(next);
         // a linked agent herdr does not offer gives way to the last one picked, as an unknown remembered one does to a shell
         if (stored && !next.some((agent) => agent.kind === stored)) {
@@ -173,7 +190,7 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
         }
       })
       .catch((reason: unknown) => {
-        if (!cancelled) setError(userErrorMessage(reason));
+        if (!cancelled && latest()) setError(userErrorMessage(reason));
       });
     return () => {
       cancelled = true;
@@ -199,12 +216,22 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [open, onClose, pending]);
 
+  useLayoutEffect(() => { openings.current += 1; }, [open]);
+
+  // back from Add another agent, the focus returns to the picker it was opened from
+  const wasAdding = useRef(false);
+  // (after a setup, once the refreshed picker is enabled again)
+  useEffect(() => {
+    if (adding) { wasAdding.current = true; return; }
+    if (wasAdding.current && !refreshing) { wasAdding.current = false; firstFieldRef.current?.focus(); }
+  }, [adding, refreshing]);
+
   if (!open) return null;
 
   const selectedAgent = agents.find((agent) => agent.kind === agentKind);
   const agentLabel = selectedAgent?.label ?? agentKind;
   const pendingLabel = selectedAgent ? t("Starting {agent}… up to 60s", { agent: selectedAgent.label }) : t("Starting shell…");
-  const fieldsDisabled = pending || createdPaneId !== null;
+  const fieldsDisabled = pending || refreshing || createdPaneId !== null;
   const can = launchCapabilities(agentKind);
   const launched = dialogLaunch({ agent: agentKind, model, effort, ultracode, prompt }, settings);
   const fault = "fault" in launched ? launched.fault : null;
@@ -226,6 +253,22 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
     if (!next.ultracode) setUltracode(false);
   };
 
+  // the installed agent is offered once the PC lists it: picked then, else said why not
+  const addedAgent = (kind: string): void => {
+    const opening = openings.current;
+    setAdding(false);
+    setRefreshing(true);
+    const latest = agentReads.current();
+    void fetchAgentKinds().then((next) => {
+      if (openings.current !== opening || !latest()) return;
+      setAgents(next);
+      const added = next.find((agent) => agent.kind === kind);
+      if (added) { pickAgent(kind); setError(null); }
+      else setError({ message: t("It is installed, but this PC does not offer it here yet. Restart Ovis on the PC, or start it in a terminal tab."), detail: null });
+    }, (reason: unknown) => { if (openings.current === opening && latest()) setError(userErrorMessage(reason)); })
+      .finally(() => { if (openings.current === opening && latest()) setRefreshing(false); });
+  };
+
   const insertSkill = (skill: SlashCommand): void => {
     const field = promptField.current;
     const at = field !== null && document.activeElement === field ? field.selectionEnd : prompt.length;
@@ -240,7 +283,7 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
   };
 
   const startWorkspace = async (directory: string): Promise<void> => {
-    if (pending || guard.current.busy()) return;
+    if (pending || refreshing || guard.current.busy()) return;
     if (createdPaneId !== null) { onCreated(createdPaneId, createdStarted, createdKept); return; }
     // a combination the launch does not take: Start is disabled for it, and an Enter in a field sends nothing
     if (launch === null) return;
@@ -312,10 +355,12 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
             <X aria-hidden="true" />
           </button>
         </header>
-        <div className="modal-body">
+        {adding && !watching ? <div className="modal-body">
+          <AddAgentPanel onReady={addedAgent} onOpenTerminal={(paneId) => { if (onOpenPane) onOpenPane(paneId); else onClose(); }} onBack={() => setAdding(false)} />
+        </div> : <><div className="modal-body">
           <div className="field">
             <span className="field-label" id="new-session-agent">{t("Agent")}</span>
-            <AgentPicker ref={firstFieldRef} agents={agents} value={agentKind} disabled={fieldsDisabled} labelledBy="new-session-agent" hints={pickerHints} onChange={pickAgent} />
+            <AgentPicker ref={firstFieldRef} agents={agents} value={agentKind} disabled={fieldsDisabled} labelledBy="new-session-agent" hints={pickerHints} addAgent={watching ? undefined : { label: t("Add another agent…"), onSelect: () => setAdding(true) }} onChange={pickAgent} />
           </div>
           {tab ? (
             <div className="field">
@@ -443,8 +488,8 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
         </div>
         <footer className="modal-footer">
           <button type="button" className="btn btn-ghost" disabled={pending} onClick={onClose}>{t("Cancel")}</button>
-          <button type="submit" className="btn btn-primary" disabled={pending || fault !== null}>{t(pending ? "Starting…" : createdPaneId !== null ? "Open" : "Start")}</button>
-        </footer>
+          <button type="submit" className="btn btn-primary" disabled={pending || refreshing || fault !== null}>{t(pending ? "Starting…" : createdPaneId !== null ? "Open" : "Start")}</button>
+        </footer></>}
       </form>
     </div>
   );

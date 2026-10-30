@@ -601,7 +601,9 @@ export function createServer(
         }
       }
 
-      const agentsResponse = await handleAgentsRequest(request, pathname, shellAgents);
+      // the catalog's PATH lookup (service, then login shell), without the installers' own folders: an
+      // agent found only there is not on any PATH herdr's pane shell would start it from
+      const agentsResponse = await handleAgentsRequest(request, pathname, shellAgents, (binary) => agentDetector.executable(binary, [], null));
       if (agentsResponse) return agentsResponse;
 
       const installResponse = await agentInstaller.handle(request, pathname);

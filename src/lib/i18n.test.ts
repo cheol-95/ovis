@@ -130,7 +130,7 @@ const PART_FILES: Record<string, string[]> = {
   usage: ["components/UsageSettings.tsx", "components/UsageAccountDialog.tsx", "components/UsageLocalLogin.tsx", "components/UsageHubConnect.tsx", "components/CLIProxyLogin.tsx", "components/UsageMeters.tsx", "lib/usage.ts"],
   updates: ["components/UpdateControls.tsx", "lib/updateProgress.ts"],
   palette: ["components/CommandPalette.tsx"],
-  setup: ["components/AgentSetupCard.tsx"],
+  setup: ["components/AgentSetupCard.tsx", "components/AddAgentPanel.tsx", "components/AgentCatalogSettings.tsx", "components/AgentTile.tsx"],
   guide: ["components/SetupGuide.tsx"],
 };
 

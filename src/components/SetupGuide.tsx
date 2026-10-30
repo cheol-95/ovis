@@ -11,7 +11,7 @@
  * area, the app's sidebar left in place.
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowRight, Check, ChevronRight, Download, Gauge, Info, LoaderCircle, Play, RotateCw, Smartphone, Sparkles } from "lucide-react";
+import { ArrowRight, Check, ChevronRight, Gauge, Info, LoaderCircle, Play, RotateCw, Smartphone, Sparkles } from "lucide-react";
 
 import type { AgentCatalogEntry, AgentCatalogRow } from "../../shared/agent-catalog.ts";
 import type { HealthAuth, PairingCode, RemoteAccess } from "../../shared/protocol.ts";
@@ -23,11 +23,11 @@ import { pairThisBrowser, UnconfirmedPairing } from "../lib/pairing.ts";
 import { isLoopbackHost, phonePlan } from "../lib/phone.ts";
 import { recentDirectories } from "../lib/recent-directories.ts";
 import { useSettings } from "../lib/settings.ts";
-import { agentRows, checkList, foundAgents, INSTALL_GIVE_UP_MS, installedHere, phoneBoxMode, openInFolder, preferredAgent, settleDelay, setupView, signedInAgents, tileState, type CheckStatus, type GuideEvent, type GuideState, type PcCheck } from "../lib/setupGuideFlow.ts";
+import { agentRows, checkList, foundAgents, installedHere, phoneBoxMode, openInFolder, preferredAgent, settleDelay, setupView, signedInAgents, type CheckStatus, type GuideEvent, type GuideState, type PcCheck } from "../lib/setupGuideFlow.ts";
 import { useSignedInUsage } from "../lib/useSetupGuide.ts";
-import { useAgentSetup } from "../lib/useAgentSetup.ts";
 import { userErrorMessage } from "../lib/userError.ts";
 import { AgentMark } from "./AgentMark.tsx";
+import { AgentTile } from "./AgentTile.tsx";
 import { QrCode } from "./QrCode.tsx";
 import "./SetupGuide.css";
 
@@ -318,112 +318,6 @@ function AgentsScreen({ catalog, ready, machineId, onInstalled, onLookAgain, onO
         <p className="setup-muted setup-again">{t("Already installed one?")} <button type="button" className="setup-link" onClick={onLookAgain}>{t("Look again")}</button></p>
       )}
     </section>
-  );
-}
-
-interface AgentTileProps {
-  agent: AgentCatalogRow;
-  /** the PC has it (it said so, or it was installed from this screen) */
-  has: boolean;
-  picked: boolean;
-  /** the first workspace is opening, or opened without the agent */
-  locked: boolean;
-  machineId: string;
-  onPick: (agent: string) => void;
-  onOpenTerminal: (paneId: string) => void;
-  onRunning: (agent: string, running: boolean) => void;
-  /** an install started from this tile finished: the PC has it now */
-  onInstalled: (agent: string) => void;
-  /** why its install did not finish; null once it runs again or is done */
-  onError: (agent: string, message: string | null) => void;
-}
-
-/**
- * One coding agent. Installed: picked by a tap. Missing: its Install is the one tap (the user's
- * consent): the official installer runs in a terminal tab (a tap on the turning ring shows it) until
- * the catalog lists the agent, then the tile is an installed one. The tile keeps its setup hook
- * through that change, so an install the catalog found first still ends here. The sign-in is the
- * agent's own, when it first starts.
- */
-function AgentTile({ agent, has, picked, locked, machineId, onPick, onOpenTerminal, onRunning, onInstalled, onError }: AgentTileProps) {
-  const t = useT();
-  const started = useRef(false);
-  // the guide's rule for installed is the catalog's (installed: true), the card's is that the agent
-  // runs: a row the install's reads find installed ends the install here as any other read would
-  // its watch ends there too: the tile is an installed one from now on
-  const stop = useRef<() => void>(() => {});
-  const { step, pending, install, dispatch } = useAgentSetup({ agent, machineId, onRow: (row) => { if (row.state.installed === true && started.current) { onInstalled(agent.id); stop.current(); } } });
-  stop.current = () => dispatch({ type: "cancel" });
-  // a ring that has turned for INSTALL_GIVE_UP_MS without the PC listing the agent stops, to be tried
-  // again; it counts from the tap, the request still unanswered included
-  const [overdue, setOverdue] = useState(false);
-  // each tap is an attempt of its own: its deadline starts again
-  const [attempt, setAttempt] = useState(0);
-  const turning = pending || step.kind === "installing";
-  useEffect(() => {
-    setOverdue(false);
-    if (!turning) return;
-    const timer = window.setTimeout(() => setOverdue(true), INSTALL_GIVE_UP_MS);
-    return () => window.clearTimeout(timer);
-  }, [turning, attempt]);
-  const state = tileState(has, step, pending, overdue ? INSTALL_GIVE_UP_MS : 0);
-  // an unanswered request counts as running even past the deadline: Look again would end its watch
-  const running = state === "installing" || pending;
-  useEffect(() => { onRunning(agent.id, running); }, [running]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => () => onRunning(agent.id, false), []); // eslint-disable-line react-hooks/exhaustive-deps
-  // its own news only: an error while it failed or stuck, nothing otherwise
-  const reason = state === "failed" && step.kind === "failed" ? step.message ?? t("It is on this PC, but it does not start. Install it again.") : state === "stuck" ? t("It took too long. Try again.") : null;
-  useEffect(() => { onError(agent.id, reason === null ? null : t("{agent} did not install. {reason}", { agent: agent.name, reason })); }, [reason]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => () => onError(agent.id, null), []); // eslint-disable-line react-hooks/exhaustive-deps
-  // the button that had the focus went with the install: the installed tile takes it
-  const tile = useRef<HTMLLIElement>(null);
-  const focused = useRef(false);
-  // however it learned so (its own read, another agent's), an installed tile watches no install, a
-  // late answer to its request included
-  useEffect(() => { if (state === "installed" && step.kind === "installing") stop.current(); }, [state, step.kind]);
-  useEffect(() => {
-    if (state !== "installed") return;
-    if (!started.current) return;
-    started.current = false;
-    onInstalled(agent.id);
-    if (focused.current && (document.activeElement === null || document.activeElement === document.body)) tile.current?.querySelector<HTMLElement>("button")?.focus();
-  }, [state]); // eslint-disable-line react-hooks/exhaustive-deps
-  const tap = (): void => {
-    // the first request still unanswered: it may have started the installer, so no second one yet
-    if (pending) return;
-    started.current = true;
-    setAttempt((count) => count + 1);
-    if (step.kind === "installing") dispatch({ type: "cancel" });
-    install();
-  };
-  const tab = step.kind === "installing" ? step.tab : null;
-  return (
-    <li ref={tile} onFocus={() => { focused.current = true; }} onBlur={(event) => { if (event.relatedTarget !== null) focused.current = false; }}>
-      {state === "installed" ? (
-        <button type="button" className="setup-tile" data-agent={agent.id} aria-pressed={picked} disabled={locked} onClick={() => onPick(agent.id)}>
-          <AgentMark agent={agent.id} size={20} />
-          <span className="setup-found-name"><strong>{agent.name}</strong>{agent.state.version !== null && <span>{agent.state.version}</span>}</span>
-          {picked && <Check aria-hidden="true" />}
-        </button>
-      ) : (
-        <div className="setup-tile" data-agent={agent.id} data-missing="" data-state={state} aria-busy={state === "installing" || undefined}>
-          <AgentMark agent={agent.id} size={20} />
-          <span className="setup-found-name"><strong>{agent.name}</strong></span>
-          {(state !== "missing" || (agent.state.installed !== null && agent.install !== null)) && (
-            // one button through every state, so the focus stays on it: Install, the turning ring (its tab
-            // once there is one), Try again
-            <button type="button" className="btn setup-tile-install"
-              aria-disabled={(state === "installing" && tab === null) || (state !== "installing" && pending) ? true : undefined}
-              disabled={state !== "installing" && locked}
-              aria-label={state === "installing" ? (tab === null ? t("Installing {agent}…", { agent: agent.name }) : t("Installing {agent}… Open terminal", { agent: agent.name })) : state === "missing" ? t("Install {agent}", { agent: agent.name }) : t("Try installing {agent} again", { agent: agent.name })}
-              onClick={() => { if (state === "installing") { if (tab !== null) onOpenTerminal(tab.pane_id); return; } tap(); }}>
-              {state === "installing" ? <LoaderCircle aria-hidden="true" className="setup-spin" /> : state === "missing" ? <Download aria-hidden="true" /> : <RotateCw aria-hidden="true" />}
-              {state !== "installing" && <span className="setup-tile-install-label">{state === "missing" ? t("Install") : t("Try again")}</span>}
-            </button>
-          )}
-        </div>
-      )}
-    </li>
   );
 }
 

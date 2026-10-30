@@ -162,6 +162,8 @@ export class ShellAgentLocator {
   readonly #ttlMs: number;
   readonly #now: () => number;
   #found = new Map<string, string>();
+  /** the login PATH the last run read: a kind it missed is looked for there again at each read */
+  #loginPath: string | null = null;
   /** when the last run ended; null before the first */
   #checkedAt: number | null = null;
   #running: Promise<void> | null = null;
@@ -212,6 +214,7 @@ export class ShellAgentLocator {
     }
     // a failed run proves nothing is there: it answers as a miss until the next one
     this.#found = found;
+    this.#loginPath = result?.path ?? null;
     this.#checkedAt = this.#now();
     if (result === null) return;
     const failure = result.path === null ? result.reason : null;
@@ -221,8 +224,9 @@ export class ShellAgentLocator {
 
   /**
    * The absolute executable `kind` is started by, or null. A kind the service PATH misses waits
-   * for a login-shell run when the kept answer is missing or older than ttlMs; a path a run found
-   * that is no longer an executable is not replaced by anything else until the next run.
+   * for a login-shell run when the kept answer is missing or older than ttlMs; a kind that run
+   * missed is looked for again on the PATH it read, so one installed since is found at once; a path
+   * a run found that is no longer an executable is not replaced by anything else until the next run.
    */
   async executable(kind: string): Promise<string | null> {
     if (!isShellAgentKind(kind)) return null;
@@ -230,7 +234,12 @@ export class ShellAgentLocator {
     if (own !== null || this.#probe === null) return own;
     await this.#fresh(this.#probe);
     const found = this.#found.get(kind);
-    return found !== undefined && isExecutableFile(found) ? found : null;
+    if (found !== undefined) return isExecutableFile(found) ? found : null;
+    // installed since the run (an install from the catalog): the kept login PATH has it, no new shell
+    const late = this.#loginPath === null ? null : Bun.which(kind, { PATH: this.#loginPath });
+    if (late === null || !isAbsolute(late) || !isExecutableFile(late)) return null;
+    this.#found.set(kind, late);
+    return late;
   }
 
   /** Kills a login shell still running and runs no more; later lookups use this server's PATH and the last run's answer. */

@@ -254,7 +254,6 @@ export const SETTINGS_JA: Record<string, string> = {
   "keyboard keys bindings hotkeys": "キーボード キー ショートカット キー割り当て",
   "phone install keep screen on app": "スマホ インストール 画面オン維持 アプリ",
   "machines computers ssh bridge plugins": "マシン コンピューター ssh ブリッジ プラグイン",
-  "agents hooks claude codex": "エージェント フック claude codex",
   "version update release herdr": "バージョン アップデート リリース herdr",
   "create workspace session start": "作成 ワークスペース セッション 開始",
   "create tab add": "作成 タブ 追加",
@@ -336,4 +335,7 @@ export const SETTINGS_JA: Record<string, string> = {
   "Reachable": "接続可能",
   "This request came through Tailscale Funnel, which is open to the public internet.": "このリクエストは公開インターネットに開かれたTailscale Funnelを経由しました。",
   "The server cannot see whether a proxy, tunnel or router makes it reachable from the internet.": "プロキシ、トンネル、ルーターによってインターネットから接続できるかどうかは、サーバーからは分かりません。",
+  "Open setup guide": "セットアップガイドを開く",
+  "agents hooks claude codex install": "エージェント フック claude codex インストール",
+  "onboarding first run getting started welcome": "オンボーディング 初回 はじめに ようこそ",
 };

@@ -29,8 +29,13 @@ const AGENT_LABELS: Record<string, string> = {
   letta: "Letta Code",
 };
 
-/** The answer for the agent catalog route, or null when the path is not it. `shellAgents`: the server's own locator, which starts them too. */
-export async function handleAgentsRequest(request: Request, pathname: string, shellAgents: Pick<ShellAgentLocator, "executable">): Promise<Response | null> {
+/**
+ * The answer for the agent catalog route, or null when the path is not it. `shellAgents`: the server's
+ * own locator, which starts them too. `locate`: the install catalog's lookup (agent-catalog-detect.ts),
+ * which also asks the login shell's PATH, where installers put agents: an agent the catalog lists as
+ * installed is offered too, so Add another agent… can pick what its tile just installed.
+ */
+export async function handleAgentsRequest(request: Request, pathname: string, shellAgents: Pick<ShellAgentLocator, "executable">, locate?: (binary: string) => Promise<string | null>): Promise<Response | null> {
   if (pathname === "/api/agents") {
     setRequestRoute(pathname);
     if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
@@ -43,9 +48,11 @@ export async function handleAgentsRequest(request: Request, pathname: string, sh
       const shellStarted = new Set<string>();
       for (const kind of Object.keys(SHELL_AGENTS)) if (await shellAgents.executable(kind)) shellStarted.add(kind);
       for (const kind of shellStarted) kinds.add(kind);
-      const agents: AgentKind[] = [...kinds]
-        // an agent's command is its kind; herdr starts the others in its own environment, so only this server's PATH speaks for them
-        .map((kind) => ({ kind, label: AGENT_LABELS[kind] ?? kind, installed: shellStarted.has(kind) || Bun.which(kind, { PATH: process.env["PATH"] ?? "" }) !== null }))
+      // an agent's command is its kind; herdr starts the others in the pane's shell, whose PATH is the
+      // login shell's: this server's PATH speaks first, then the catalog's lookup of the login PATH
+      const installed = async (kind: string): Promise<boolean> =>
+        shellStarted.has(kind) || Bun.which(kind, { PATH: process.env["PATH"] ?? "" }) !== null || (locate !== undefined && (await locate(kind)) !== null);
+      const agents: AgentKind[] = (await Promise.all([...kinds].map(async (kind) => ({ kind, label: AGENT_LABELS[kind] ?? kind, installed: await installed(kind) }))))
         .sort((left, right) => left.label.localeCompare(right.label) || left.kind.localeCompare(right.kind));
       return jsonResponse({ agents });
     } catch (error) {

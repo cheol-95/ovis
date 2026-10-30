@@ -1499,6 +1499,14 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   Code into a shell without a pick, neither disables Start nor goes with the launch
   (`lib/newSession.ts` dialogLaunch). The agent picker's rows carry a `.menu-item-hint` (**model,
   effort**) beside the agents whose launch takes them.
+- **Add another agent…** is the picker's last row (here, New tab and New worktree): a hairline above
+  it, `--text-dim`, a plus where a mark goes, never bold and never the value. It swaps the dialog's
+  body for `AddAgentPanel` (the fields keep what was typed): the catalog agents the dialog's PC lacks
+  and a picker can start, as the setup guide's tiles (`AgentTile`). Install is the one tap; the ring
+  turns on the tile until the PC lists the agent, then the dialog re-reads the PC's agents and picks
+  it. There is no sign-in step: the agent asks when it first starts. **Back** returns focus to the
+  picker. Like the Codex app's model
+  menu, the way to get more sits at the end of the list it adds to, not as a separate button.
 - **First message** is a `.input` textarea (three rows, grown by hand) whose hint says where it goes.
   Codex takes it as its own positional argument behind `--` (`codex [OPTIONS] [PROMPT]`; clap matches
   a subcommand only before the separator, verified on codex 0.163.0: `codex -- logout` starts the TUI),
@@ -3379,6 +3387,11 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   being on the home screen first, so they stay in Settings → Alerts. A failed check says "Couldn't
   check this PC" with its error and Look again. On a phone Start and Connect your phone take the full
   width.
+- The tile is `AgentTile` (`AgentTile.css`), shared with a creation dialog's Add another agent… and
+  Settings → Agent integrations, where the PC's agents that can be installed are the same tiles (an
+  installed one there is only shown, never picked). Settings → Agent integrations starts with **Open
+  setup guide**, which opens this guide again (`lib/setupGuide.ts`); a watching device gets neither
+  the row nor the Install buttons.
 
 ### Token gate
 - A centered password card replaces the entire shell while authentication is required. It has a real

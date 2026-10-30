@@ -254,7 +254,6 @@ export const SETTINGS_KO: Record<string, string> = {
   "keyboard keys bindings hotkeys": "키보드 키 단축키 바인딩",
   "phone install keep screen on app": "휴대폰 설치 화면 켜짐 유지 앱",
   "machines computers ssh bridge plugins": "기기 컴퓨터 ssh 브리지 플러그인",
-  "agents hooks claude codex": "에이전트 훅 claude codex",
   "version update release herdr": "버전 업데이트 릴리스 herdr",
   "create workspace session start": "만들기 워크스페이스 세션 시작",
   "create tab add": "만들기 탭 추가",
@@ -336,4 +335,7 @@ export const SETTINGS_KO: Record<string, string> = {
   "Reachable": "접속 가능",
   "This request came through Tailscale Funnel, which is open to the public internet.": "이 요청은 공개 인터넷에 열린 Tailscale Funnel을 거쳐\u00a0왔습니다.",
   "The server cannot see whether a proxy, tunnel or router makes it reachable from the internet.": "프록시, 터널 또는 라우터 때문에 인터넷에서 접속할\u00a0수\u00a0있는지 서버는 알\u00a0수\u00a0없습니다.",
+  "Open setup guide": "설정 안내 열기",
+  "agents hooks claude codex install": "에이전트 훅 claude codex 설치",
+  "onboarding first run getting started welcome": "온보딩 처음 실행 시작하기 환영",
 };

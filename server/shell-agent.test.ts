@@ -191,6 +191,19 @@ it("service miss resolves the same executable for offer and start", async () => 
   expect(runs()).toBe(1);
 });
 
+it("finds a kind installed on the kept login PATH after a miss, with no new login shell", async () => {
+  const f = fixture();
+  const { probe, runs } = counted(async () => ({ path: `${f.loginBin}:/usr/bin` }));
+  const locator = new ShellAgentLocator({ platform: "linux", servicePath: f.servicePath, probe });
+  // omo is not installed yet: a miss, from one login-shell run
+  expect(await locator.executable("omo")).toBeNull();
+  // its installer puts it on the login PATH (~/.local/bin and the like) a moment later
+  writeFileSync(join(f.loginBin, "omo"), "#!/bin/sh\n", { mode: 0o755 });
+  // the next read, still within the kept minute, finds it there, as the install catalog does
+  expect(await locator.executable("omo")).toBe(join(f.loginBin, "omo"));
+  expect(runs()).toBe(1);
+});
+
 it("runs no login shell until asked, and again only once its answer is older than the TTL", async () => {
   const f = fixture();
   const { probe, runs } = counted(async () => ({ path: `${f.loginBin}:/usr/bin` }));
@@ -248,13 +261,14 @@ it("concurrent callers share one probe", async () => {
   writeFileSync(join(f.root, "gjc"), "#!/bin/sh\n", { mode: 0o755 });
   expect(await locator.executable("gjc")).toBeNull();
   expect(runs()).toBe(2);
-  // the next run sees it gone, and the one after sees it again once it is back
+  // the next run sees it gone; once it is back on that run's PATH it is found at once, as an install is
   clock += 60_000;
   let read = locator.executable("gjc");
   found(`${f.loginBin}:/usr/bin`);
   expect(await read).toBeNull();
   writeFileSync(f.gjc, "#!/bin/sh\n", { mode: 0o755 });
-  expect(await locator.executable("gjc")).toBeNull();
+  expect(await locator.executable("gjc")).toBe(f.gjc);
+  expect(runs()).toBe(3);
   clock += 60_000;
   read = locator.executable("gjc");
   found(`${f.loginBin}:/usr/bin`);

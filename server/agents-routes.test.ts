@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import * as herdr from "./herdr/client.ts";
 import { HerdrError } from "./herdr/client.ts";
+import { AgentDetector } from "./agent-catalog-detect.ts";
 import { createServer } from "./index.ts";
 import type { ShellAgentLocator } from "./shell-agent.ts";
 
@@ -57,6 +58,21 @@ describe("GET /api/agents", () => {
       ],
     });
     expect(located.sort()).toEqual(["gjc", "omo"]);
+  });
+
+  it("counts an agent the catalog finds on the login shell's PATH as installed, as the catalog does", async () => {
+    // an installer put claude in ~/.local/bin, which a server run as a service lacks on its own PATH
+    const found = createServer({ port: 0, hostname: "127.0.0.1", stateDir, token: "", machines: false, sidecar: false, shellAgents,
+      agentDetector: new AgentDetector({ locate: async (binary) => binary === "claude" ? "/home/someone/.local/bin/claude" : null }) });
+    try {
+      process.env["PATH"] = bin;
+      const response = await fetch(`http://127.0.0.1:${found.port}/api/agents`);
+      const { agents } = await response.json() as { agents: { kind: string; installed: boolean }[] };
+      expect(agents.find((agent) => agent.kind === "claude")?.installed).toBe(true);
+      expect(agents.find((agent) => agent.kind === "copilot")?.installed).toBe(false);
+    } finally {
+      found.stop();
+    }
   });
 
   it("passes herdr's own error through, hides any other, and refuses anything but GET", async () => {
