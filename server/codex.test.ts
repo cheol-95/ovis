@@ -751,42 +751,55 @@ describe("Codex rollout resolution", () => {
   const recordedScreen = "\r\n  >_ OpenAI Codex (v0.163.0)\r\n     /private/tmp/kiro2420-qa/proj\r\n\r\n\r\n› Write one paragraph of about 90 words about a ferryman named Oskar on the Elbe who counts swans at noon, with three\r\n  invented dates.\r\n\r\n\r\n• At noon, Oskar the ferryman rested his oars beside the Elbe and counted the swans as they drifted past: one, two,\r\n  then seven, whenever a ripple made him lose his place. He kept a little calendar in his coat, marked with three dates\r\n  nobody else had heard of: 31 Frostwake, 8 Swanrise, and 46 Lanternfall. Each was a day he swore the river had changed\r\n  its tune. When the last white neck slipped beneath the bridge, Oskar smiled, shut the calendar, and rowed toward the\r\n  far bank, carrying his strange year with him.\r\n\r\n  Worked for 4s • 7:05 PM                                                                                              \r\n\r\n\r\n\r\n› Ask Codex to do anything\r\n\r\n  GPT-6-Luna low · /private/tmp/kiro2420-qa/proj · Write Oskar’s Elbe paragraph\r\n  ← for agents · ? for shortcuts";
   const recordedAnswer = "At noon, Oskar the ferryman rested his oars beside the Elbe and counted the swans as they drifted past: one, two, then seven, whenever a ripple made him lose his place. He kept a little calendar in his coat, marked with three dates nobody else had heard of: 31 Frostwake, 8 Swanrise, and 46 Lanternfall. Each was a day he swore the river had changed its tune. When the last white neck slipped beneath the bridge, Oskar smiled, shut the calendar, and rowed toward the far bank, carrying his strange year with him.";
   it("matches an answer above Codex's completed-turn footer, and only that footer (regression)", () => {
-    // the turn's finish record, at a clock of this machine's day (the footer shows it in local time)
-    const finished = (answer: string, hours = 19, minutes = 5) => event({ type: "task_complete", turn_id: "t", last_agent_message: answer, duration_ms: 4756 },
-      new Date(2026, 9, 30, hours, minutes, 41).toISOString());
-    const said = (path: string, answer: string, ...records: unknown[]) => ({ path, text: jsonl(message("assistant", answer, "final_answer"), ...records) });
-    const own = said("own", recordedAnswer, finished(recordedAnswer));
-    const other = said("other", "Another conversation's answer, long enough to be looked for on any screen that shows it.");
+    // a turn as Codex 0.163 records it: the message asked, then the answer it finished on, by the turn's id
+    // finished at a clock of this machine's day (the minute a footer below it shows), by default 7:05 PM today
+    const turn = (id: string, asked: string, answer: string, at = new Date(2026, 9, 30, 19, 5, 41)) => [
+      event({ type: "item_completed", turn_id: id, item: { type: "UserMessage", content: [{ type: "text", text: asked }] } }),
+      message("assistant", answer, "final_answer"),
+      event({ type: "task_complete", turn_id: id, last_agent_message: answer, duration_ms: 4756 }, at.toISOString()),
+    ];
+    const asked = "Write one paragraph of about 90 words about a ferryman named Oskar on the Elbe who counts swans at noon, with three invented dates.";
+    const said = (path: string, ...records: unknown[]) => ({ path, text: jsonl(...records) });
+    const own = said("own", ...turn("t1", asked, recordedAnswer));
+    const other = said("other", message("assistant", "Another conversation's answer, long enough to be looked for on any screen that shows it."));
     expect(matchCodexTranscript(recordedScreen, [other, own])).toBe("own");
-    // as Codex shows an answer: its first line after the bullet, each further line indented
+    // as Codex shows a turn: its prompt, the answer's first line after the bullet, each further line indented
     const shownAs = (answer: string) => `\u2022 ${answer.replaceAll("\n", "\n  ")}`;
     const footer = "  Worked for 4s \u2022 7:05 PM";
-    const done = (answer: string, below = footer) => `${shownAs(answer)}\n\n${below}\n\n\u203a Ask Codex to do anything`;
-    for (const below of ["  Worked for <1s \u2022 7:05 PM", "  Worked for 2m 14s \u2022 19:05", "  Worked for 4s \u2022 7:06 PM"]) {
+    const done = (answer: string, below = footer, prompt = asked) => `\u203a ${prompt}\n\n${shownAs(answer)}\n\n${below}\n\n\u203a Ask Codex to do anything`;
+    for (const below of ["  Worked for <1s \u2022 11:19", "  Worked for 2m 14s \u2022 16:11", "  Worked for 0s", "  Worked for 4s \u2022 Oct 29 at 7:05 PM",
+      "  Worked for 4s \u2022 Oct 29, 2025 at 7:05 PM"]) {
       expect(matchCodexTranscript(done(recordedAnswer, below), [own])).toBe("own");
     }
-    // another conversation that said the same, finished at another time or with no finish record (an older
-    // Codex), is not this turn: the terminal stands in, even with this pane's own conversation missing
-    expect(matchCodexTranscript(recordedScreen, [said("same", recordedAnswer, finished(recordedAnswer, 21, 40))])).toBeNull();
-    expect(matchCodexTranscript(recordedScreen, [said("untimed", recordedAnswer)])).toBeNull();
-    // nor is a footer without its clock read away
-    expect(matchCodexTranscript(done(recordedAnswer, "  Worked for 0s"), [own])).toBeNull();
-    // an answer that ends in a footer-shaped line of its own: while Codex works on it, finished (its real footer
-    // below), or shown with no footer of Codex's at all, it never shows the conversation that said the rest
+    // the same answer from another conversation's turn, asked something else (another day, any clock), is not
+    // this turn, even with this pane's own conversation missing
+    expect(matchCodexTranscript(recordedScreen, [said("elsewhere", ...turn("t9", "Something else entirely", recordedAnswer, new Date(2026, 9, 29, 19, 5, 12)))])).toBeNull();
+    // nor one that never finished it (no record of the turn: an older Codex)
+    expect(matchCodexTranscript(recordedScreen, [said("untimed", message("assistant", recordedAnswer))])).toBeNull();
+    // and with two conversations asked the same and finished on the same answer, neither wins
+    expect(matchCodexTranscript(recordedScreen, [own, said("twin", ...turn("t2", asked, recordedAnswer))])).toBeNull();
+    // a footer vouches only for the answer directly above it: another turn's footer, at the minute another
+    // conversation finished the same answer, says nothing about this one
+    const another = `${done(recordedAnswer)}\n\n\u203a Second\n\n\u2022 Short reply.\n\n  Worked for 1s \u2022 7:10 PM\n\n\u203a Ask Codex to do anything`;
+    expect(matchCodexTranscript(another, [said("at-7-10", ...turn("t3", "Something else entirely", recordedAnswer, new Date(2026, 9, 30, 19, 10, 3)))])).toBeNull();
+    expect(matchCodexTranscript(another, [own])).toBe("own");
+    // nor for a turn an earlier Codex in the pane finished, above the one it shows now
+    expect(matchCodexTranscript(`${done(recordedAnswer)}\n\n  >_ OpenAI Codex (v0.163.0)\n\n\u203a Ask Codex to do anything`, [own])).toBeNull();
+    // an answer that ends in a footer-shaped line of its own: never the conversation that said the rest, and its
+    // own falls back too, as nothing tells that line from Codex's
     const literal = `${recordedAnswer}\n\n${footer.trim()}`;
-    expect(matchCodexTranscript(`${shownAs(literal)}\n\n\u2022 Working (3s \u2022 esc to interrupt)\n\n\u203a Ask`, [own])).toBeNull();
-    expect(matchCodexTranscript(`${shownAs(literal)}\n\n\u203a Ask Codex to do anything`, [said("rest", recordedAnswer, finished(recordedAnswer, 9, 40))])).toBeNull();
-    expect(matchCodexTranscript(done(literal), [own])).toBeNull();
-    // its own conversation, finished at the footer's clock, is found
-    expect(matchCodexTranscript(done(literal), [own, said("literal", literal, finished(literal))])).toBe("literal");
-    // nor is any other line of that shape a footer: text after it, no blank line above it, more answer below,
-    // or a read that ends before the composer
+    expect(matchCodexTranscript(`\u203a ${asked}\n\n${shownAs(literal)}\n\n\u203a Ask Codex to do anything`, [said("rest", ...turn("t4", "Something else entirely", recordedAnswer))])).toBeNull();
+    expect(matchCodexTranscript(`\u203a ${asked}\n\n${shownAs(literal)}\n\n\u2022 Working (3s \u2022 esc to interrupt)\n\n\u203a Ask`, [own])).toBeNull();
+    expect(matchCodexTranscript(done(literal), [said("literal", ...turn("t5", asked, literal))])).toBeNull();
+    // nor is any other line a footer: an impossible clock, text after the bullet, a wrapped clock, no blank line
+    // above, more answer below, or a read that ends before the composer
     for (const shown of [
-      `\u2022 ${recordedAnswer}\n\n  Worked for 4s \u2022 this is part of the answer\n\n\u203a Ask`,
-      `\u2022 ${recordedAnswer}\n\n  Worked for 4s \u2022\n  7:05 PM\n\n\u203a Ask`,
-      `\u2022 ${recordedAnswer}\n${footer}\n\n\u203a Ask`,
-      `\u2022 ${recordedAnswer}\n\n${footer}\n  and more of the answer\n\n\u203a Ask`,
-      `\u2022 ${recordedAnswer}\n\n${footer}\r\n\r\n`,
+      done(recordedAnswer, "  Worked for 4s \u2022 31:05 PM"),
+      done(recordedAnswer, "  Worked for 4s \u2022 this is part of the answer"),
+      done(recordedAnswer, "  Worked for 4s \u2022\n  7:05 PM"),
+      `\u203a ${asked}\n\n${shownAs(recordedAnswer)}\n${footer}\n\n\u203a Ask`,
+      `\u203a ${asked}\n\n${shownAs(recordedAnswer)}\n\n${footer}\n  and more of the answer\n\n\u203a Ask`,
+      `\u203a ${asked}\n\n${shownAs(recordedAnswer)}\n\n${footer}\r\n\r\n`,
     ]) expect(matchCodexTranscript(shown, [own])).toBeNull();
   });
 

@@ -976,51 +976,66 @@ function answerAnchor(text: string): Anchor | null {
   return null;
 }
 
-/** The footer Codex draws below a finished turn, a line of its own: "Worked for 4s \u2022 7:05 PM", indented. */
-const CODEX_TURN_FOOTER = /^[ \t]*Worked for <?\d+(?:ms|s|m|h)(?: \d+(?:ms|s|m|h))*(?: \u2022 \d{1,2}:\d{2}(?: [AP]M)?)?[ \t]*\r?$/;
-/** That footer with the clock the turn finished at: the only one a screen is read without. */
-const CLOCKED_TURN_FOOTER = /^[ \t]*Worked for <?\d+(?:ms|s|m|h)(?: \d+(?:ms|s|m|h))* \u2022 (\d{1,2}):(\d{2})(?: ([AP])M)?[ \t]*\r?$/;
+/** A time of day as Codex writes one in that footer: "7:05 PM" (%-I:%M %p) or "19:05" (%H:%M), never an impossible one. */
+const FOOTER_CLOCK = "(?:(?:1[0-2]|[1-9]):[0-5]\\d [AP]M|(?:[01]\\d|2[0-3]):[0-5]\\d)";
+/**
+ * The footer Codex draws below a finished turn, a line of its own: "Worked for 4s \u2022 7:05 PM", indented; for a
+ * turn of another day the clock follows its date ("Oct 29 at 7:05 PM", "Oct 29, 2025 at 7:05 PM", Codex 0.166).
+ */
+const CODEX_TURN_FOOTER = new RegExp(`^[ \\t]*Worked for <?\\d+(?:ms|s|m|h)(?: \\d+(?:ms|s|m|h))*(?: \\u2022 (?:[A-Z][a-z]{2} \\d{1,2}(?:, \\d{4})? at )?${FOOTER_CLOCK})?[ \\t]*\\r?$`);
+
+/** Whether a text's last line is shaped like that footer: an answer may end in one of its own. */
+const endsInTurnFooter = (text: string): boolean => CODEX_TURN_FOOTER.test(text.trimEnd().split("\n").at(-1) ?? "");
 
 /**
- * The screen without the completed-turn footers Codex draws, and the clocks they show (minutes of the day):
- * a line of exactly that shape with its clock (CLOCKED_TURN_FOOTER), a blank line above it, and only blank
- * lines below it up to the next prompt (a "\u203a" line: the composer, or the next message sent). A line of
- * that shape anywhere else is kept, as it may be an answer's own text: one an answer still being written ends
- * in has Codex's working line below it, and a read that ends before the composer shows no finished turn.
- * Null when the screen shows no such footer. A screen without its prompts (shownAnswers) keeps every footer,
- * so its finished answers fall back.
+ * The answers a screen shows finished, each with the prompt of its turn (promptKey): an answer block (its
+ * "\u2022" line and the indented lines it wraps onto) with Codex's completed-turn footer (CODEX_TURN_FOOTER)
+ * directly under it, one blank line between, and only blank lines below the footer up to the next prompt (a
+ * "\u203a" line: the composer, or the next message sent); its prompt is the last "\u203a" line above it, with
+ * the indented lines it wraps onto. A footer vouches for that answer alone. A line of that shape anywhere else
+ * is not one, as it may be an answer's own text: one an answer still being written ends in has Codex's
+ * working line below it, and a read that ends before the composer shows no finished turn. A screen without
+ * its prompts (shownAnswers) shows none, so its finished answers fall back.
  */
-function withoutTurnFooters(screen: string): { screen: string; clocks: number[] } | null {
-  const lines = screen.split("\n");
-  const clocks: number[] = [];
-  const kept = lines.filter((line, index) => {
-    const footer = CLOCKED_TURN_FOOTER.exec(line);
-    if (footer === null || index === 0 || lines[index - 1]!.trim() !== ""
-      || !(lines.slice(index + 1).find((after) => after.trim() !== "") ?? "").startsWith("\u203a")) return true;
-    const hours = Number(footer[1]) % (footer[3] === undefined ? 24 : 12) + (footer[3] === "P" ? 12 : 0);
-    clocks.push(hours * 60 + Number(footer[2]));
-    return false;
-  });
-  return clocks.length === 0 ? null : { screen: kept.join("\n"), clocks };
+function footedAnswers(screen: string): { answer: string; prompt: string }[] {
+  const lines = screen.split("\n").map((line) => line.replace(/\r$/, ""));
+  const footed: { answer: string; prompt: string }[] = [];
+  for (const [index, line] of lines.entries()) {
+    if (index < 2 || !CODEX_TURN_FOOTER.test(line) || lines[index - 1]!.trim() !== "" || lines[index - 2]!.trim() === ""
+      || !(lines.slice(index + 1).find((after) => after.trim() !== "") ?? "").startsWith("\u203a")) continue;
+    let start = index - 2;
+    while (start > 0 && /^(?:\s|$)/.test(lines[start]!)) start--;
+    if (!lines[start]!.startsWith("\u2022 ")) continue;
+    let prompt = start - 1;
+    while (prompt >= 0 && !lines[prompt]!.startsWith("\u203a")) prompt--;
+    if (prompt < 0) continue;
+    let end = prompt + 1;
+    while (end < start && /^\s+\S/.test(lines[end]!)) end++;
+    footed.push({ answer: markedDisplay(lines.slice(start, index - 1).join("\n").slice(2)), prompt: promptKey(lines.slice(prompt, end).join("\n")) });
+  }
+  return footed;
 }
 
 /**
- * Whether a conversation's rollout records a turn that finished on exactly this answer at one of these clocks
- * (minutes of this server's day, one either side for the minute turning): what ties an answer shown above a
- * footer to that conversation's own turn, rather than another's that said the same or an answer's own
- * footer-shaped last line. A rollout that records no finished turn (an older Codex) ties none.
+ * Whether a conversation's rollout records a turn, by its id, that was asked this prompt and finished on
+ * exactly this answer (task_complete): what ties an answer shown above a footer to that conversation's own
+ * turn, rather than another's that said the same. No clock is compared, so neither a day nor a time zone can
+ * mislead it. A rollout that records no such turn (an older Codex) ties none.
  */
-function finishedAt(rollout: string, answer: string, clocks: readonly number[]): boolean {
+function finishedTurn(rollout: string, prompt: string, answer: string): boolean {
+  const asked = new Map<string, string>();
   const shown = markedDisplay(answer);
   for (const line of rollout.split("\n")) {
-    if (!line.includes('"task_complete"')) continue;
+    if (!line.includes('"item_completed"') && !line.includes('"task_complete"')) continue;
     try {
-      const entry = JSON.parse(line) as { timestamp?: unknown; payload?: { type?: unknown; last_agent_message?: unknown } };
-      if (entry.payload?.type !== "task_complete" || typeof entry.payload.last_agent_message !== "string"
-        || typeof entry.timestamp !== "string" || markedDisplay(entry.payload.last_agent_message) !== shown) continue;
-      const at = new Date(entry.timestamp);
-      const minute = at.getHours() * 60 + at.getMinutes();
-      if (Number.isFinite(minute) && clocks.some((clock) => [0, 1, 1439].includes((clock - minute + 1440) % 1440))) return true;
+      const payload = (JSON.parse(line) as { payload?: Record<string, unknown> }).payload ?? {};
+      const turn = payload["turn_id"];
+      if (typeof turn !== "string") continue;
+      const item = payload["item"] as { type?: unknown; content?: unknown } | undefined;
+      if (payload["type"] === "item_completed" && item?.type === "UserMessage" && Array.isArray(item.content)) {
+        asked.set(turn, (asked.get(turn) ?? "") + item.content.map((part: { text?: unknown }) => typeof part?.text === "string" ? part.text : "").join(""));
+      } else if (payload["type"] === "task_complete" && typeof payload["last_agent_message"] === "string"
+        && markedDisplay(payload["last_agent_message"]) === shown && promptKey(asked.get(turn) ?? "") === prompt) return true;
     } catch { /* a record cut by the tail read */ }
   }
   return false;
@@ -1087,10 +1102,9 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
   const displays = texts.map(normalizeDisplay);
   // an answer counts only shown whole, both ends, in one block: one more character either side is another answer
   const wholeBlocks = answerParts.flatMap(shownBlocks);
-  // the blocks again without Codex's completed-turn footers (withoutTurnFooters), for an answer a candidate's
-  // own turn finished on at the clock a footer shows (finishedAt)
-  const unfooted = withoutTurnFooters(screen);
-  const unfootedBlocks = unfooted === null ? [] : partsOf(unfooted.screen).flatMap(shownBlocks);
+  // the answers the Codex the screen shows last finished, each with Codex's footer directly under it and the
+  // prompt of its turn (footedAnswers), for a candidate whose own turn was asked that and finished on it
+  const footed = blocks ? [] : footedAnswers(screen.slice(Math.max(0, screen.lastIndexOf("OpenAI Codex (v"))));
   const answersOf = (turns: ConversationTurn[]) => turns.filter((turn) => turn.role === "assistant")
     .flatMap((turn) => turn.parts).filter((part) => part.kind === "text").map((part) => part.text);
   const parsed = candidates.map((candidate) => parseCodexTranscript(candidate.text, Infinity));
@@ -1106,7 +1120,7 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
       const found = answerAnchor(text);
       return found !== null && displays.some((display) => display.includes(found.anchor))
         && (wholeBlocks.some((block) => found.whole.test(block))
-          || (unfooted !== null && unfootedBlocks.some((block) => found.whole.test(block)) && finishedAt(candidate.text, text, unfooted.clocks))) ? [found] : [];
+          || (!endsInTurnFooter(text) && footed.some(({ answer, prompt }) => found.whole.test(answer) && finishedTurn(candidate.text, prompt, text)))) ? [found] : [];
     });
     if (anchors.length === 0) continue;
     if (!scrutinized.has(candidate.path) || anchors.some((anchor) => !givenElsewhere(index, anchor))) matching.add(candidate.path);
