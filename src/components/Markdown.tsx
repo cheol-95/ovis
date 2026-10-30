@@ -107,7 +107,7 @@ function MermaidDiagram({ value }: { value: string }) {
   );
 }
 
-/** Stats an image before it can load; null context keeps chat images as links. */
+/** Stats an image before it can load; null context keeps image references as links. */
 type MarkdownImageResolver = (src: string) => Promise<MarkdownImagePreview | null>;
 export const MarkdownImageContext = createContext<MarkdownImageResolver | null>(null);
 

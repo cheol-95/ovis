@@ -21,6 +21,13 @@ describe("markdownImagePath", () => {
     expect(markdownImagePath("a.png", "a.md")).toBeNull();
     expect(markdownImagePath("~/a.png", "/tmp/a.md")).toBeNull();
   });
+  it("places chat images without a cwd only when the reference is absolute", () => {
+    expect(markdownImagePath("a.png", "")).toBeNull();
+    expect(markdownImagePath("/tmp/a.png", "")).toBe("/tmp/a.png");
+    expect(markdownImagePath("file:///tmp/a%20b.png", "")).toBe("/tmp/a b.png");
+    expect(markdownImagePath("./a.png", "/.ovis-chat.md")).toBe("/a.png");
+    expect(markdownImagePath("../a.png", "/tmp/project/.ovis-chat.md")).toBe("/tmp/a.png");
+  });
 });
 
 it("stats markdown images before loading them and offers oversized ones as downloads", async () => {
@@ -48,4 +55,17 @@ it("stats markdown images before loading them and offers oversized ones as downl
   ]);
   expect(await markdownImagePreview("https://example.com/a.png", "/tmp/doc/README.md", fetchInfo, fileUrl)).toBeNull();
   expect(statPaths).toHaveLength(2);
+});
+
+it("leaves missing, ambiguous and non-image files as links without requesting their bytes", async () => {
+  const filePaths: string[] = [];
+  const fileUrl = (path: string) => { filePaths.push(path); return "unexpected-url"; };
+  for (const fetchInfo of [
+    async () => { throw new Error("not found or denied"); },
+    async () => ({ candidates: ["/tmp/a.png", "/tmp/other/a.png"] }),
+    async (): Promise<FileInfo> => ({ path: "/tmp/a.png", name: "a.png", size: 20, modified: "", mime: "text/plain", kind: "text" }),
+  ]) {
+    expect(await markdownImagePreview("a.png", "/tmp/.ovis-chat.md", fetchInfo, fileUrl)).toBeNull();
+  }
+  expect(filePaths).toEqual([]);
 });

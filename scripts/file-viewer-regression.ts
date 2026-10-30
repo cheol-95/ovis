@@ -37,11 +37,19 @@ const codexHome = join(root, "codex-home");
 const thread = "01a0c7a1-56d9-7e20-9f08-f7a2d973bc11";
 mkdirSync(join(codexHome, "sessions"), { recursive: true });
 const transcript = join(codexHome, "sessions", `rollout-2026-09-28T00-00-00-${thread}.jsonl`);
+const chatImages = [
+  "![Chat relative](./preview.svg)",
+  `![Chat absolute](${join(root, "preview.svg")})`,
+  `![Chat URI](${new URL(`file://${join(root, "preview.svg")}`).href})`,
+  "![Chat missing](./missing.png)",
+  "![Chat text](./notes.txt)",
+  "![Chat external](https://example.com/unrequested.png)",
+].join("\n\n");
 const fidelitySources = ["const last = 7;\n\n", "first\n", "first\n\nlast", "\n"];
 writeFileSync(transcript, [
   { type: "session_meta", payload: { id: thread, cwd: root } },
   { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Show me the demo video." }] } },
-  { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `Open [demo video](./preview.webm) or [notes](./notes.txt) or [guide](./docs/guide.md) or [big](./big.txt) or [big code](./big.ts) or [mid code](./mid.ts) or [deep quotes](./deep.md) or [empty](./empty.txt) or [slow preview](./slow.md) or [long notes](./long.md) or [many lines](./lines.txt) or [long list](./list.md) or [contents page](./toc.html) or [file URI notes](${new URL(`file://${join(root, "notes.txt")}`).href}) or [folder](${new URL(`file://${root}`).href}).\n\n${new URL(`file://${join(root, "notes.txt")}`).href}\n\n\`\`\`ts\nconst answer = 42;\n\nexport { answer };\n\`\`\`` }] } },
+  { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `Open [demo video](./preview.webm) or [notes](./notes.txt) or [guide](./docs/guide.md) or [big](./big.txt) or [big code](./big.ts) or [mid code](./mid.ts) or [deep quotes](./deep.md) or [empty](./empty.txt) or [slow preview](./slow.md) or [long notes](./long.md) or [many lines](./lines.txt) or [long list](./list.md) or [contents page](./toc.html) or [file URI notes](${new URL(`file://${join(root, "notes.txt")}`).href}) or [folder](${new URL(`file://${root}`).href}).\n\n${new URL(`file://${join(root, "notes.txt")}`).href}\n\n\`\`\`ts\nconst answer = 42;\n\nexport { answer };\n\`\`\`\n\n${chatImages}` }] } },
   // a block the highlighter is quadratic on (a line of dashes in YAML): seconds on the page
   { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: "References: [source column](./target.ts:60:8), [source range](./target.ts#L60-L65), [Markdown line](./docs/guide.md#L6), [past end](./notes.txt:999), [past preview](./big.txt:999999), [capped line](./lines.txt:5)." }] } },
   { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `Dashes:\n\n\`\`\`yaml\n${"-".repeat(90_000)}\n\`\`\`` }] } },
@@ -189,6 +197,22 @@ try {
   await page.locator(".markdown-code").first().locator(".hl-keyword", { hasText: "const" }).waitFor();
   await page.locator(".markdown-code .hl-number", { hasText: "42" }).waitFor();
   console.log("PASS Chat fenced code block is syntax highlighted");
+  for (const alt of ["Chat relative", "Chat absolute", "Chat URI"]) {
+    const image = page.locator(`.chat-transcript img.markdown-image[alt="${alt}"]`);
+    await image.scrollIntoViewIfNeeded();
+    await image.evaluate((node: HTMLImageElement) => node.decode());
+    assert.equal(await image.evaluate((node: HTMLImageElement) => node.naturalWidth), 240);
+    const url = new URL((await image.getAttribute("src"))!, origin);
+    assert.equal(url.pathname, "/api/fs/file");
+    assert.equal(url.searchParams.get("path"), join(root, "preview.svg"));
+    assert.equal(url.searchParams.get("pane_id"), pane);
+  }
+  for (const name of ["Chat missing", "Chat text", "Chat external"]) {
+    await page.getByRole(name === "Chat external" ? "link" : "button", { name, exact: true }).waitFor();
+    assert.equal(await page.locator(`img[alt="${name}"]`).count(), 0, `${name} stays a link`);
+  }
+  console.log("PASS Chat local Markdown images load from the pane cwd, absolute paths and file URIs; unresolved and external images stay links");
+
   // a blank line must survive in the text a copy picks up
   const codeText = await page.locator(".markdown-code .hl-code").first().innerText();
   if (codeText !== "const answer = 42;\n\nexport { answer };") throw new Error(`Chat code block text lost its blank line: ${JSON.stringify(codeText)}`);
