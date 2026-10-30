@@ -14,7 +14,7 @@ import { trimOutput } from "./tool-output.ts";
 import type { TranscriptParser } from "./transcript-records.ts";
 import type { AgentInfo } from "../shared/herdr-api.generated.ts";
 import { agentGet, HerdrError, paneGet, paneProcessInfo, paneRead, sessionSnapshot } from "./herdr/client.ts";
-import { kiroCodexProcess } from "./kiro-terminal.ts";
+import { kiroCodexProcess, kiroWrapper } from "./kiro-terminal.ts";
 import { resolveAgent } from "./pane-context.ts";
 import { codexStartScreenUnused } from "./start-screen.ts";
 
@@ -2132,8 +2132,9 @@ async function codexProcessesOf(paneId: string): Promise<{ list: { pid: number; 
 async function codexAgentInfo(paneId: string): Promise<Pick<AgentInfo, "agent_session" | "terminal_title" | "terminal_title_stripped" | "cwd" | "foreground_cwd"> & { nestedTerminal?: true }> {
   try {
     const agent = await agentGet(paneId);
-    const nested = await kiroCodexProcess(await paneProcessInfo(paneId));
-    return nested === null ? agent : { ...agent, nestedTerminal: true };
+    // herdr's own report that the outer PTY is Kiro's wrapper keeps the guard, whether or not one more
+    // process-table probe proves its Codex: a failed or racing probe must not make this a plain pane
+    return kiroWrapper(await paneProcessInfo(paneId)) ? { ...agent, nestedTerminal: true } : agent;
   }
   catch (error) {
     if (!(error instanceof HerdrError) || error.code !== "agent_not_found"
@@ -2556,7 +2557,8 @@ export async function codexOpenRollout(paneId: string, cwd: string | null | unde
   const { codexProcesses, processes, open } = await openRollouts(paneId, home);
   if (open.size === 1) return [...open][0]!;
   const reported = cwd ? reportedRollout(agent.agent_session, home) : null;
-  if (reported !== null && resumedThread(codexProcesses.map((process) => process.argv ?? [])) === null
+  // a nested pane's peers may carry no label either, so freshReportedThread cannot rule them out
+  if (reported !== null && !agent.nestedTerminal && resumedThread(codexProcesses.map((process) => process.argv ?? [])) === null
     && await freshReportedThread(paneId, cwd!, home, reported, codexProcesses)) return reported;
   const bound = boundRollouts.get(paneId);
   if (bound === undefined || bound.processes !== processes || processes === "" || !cwd || codexRolloutPath(bound.path, home) === null) return null;
@@ -2689,7 +2691,9 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
     boundRollouts.set(paneId, boundHere);
     return boundHere.path;
   }
-  if (resumed === null && reported !== null && await freshReportedThread(paneId, cwd, home, reported, codexProcesses, panes)) return reported;
+  // a nested pane's peers may carry no label either, so freshReportedThread cannot rule them out
+  if (resumed === null && reported !== null && !agent.nestedTerminal
+    && await freshReportedThread(paneId, cwd, home, reported, codexProcesses, panes)) return reported;
   if (resumed !== null) return resumedNewer.length === 0 ? resumedPath : null;
   // Other nested terminals may have no agent labels either, so the weaker exchange/peer
   // heuristics cannot establish ownership. Only a substantial screen match (or its binding) can.

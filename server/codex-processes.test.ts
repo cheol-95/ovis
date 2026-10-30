@@ -32,6 +32,8 @@ let unlabelled: boolean;
 let agentFolders: { cwd?: string; foreground_cwd?: string };
 /** The session herdr reports for the pane (agent.get), null for none. */
 let reportedSession: { source: string; agent: string; kind: string; value: string } | null;
+/** herdr's shell_pid for the pane, when a test says it (a Kiro wrapper is the shell herdr started). */
+let shellPid: number | undefined;
 /** The answers to the pane's next process reads, in order (null: herdr gives no process_info); [foreground] once used up. */
 let processReads: ({ pid: number; name?: string; argv?: string[] }[] | null)[];
 const children: ReturnType<typeof Bun.spawn>[] = [];
@@ -55,6 +57,7 @@ beforeEach(() => {
   agentFolders = {};
   reportedSession = null;
   processReads = [];
+  shellPid = undefined;
   peerScreens = new Map();
   foreground = [];
   foregrounds = new Map();
@@ -81,7 +84,7 @@ beforeEach(() => {
         const own = request.method === "pane.process_info" && request.params?.pane_id === root && processReads.length > 0 ? processReads.shift() : undefined;
         const result = request.method === "pane.get" ? { pane: { pane_id: root, cwd: root } }
           : request.method === "agent.get" ? { agent: { ...agentFolders, ...(title === null ? {} : { terminal_title: title, terminal_title_stripped: title }), ...(reportedSession === null ? {} : { agent_session: reportedSession }) } }
-          : request.method === "pane.process_info" ? (own === null ? {} : { process_info: { foreground_processes: own ?? foregrounds.get(request.params?.pane_id ?? "") ?? foreground } })
+          : request.method === "pane.process_info" ? (own === null ? {} : { process_info: { ...(shellPid === undefined || request.params?.pane_id !== root ? {} : { shell_pid: shellPid }), foreground_processes: own ?? foregrounds.get(request.params?.pane_id ?? "") ?? foreground } })
           : request.method === "pane.read" ? { read: { text: peerScreen ?? screen } }
           // the session as a background reader asks for it: this pane alone
           : request.method === "session.snapshot" ? { snapshot: { panes: [{ pane_id: root, workspace_id: root, tab_id: root, terminal_id: root, agent: "codex", agent_status: "working", cwd: root, focused: false, revision: 0 }], workspaces: [], tabs: [], layouts: [], agents: [] } }
@@ -164,6 +167,86 @@ for (const agentFound of [true, false]) {
     } finally { nested.mockRestore(); }
   });
 }
+
+it("keeps a nested pane's guard when one Kiro probe in the middle cannot prove Codex (live, null, live)", async () => {
+  // Given an unlabelled Kiro pane whose agent.get succeeds without a session, showing its cwd thread's
+  // own prompts and short answers: the weak short-answer reading must stay off for a nested pane
+  agentFolders = { cwd: root };
+  foreground = [{ pid: 2147483647, argv: ["zsh (kiro-cli-term)"] }];
+  shellPid = 2147483647;
+  const replies = ["The first fixture is ready for careful inspection.", "The second fixture check is now fully complete."];
+  writeFileSync(path, [
+    { type: "session_meta", payload: { id: thread, cwd: root } },
+    ...replies.flatMap((message, index) => [
+      { type: "event_msg", payload: { type: "user_message", message: `Fixture request ${index}` } },
+      { type: "event_msg", payload: { type: "agent_message", message } },
+    ]),
+  ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+  screen = "OpenAI Codex (v0.165.0)\n" + replies.map((reply, index) => `› Fixture request ${index}\n\n• ${reply}\n\n`).join("") + "› ";
+  const snapshot = { panes: [{
+    pane_id: root, workspace_id: root, tab_id: root, terminal_id: root,
+    cwd: root, agent_status: "unknown", focused: false, revision: 0,
+  }], workspaces: [], tabs: [], agents: [], layouts: [], protocol: 1, version: "test" } satisfies SessionSnapshot;
+  const live = { pid: 2147483646, argv: ["codex"], identity: "10:1,20:1,2147483646:1" };
+  let probes = 0;
+  // When the middle probe (agent.get's: a bounded process-table read can fail) proves nothing, the
+  // routing one before it and the process lookup after it do
+  const nested = spyOn(kiro, "kiroCodexProcess").mockImplementation(async () => ++probes === 2 ? null : live);
+  try {
+    // Then the pane keeps its nested provenance: no weak match, the terminal stands in
+    await expect(paneTranscript(root, home, snapshot)).rejects.toMatchObject({ message: "no_session_path" });
+  } finally { nested.mockRestore(); }
+});
+
+it("takes no thread herdr reports for a nested pane on the report alone, however fresh it looks", async () => {
+  // Given a Kiro pane whose agent.get reports a thread begun after its nested Codex started, and an
+  // empty screen: an unlabelled nested peer could have begun it, and nothing here tells them apart
+  agentFolders = { cwd: root };
+  foreground = [{ pid: 2147483647, argv: ["zsh (kiro-cli-term)"] }];
+  shellPid = 2147483647;
+  screen = "";
+  const db = new Database(join(home, "state_5.sqlite"));
+  db.query("UPDATE threads SET created_at = 1001").run();
+  db.close();
+  const snapshot = { panes: [{
+    pane_id: root, workspace_id: root, tab_id: root, terminal_id: root,
+    cwd: root, agent_status: "unknown", focused: false, revision: 0,
+  }], workspaces: [], tabs: [], agents: [], layouts: [], protocol: 1, version: "test" } satisfies SessionSnapshot;
+  const nested = spyOn(kiro, "kiroCodexProcess").mockResolvedValue({ pid: 2147483646, argv: ["codex"], identity: "10:1,20:1,2147483646:1" });
+  const lower = spyOn(processStart, "processStartLowerBound").mockReturnValue(1_000_000);
+  const upper = spyOn(processStart, "processStartUpperBound").mockReturnValue(1_000_000);
+  try {
+    for (const kind of ["path", "id"] as const) {
+      reportedSession = { source: "herdr:codex", agent: "codex", kind, value: kind === "path" ? path : thread };
+      // Then the terminal stands in, in the chat and for a background reader
+      await expect(paneTranscript(root, home, snapshot)).rejects.toMatchObject({ message: "no_session_path" });
+      expect(await codexOpenRollout(root, root, home)).toBeNull();
+    }
+  } finally { nested.mockRestore(); lower.mockRestore(); upper.mockRestore(); }
+});
+
+it("takes no long answer a nested pane only quotes in a prompt or a queued message", async () => {
+  agentFolders = { cwd: root };
+  foreground = [{ pid: 2147483647, argv: ["zsh (kiro-cli-term)"] }];
+  shellPid = 2147483647;
+  const snapshot = { panes: [{
+    pane_id: root, workspace_id: root, tab_id: root, terminal_id: root,
+    cwd: root, agent_status: "unknown", focused: false, revision: 0,
+  }], workspaces: [], tabs: [], agents: [], layouts: [], protocol: 1, version: "test" } satisfies SessionSnapshot;
+  const nested = spyOn(kiro, "kiroCodexProcess").mockResolvedValue({ pid: 2147483646, argv: ["codex"], identity: "10:1,20:1,2147483646:1" });
+  try {
+    for (const quoted of [
+      `OpenAI Codex (v0.165.0)\n\n› Explain this quoted answer: ${answer}\n\n• Working (2s • esc to interrupt)\n\n› `,
+      `OpenAI Codex (v0.165.0)\n\n• Working (2s • esc to interrupt)\n  ↳ Explain this quoted answer: ${answer}\n\n› `,
+    ]) {
+      screen = quoted;
+      await expect(paneTranscript(root, home, snapshot)).rejects.toMatchObject({ message: "no_session_path" });
+    }
+    // its own answer shown as one still tells
+    screen = `OpenAI Codex (v0.165.0)\n\n› Explain the selection\n\n• ${answer}\n\n› `;
+    expect(await paneTranscript(root, home, snapshot)).toMatchObject({ source: "codex-transcript", path });
+  } finally { nested.mockRestore(); }
+});
 
 it("does not reuse a nested conversation binding after a process birth changes with the same PIDs", async () => {
   unlabelled = true;

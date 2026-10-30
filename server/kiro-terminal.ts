@@ -15,6 +15,14 @@ function wrapperPid(info: ProcessInfo | undefined): number | null {
     && wrapper.argv[0] === "zsh (kiro-cli-term)" ? wrapper.pid : null;
 }
 
+/**
+ * Whether herdr reports Kiro's shell-integration wrapper as the pane's one foreground process: a fact of
+ * herdr's own, so the pane stays a nested terminal while a process-table probe fails or races.
+ */
+export function kiroWrapper(info: ProcessInfo | undefined): boolean {
+  return wrapperPid(info) !== null;
+}
+
 export function parseTerminalProcesses(text: string): TerminalProcess[] {
   return text.split("\n").flatMap((line) => {
     const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\s+(\S+)\s+(.+)$/);
