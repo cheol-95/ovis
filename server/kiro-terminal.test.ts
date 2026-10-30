@@ -12,7 +12,22 @@ const table = () => parseTerminalProcesses(`
 
 it("selects only the known wrapper's nested foreground Codex", async () => {
   expect(nestedCodex(info, table())?.codex.pid).toBe(30);
-  expect(await kiroCodexProcess(info, "darwin", async () => table(), () => 1)).toEqual({ pid: 30, argv: ["codex"] });
+  expect(await kiroCodexProcess(info, "darwin", async () => table(), () => 1)).toEqual({
+    pid: 30, argv: ["codex"], identity: "10:1,20:1,30:1",
+  });
+});
+
+it("changes the binding identity when any nested process is replaced between requests", async () => {
+  const discover = (replaced?: number) => kiroCodexProcess(info, "darwin", async () => table(), (pid) => pid === replaced ? 2 : 1);
+  const first = await discover();
+  expect(first).not.toBeNull();
+  expect(await discover()).toEqual(first);
+  for (const pid of [10, 20, 30]) {
+    const replacement = await discover(pid);
+    expect(replacement).not.toBeNull();
+    expect(replacement!.pid).toBe(first!.pid);
+    expect(replacement!.identity).not.toBe(first!.identity);
+  }
 });
 
 it("does not search normal shells or other platforms", async () => {

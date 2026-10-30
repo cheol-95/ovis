@@ -49,9 +49,9 @@ async function processTable(): Promise<TerminalProcess[]> {
   return parseTerminalProcesses(stdout);
 }
 
-/** No remembered binding: both topology and process births must still agree after a second read. */
+/** Verify both reads; retain process births so later requests cannot reuse a replaced process's binding. */
 export async function kiroCodexProcess(info: ProcessInfo | undefined, platform = process.platform,
-  read = processTable, birth = processStartedAt): Promise<{ pid: number; argv: string[] } | null> {
+  read = processTable, birth = processStartedAt): Promise<{ pid: number; argv: string[]; identity: string } | null> {
   const pid = wrapperPid(info);
   if (platform !== "darwin" || pid === null) return null;
   try {
@@ -65,6 +65,7 @@ export async function kiroCodexProcess(info: ProcessInfo | undefined, platform =
     const second = nestedCodex(info, await read());
     if (second === null || JSON.stringify(first) !== JSON.stringify(second)
       || birth(pid) !== wrapperBirth || birth(first.shell.pid) !== shellBirth || birth(first.codex.pid) !== codexBirth) return null;
-    return { pid: first.codex.pid, argv: [first.codex.command] };
+    const identity = `${pid}:${wrapperBirth},${first.shell.pid}:${shellBirth},${first.codex.pid}:${codexBirth}`;
+    return { pid: first.codex.pid, argv: [first.codex.command], identity };
   } catch { return null; }
 }

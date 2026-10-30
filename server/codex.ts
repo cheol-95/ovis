@@ -2034,7 +2034,7 @@ async function codexProcessesOf(paneId: string): Promise<{ list: { pid: number; 
   const processInfo = await paneProcessInfo(paneId);
   // herdr's schema allows `argv: null`; this reader has always read argv as absent or a list
   // (the cast is the inline result type herdrRpc was given before the typed seam)
-  let list = ((processInfo?.foreground_processes ?? []) as { pid: number; argv?: string[] }[])
+  const list = ((processInfo?.foreground_processes ?? []) as { pid: number; argv?: string[] }[])
     .map((foreground) => {
       if (foreground.argv?.length || process.platform !== "linux") return foreground;
       // herdr can report only pid/name. Read this process, never infer argv from
@@ -2065,7 +2065,8 @@ async function codexProcessesOf(paneId: string): Promise<{ list: { pid: number; 
     });
   if (list.length === 0) {
     const nested = await kiroCodexProcess(processInfo);
-    if (nested !== null) list = [nested];
+    // A PID can be reused between reads: the verified births identify the whole nested chain.
+    if (nested !== null) return { list: [nested], key: `kiro:${nested.identity}` };
   }
   return { list, key: list.map((process) => process.pid).sort((left, right) => left - right).join(",") };
 }

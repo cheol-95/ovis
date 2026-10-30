@@ -104,17 +104,40 @@ it("reads an unlabelled pane only when the Kiro foreground check proves its nest
   unlabelled = true;
   foreground = [{ pid: 2147483647, argv: ["zsh (kiro-cli-term)"] }];
   screen = answer;
-  const nested = spyOn(kiro, "kiroCodexProcess").mockResolvedValue({ pid: 2147483646, argv: ["codex"] });
+  const nested = spyOn(kiro, "kiroCodexProcess").mockResolvedValue({ pid: 2147483646, argv: ["codex"], identity: "10:1,20:1,2147483646:1" });
   const snapshot = { panes: [{ pane_id: root, cwd: root, agent_status: "unknown" }] } as SessionSnapshot;
   try {
     expect(await paneTranscript(root, home, snapshot)).toMatchObject({ source: "codex-transcript", path });
     // Without a substantial answer, do not fall through to weaker short-exchange heuristics.
     foreground = [{ pid: 2147483645, argv: ["zsh (kiro-cli-term)"] }];
-    nested.mockResolvedValue({ pid: 2147483644, argv: ["codex"] });
+    nested.mockResolvedValue({ pid: 2147483644, argv: ["codex"], identity: "10:1,20:1,2147483644:1" });
     screen = "OpenAI Codex (v0.165.0)\n› hello\n• Hello!\n› ";
     await expect(paneTranscript(root, home, snapshot)).rejects.toMatchObject({ message: "no_session_path" });
     nested.mockResolvedValue(null);
     await expect(paneTranscript(root, home, snapshot)).rejects.toMatchObject({ message: "no_recognized_transcript" });
+  } finally { nested.mockRestore(); }
+});
+
+it("does not reuse a nested conversation binding after a process birth changes with the same PIDs", async () => {
+  unlabelled = true;
+  foreground = [{ pid: 2147483647, argv: ["zsh (kiro-cli-term)"] }];
+  const original = { pid: 2147483646, argv: ["codex"], identity: "10:1,20:1,2147483646:1" };
+  const nested = spyOn(kiro, "kiroCodexProcess").mockResolvedValue(original);
+  try {
+    for (const identity of ["10:2,20:1,2147483646:1", "10:1,20:2,2147483646:1", "10:1,20:1,2147483646:2"]) {
+      nested.mockResolvedValue(original);
+      screen = answer;
+      expect(await resolve()).toBe(path);
+      screen = "";
+      expect(await resolve()).toBe(path);
+      expect(await codexOpenRollout(root, root, home)).toBe(path);
+      // Resuming an existing thread need not create a newer database row or change the PID.
+      nested.mockResolvedValue({ ...original, identity });
+      expect(await codexOpenRollout(root, root, home)).toBeNull();
+      expect(await resolve()).toBeNull();
+      screen = answer;
+      expect(await resolve()).toBe(path);
+    }
   } finally { nested.mockRestore(); }
 });
 
