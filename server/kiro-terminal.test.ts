@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
 import type { ProcessInfo } from "./herdr/client.ts";
-import { kiroCodexProcess, kiroWrapper, nestedCodex, parseTerminalProcesses, type TerminalProcess } from "./kiro-terminal.ts";
+import { kiroCodexProcess, kiroNested, kiroWrapper, nestedCodex, parseTerminalProcesses, type TerminalProcess } from "./kiro-terminal.ts";
 
 const info = { shell_pid: 10, foreground_processes: [{ pid: 10, argv: ["zsh (kiro-cli-term)"] }] } as ProcessInfo;
 const table = () => parseTerminalProcesses(`
@@ -69,4 +69,14 @@ it("reads herdr's wrapper fact on macOS only, and only for the wrapper herdr sta
   expect(kiroWrapper({ ...info, shell_pid: 11 } as ProcessInfo, "darwin")).toBe(false);
   expect(kiroWrapper({ ...info, foreground_processes: [{ pid: 10, argv: ["/bin/zsh"] }] } as ProcessInfo, "darwin")).toBe(false);
   expect(kiroWrapper(undefined, "darwin")).toBe(false);
+});
+
+it("tells a nested pane on macOS by the wrapper, or by missing process facts for a pane herdr does not label Codex", () => {
+  expect(kiroNested(info, true, "darwin")).toBe(true);
+  expect(kiroNested(undefined, false, "darwin")).toBe(true);
+  // herdr labels it Codex, or another platform: a plain pane, as on main
+  expect(kiroNested(undefined, true, "darwin")).toBe(false);
+  expect(kiroNested(undefined, false, "linux")).toBe(false);
+  expect(kiroNested(info, false, "linux")).toBe(false);
+  expect(kiroNested({ shell_pid: 10, foreground_processes: [{ pid: 10, argv: ["/bin/zsh"] }] } as ProcessInfo, false, "darwin")).toBe(false);
 });

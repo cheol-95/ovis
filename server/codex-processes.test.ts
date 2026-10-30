@@ -112,10 +112,14 @@ const resolve = () => codexTranscriptPath(root, root, home, [{
   agent: "codex", agent_status: "working", cwd: root, focused: false, revision: 0,
 }]);
 
-/** kiroWrapper as on macOS, where Kiro's wrapper is proven: the real check, with the platform pinned. */
+/** Kiro's wrapper checks as on macOS, where its Codex is proven: the real checks, with the platform pinned. */
 function asOnMac() {
-  const real = kiro.kiroWrapper;
-  return spyOn(kiro, "kiroWrapper").mockImplementation((info) => real(info, "darwin"));
+  const wrapper = kiro.kiroWrapper, nestedPane = kiro.kiroNested;
+  const spies = [
+    spyOn(kiro, "kiroWrapper").mockImplementation((info) => wrapper(info, "darwin")),
+    spyOn(kiro, "kiroNested").mockImplementation((info, labelled) => nestedPane(info, labelled, "darwin")),
+  ];
+  return { mockRestore: () => { for (const spy of spies) spy.mockRestore(); } };
 }
 
 it("reads an unlabelled pane only when the Kiro foreground check proves its nested Codex", async () => {
@@ -309,13 +313,19 @@ it.skipIf(process.platform !== "linux")("reads no conversation from the default 
     pane_id: root, workspace_id: root, tab_id: root, terminal_id: root,
     cwd: root, agent_status: "unknown", focused: false, revision: 0,
   }], workspaces: [], tabs: [], agents: [], layouts: [], protocol: 1, version: "test" } satisfies SessionSnapshot;
+  const live = { pid: child.pid, argv: ["codex"], identity: `10:1,20:1,${child.pid}:1` };
   let probes = 0;
-  // When only the probe that chooses the store (the second, paneCodexHome's) fails to prove the Codex
-  const nested = spyOn(kiro, "kiroCodexProcess").mockImplementation(async () => ++probes === 2 ? null : { pid: child.pid, argv: ["codex"], identity: `10:1,20:1,${child.pid}:1` });
+  const nested = spyOn(kiro, "kiroCodexProcess");
   const mac = asOnMac();
   try {
-    // Then the conversation found in the default store is not taken for the pane's
-    await expect(paneTranscript(root, undefined, snapshot)).rejects.toMatchObject({ message: "no_session_path" });
+    // When the probe that chooses the store (the second, paneCodexHome's) fails to prove the Codex, and
+    // the lookup's after it proves it; and when every probe after the lookup's fails as well
+    for (const failed of [(probe: number) => probe === 2, (probe: number) => probe === 2 || probe >= 4]) {
+      probes = 0;
+      nested.mockImplementation(async () => failed(++probes) ? null : live);
+      // Then the conversation found in the default store is not taken for the pane's
+      await expect(paneTranscript(root, undefined, snapshot)).rejects.toMatchObject({ message: "no_session_path" });
+    }
   } finally {
     nested.mockRestore(); mac.mockRestore();
     if (defaultBefore === undefined) delete process.env["CODEX_HOME"]; else process.env["CODEX_HOME"] = defaultBefore;
@@ -327,7 +337,9 @@ it("takes no long answer the screen shows only as a tool's output", async () => 
   // Given a pane still working, whose `cat` printed another conversation's long answer
   screen = `OpenAI Codex (v0.165.0)\n\n› Show the notes\n\n• Ran cat notes.txt\n  └ ${answer}\n    (2 more lines)\n\n• Working (3s • esc to interrupt)\n\n› `;
   expect(await resolve()).toBeNull();
-  // its own answer shown as one still tells
+  // its own answer shown as one still tells, a tree it draws included (first: a match binds the pane)
+  screen = `OpenAI Codex (v0.165.0)\n\n› Show the layout\n\n• Here is the layout:\n  root\n  ├ notes\n  └ ${answer}\n\n› `;
+  expect(await resolve()).toBe(path);
   screen = `OpenAI Codex (v0.165.0)\n\n› Show the notes\n\n• ${answer}\n\n› `;
   expect(await resolve()).toBe(path);
 });

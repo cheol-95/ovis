@@ -24,6 +24,15 @@ export function kiroWrapper(info: ProcessInfo | undefined, platform = process.pl
   return platform === "darwin" && wrapperPid(info) !== null;
 }
 
+/**
+ * Whether a Codex pane is a nested terminal, on macOS: herdr reports Kiro's wrapper (kiroWrapper), or
+ * herdr's process facts are missing for a pane it does not label Codex, whose Codex was then inferred
+ * (a wrapper's, or its probe would have found none). Elsewhere a pane is never nested.
+ */
+export function kiroNested(info: ProcessInfo | undefined, labelled: boolean, platform = process.platform): boolean {
+  return platform === "darwin" && (wrapperPid(info) !== null || (info === undefined && !labelled));
+}
+
 export function parseTerminalProcesses(text: string): TerminalProcess[] {
   return text.split("\n").flatMap((line) => {
     const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\s+(\S+)\s+(.+)$/);

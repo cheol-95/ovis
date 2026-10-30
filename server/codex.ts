@@ -14,7 +14,7 @@ import { trimOutput } from "./tool-output.ts";
 import type { TranscriptParser } from "./transcript-records.ts";
 import type { AgentInfo } from "../shared/herdr-api.generated.ts";
 import { agentGet, HerdrError, paneGet, paneProcessInfo, paneRead, sessionSnapshot } from "./herdr/client.ts";
-import { kiroCodexProcess, kiroWrapper } from "./kiro-terminal.ts";
+import { kiroCodexProcess, kiroNested, kiroWrapper } from "./kiro-terminal.ts";
 import { resolveAgent } from "./pane-context.ts";
 import { codexStartScreenUnused } from "./start-screen.ts";
 
@@ -932,17 +932,20 @@ const promptKey = (text: string): string => text.normalize("NFKC").replace(/^\s*
 /**
  * A Codex screen cut at what was typed: each prompt (a line Codex starts with "›", a prompt sent or
  * the input box, or an indented "↳", a message queued to be sent; with the indented and blank lines
- * it wraps onto), each tool's output (an indented "└" and the lines below it) and the stretches
+ * it wraps onto), each tool's output (an indented "└" right below its call, and the lines below it) and the stretches
  * between them. Neither a prompt nor a tool's output is evidence of the conversation shown: either may
  * quote any conversation's answer.
  */
 function codexScreenParts(screen: string): { prompt: boolean; tool?: true; text: string }[] {
   const parts: { prompt: boolean; tool?: true; text: string }[] = [];
+  let previous = "";
   for (const line of screen.split("\n")) {
     const last = parts.at(-1);
     const prompt = /^(?:\u203a|\s*\u21b3(?:\s|$))/.test(line);
-    // a tool's output: an indented "\u2514" and the lines indented below it, which may hold any text
-    const tool = !prompt && /^\s+\u2514(?:\s|$)/.test(line);
+    // a tool's output: "\u2514" on the line right below its call's bullet, and the lines indented below
+    // it, which may hold any text; a "\u2514" further into an answer (a tree it draws) is the answer's
+    const tool = !prompt && previous.startsWith("\u2022") && /^\s+\u2514(?:\s|$)/.test(line);
+    previous = line;
     if (prompt || tool) parts.push({ prompt, ...(tool ? { tool } : {}), text: line });
     else if (last !== undefined && (last.prompt || last.tool) && /^(?:\s|$)/.test(line)) last.text += `\n${line}`;
     else if (last !== undefined && !last.prompt && !last.tool) last.text += `\n${line}`;
@@ -2147,10 +2150,8 @@ async function codexAgentInfo(paneId: string): Promise<Pick<AgentInfo, "agent_se
     const agent = await agentGet(paneId);
     const info = await paneProcessInfo(paneId).catch(() => undefined);
     // herdr's own report that the outer PTY is Kiro's wrapper keeps the guard, whether or not one more
-    // process-table probe proves its Codex: a failed or racing probe must not make this a plain pane.
-    // A pane herdr does not label Codex is one whose Codex was inferred: without its process facts, the
-    // guard stays too
-    return kiroWrapper(info) || (info === undefined && agent.agent !== "codex") ? { ...agent, nestedTerminal: true } : agent;
+    // process-table probe proves its Codex: a failed or racing probe must not make this a plain pane
+    return kiroNested(info, agent.agent === "codex") ? { ...agent, nestedTerminal: true } : agent;
   }
   catch (error) {
     // herdr's wrapper fact, as above: the process lookup that follows proves the Codex or finds none
@@ -2608,7 +2609,7 @@ export async function codexOpenRollout(paneId: string, cwd: string | null | unde
  * conversation a TUI shows: when nothing of this folder tells, the screen is matched against
  * all of them (loadedConversation).
  */
-export async function codexTranscriptPath(paneId: string, cwd: string, home = defaultCodexHome(), panes?: HerdrPane[]): Promise<string | null> {
+export async function codexTranscriptPath(paneId: string, cwd: string, home = defaultCodexHome(), panes?: HerdrPane[], homeUnplaced = false): Promise<string | null> {
   if (panes !== undefined) {
     const open = new Set(panes.map((pane) => pane.pane_id));
     for (const pane of [...boundRollouts.keys()]) if (!open.has(pane)) boundRollouts.delete(pane);
@@ -2619,6 +2620,10 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   const { codexProcesses, processes, open } = await openRollouts(paneId, home);
   // Earlier wrapper probes do not prove Codex still runs; residual screen text cannot replace that proof.
   if (agent.nestedTerminal && codexProcesses.length === 0) return null;
+  // `home` was chosen while no Codex process of the pane was seen (paneCodexHomePlaced): one seen now
+  // must write there, or what this store holds is not its conversation
+  const first = codexProcesses[0];
+  if (homeUnplaced && first !== undefined && ((await processCodexHome(first.pid, first.argv)) ?? defaultCodexHome()) !== home) return null;
   if (open.size === 1) return [...open][0]!;
   const resumed = resumedThread(codexProcesses.map((process) => process.argv ?? []));
 

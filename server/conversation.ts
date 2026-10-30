@@ -1405,10 +1405,9 @@ async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: strin
     if (agent === "codex") {
       // the pane's own store: the rollout, its history and its images are all read from there
       const { home, placed } = await paneCodexHomePlaced(paneId, codexHome);
-      const path = await codexTranscriptPath(paneId, cwd, home, panes);
+      // a store chosen while no Codex process of the pane was seen is checked against the one the lookup proves
+      const path = await codexTranscriptPath(paneId, cwd, home, panes, !placed);
       if (!path) throw new ConversationUnavailable("no_session_path");
-      // a store chosen while no Codex process of the pane was seen holds no proof: one found since may write elsewhere
-      if (!placed && (await paneCodexHomePlaced(paneId, codexHome)).home !== home) throw new ConversationUnavailable("no_session_path");
       return { source: "codex-transcript", path, codexHome: home };
     }
     // Claude's project is the directory it started in, the process's own cwd more often than the pane's
