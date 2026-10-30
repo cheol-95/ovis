@@ -15,7 +15,7 @@ import { Toggle } from "./SettingsControls.tsx";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { useAgentSkills } from "../lib/useAgentSkills.ts";
 import { useT } from "../lib/i18n.ts";
-import { latestRead } from "../lib/latestRead.ts";
+import { latestRead, READ_AGAIN_MS, READ_AGAIN_TIMES, readAgainUntil } from "../lib/latestRead.ts";
 import { useSettings } from "../lib/settings.ts";
 import { launchCapabilities, modelSuggestions } from "../lib/agentLaunchMode.ts";
 import { MAX_COMPOSER_CHARS } from "../lib/compose.ts";
@@ -226,6 +226,11 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
     if (wasAdding.current && !refreshing) { wasAdding.current = false; firstFieldRef.current?.focus(); }
   }, [adding, refreshing]);
 
+  // the read-again loop after Add another agent… installs one (addedAgent below): stopped on close,
+  // reopen and unmount
+  const readingAgain = useRef<() => void>(() => undefined);
+  useEffect(() => () => readingAgain.current(), []);
+  useEffect(() => { readingAgain.current(); }, [open]);
   if (!open) return null;
 
   const selectedAgent = agents.find((agent) => agent.kind === agentKind);
@@ -254,19 +259,34 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
   };
 
   // the installed agent is offered once the PC lists it: picked then, else said why not
+  // the installed agent is offered once the PC lists it: picked then. Its installer may still be
+  // editing the shell profile the PC reads the PATH from: until then the dialog says why and reads
+  // again, every READ_AGAIN_MS for about a minute (lib/latestRead.ts readAgainUntil)
   const addedAgent = (kind: string): void => {
     const opening = openings.current;
     setAdding(false);
     setRefreshing(true);
-    const latest = agentReads.current();
-    void fetchAgentKinds().then((next) => {
-      if (openings.current !== opening || !latest()) return;
-      setAgents(next);
-      const added = next.find((agent) => agent.kind === kind);
-      if (added) { pickAgent(kind); setError(null); }
-      else setError({ message: t("It is installed, but this PC does not offer it here yet. Restart Ovis on the PC, or start it in a terminal tab."), detail: null });
-    }, (reason: unknown) => { if (openings.current === opening && latest()) setError(userErrorMessage(reason)); })
-      .finally(() => { if (openings.current === opening && latest()) setRefreshing(false); });
+    readingAgain.current();
+    // the fields stay off while it waits: nothing the user picks or starts meanwhile is overridden; each
+    // read's outcome is taken once (a late answer after its deadline is ignored), and the last one,
+    // a stalled read included, turns the fields back on
+    readingAgain.current = readAgainUntil(() => { agentReads.current(); return fetchAgentKinds(); }, {
+      every: READ_AGAIN_MS,
+      times: READ_AGAIN_TIMES,
+      later: (run, ms) => { const timer = window.setTimeout(run, ms); return () => window.clearTimeout(timer); },
+      apply: (outcome, last) => {
+        if (openings.current !== opening) return true;
+        if (outcome.kind === "answer") {
+          setAgents(outcome.value);
+          if (outcome.value.some((agent) => agent.kind === kind)) { pickAgent(kind); setError(null); setRefreshing(false); return true; }
+        }
+        if (!last) { setError({ message: t("It is installed. Waiting for this PC to offer it here…"), detail: null }); return false; }
+        if (outcome.kind === "failed") setError(userErrorMessage(outcome.reason));
+        else setError({ message: t("It is installed, but this PC does not offer it here yet. Restart Ovis on the PC, or start it in a terminal tab."), detail: null });
+        setRefreshing(false);
+        return true;
+      },
+    });
   };
 
   const insertSkill = (skill: SlashCommand): void => {

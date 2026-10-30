@@ -167,6 +167,8 @@ export class ShellAgentLocator {
   /** when the last run ended; null before the first */
   #checkedAt: number | null = null;
   #running: Promise<void> | null = null;
+  /** a refresh waiting for the run before it to end */
+  #queued: Promise<void> | null = null;
   /** why the last run found no PATH, as last logged; null after one that found it */
   #failure: string | null = null;
   #abort = new AbortController();
@@ -197,8 +199,9 @@ export class ShellAgentLocator {
     if (this.#stopped) return Promise.resolve();
     if (this.#running !== null) return this.#running;
     if (this.#checkedAt !== null && this.#now() - this.#checkedAt < this.#ttlMs) return Promise.resolve();
-    this.#running = this.#lookup(probe).finally(() => { this.#running = null; });
-    return this.#running;
+    const run: Promise<void> = this.#lookup(probe).finally(() => { if (this.#running === run) this.#running = null; });
+    this.#running = run;
+    return run;
   }
 
   async #lookup(probe: LoginPathProbe): Promise<void> {
@@ -240,6 +243,22 @@ export class ShellAgentLocator {
     if (late === null || !isAbsolute(late) || !isExecutableFile(late)) return null;
     this.#found.set(kind, late);
     return late;
+  }
+
+  /**
+   * Asks the login shell again, whatever the kept answer's age (an install may have changed its PATH):
+   * a run already out may have read the PATH before the install, so this one starts after it, and
+   * every read meanwhile waits for it.
+   */
+  refresh(): Promise<void> {
+    if (this.#probe === null || this.#stopped) return Promise.resolve();
+    // one already waiting to start covers this one too
+    if (this.#queued !== null) return this.#queued;
+    const probe = this.#probe;
+    const run: Promise<void> = (this.#running ?? Promise.resolve()).then(() => { if (this.#queued === run) this.#queued = null; return this.#lookup(probe); }).finally(() => { if (this.#running === run) this.#running = null; });
+    this.#queued = run;
+    this.#running = run;
+    return run;
   }
 
   /** Kills a login shell still running and runs no more; later lookups use this server's PATH and the last run's answer. */

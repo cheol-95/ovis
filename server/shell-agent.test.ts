@@ -204,6 +204,24 @@ it("finds a kind installed on the kept login PATH after a miss, with no new logi
   expect(runs()).toBe(1);
 });
 
+it("a refresh asked for while a run is out runs a new one after it, which every later read waits for", async () => {
+  const f = fixture();
+  const { probe, runs, found } = manual();
+  let clock = 0;
+  const locator = new ShellAgentLocator({ platform: "linux", servicePath: f.servicePath, probe, now: () => clock });
+  const first = locator.executable("omo");
+  // the install lands while that run, which read the PATH before it, is out
+  const refreshed = locator.refresh();
+  found(`${f.root}:/usr/bin`);
+  expect(await first).toBeNull();
+  writeFileSync(join(f.loginBin, "omo"), "#!/bin/sh\n", { mode: 0o755 });
+  expect(runs()).toBe(2);
+  found(`${f.loginBin}:/usr/bin`);
+  await refreshed;
+  expect(await locator.executable("omo")).toBe(join(f.loginBin, "omo"));
+  expect(runs()).toBe(2);
+});
+
 it("runs no login shell until asked, and again only once its answer is older than the TTL", async () => {
   const f = fixture();
   const { probe, runs } = counted(async () => ({ path: `${f.loginBin}:/usr/bin` }));

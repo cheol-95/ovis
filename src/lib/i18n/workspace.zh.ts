@@ -94,4 +94,5 @@ export const WORKSPACE_ZH: Record<string, string> = {
   "Uses the workspace's folder": "直接使用工作区的文件夹",
   "Add another agent…": "添加其他代理…",
   "It is installed, but this PC does not offer it here yet. Restart Ovis on the PC, or start it in a terminal tab.": "已经安装，但这台电脑还没有在这里提供它。请在电脑上重启 Ovis，或在终端标签页中启动它。",
+  "It is installed. Waiting for this PC to offer it here…": "已安装。正在等待这台电脑在这里提供它…",
 };

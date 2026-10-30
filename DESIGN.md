@@ -3372,8 +3372,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   tile (a tap on it opens that tab); once the catalog lists the agent the tile is an installed one,
   picked. Several can install at once, and Start does not wait for them: an install runs on in its
   tab. One that never shows up stops after ten minutes with Try again. The guide has no sign-in step:
-  the agent asks for its own when it first starts. Plan usage turns on by itself for accounts already
-  signed in.
+  the agent asks for its own when it first starts. On a first run, plan usage turns on by itself for
+  accounts already signed in; the guide opened again from Settings changes no setting (nor says it
+  will).
 - "Start with …" and beside it a plain "Connect your phone", which opens a `--bg-panel` box under them:
   a QR code that opens the app on the phone with a fresh pairing code filled in, the address and the
   code. The code is asked for when the box opens and never renewed behind the user's back (it would

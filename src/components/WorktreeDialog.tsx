@@ -19,7 +19,7 @@ import { AddAgentPanel } from "./AddAgentPanel.tsx";
 import { AgentPicker, rememberAgent, rememberedAgent } from "./AgentPicker.tsx";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import { useT } from "../lib/i18n.ts";
-import { latestRead } from "../lib/latestRead.ts";
+import { latestRead, READ_AGAIN_MS, READ_AGAIN_TIMES, readAgainUntil } from "../lib/latestRead.ts";
 import { useSettings } from "../lib/settings.ts";
 import { launchAgent } from "../lib/agentLaunchMode.ts";
 import { suggestWorktreeBranch, worktreeLabel } from "../lib/worktreeName.ts";
@@ -130,18 +130,34 @@ export function WorktreeDialog({ mode, workspace, onClose, onOpened, onOpenPane 
   }, [adding, refreshing]);
   // the agent list as read last: the read as the dialog opened may answer after the one an install asked for
   const agentReads = useRef(latestRead());
-  // the installed agent is offered once the PC lists it: picked then, else said why not
+  // the installed agent is offered once the PC lists it: picked then. Its installer may still be
+  // editing the shell profile: until then the dialog says why and reads again (lib/latestRead.ts)
+  const readingAgain = useRef<() => void>(() => undefined);
+  useEffect(() => () => readingAgain.current(), []);
   const addedAgent = (kind: string): void => {
     setAdding(false);
     setRefreshing(true);
-    const latest = agentReads.current();
-    fetchAgentKinds().then((next) => {
-      if (!mounted.current || !latest()) return;
-      setAgents(next);
-      if (next.some((agent) => agent.kind === kind)) { setAgentKind(kind); setError(null); }
-      else setError(t("It is installed, but this PC does not offer it here yet. Restart Ovis on the PC, or start it in a terminal tab."));
-    }, (reason: unknown) => { if (mounted.current && latest()) setError(said(reason)); })
-      .finally(() => { if (mounted.current && latest()) setRefreshing(false); });
+    readingAgain.current();
+    // the fields stay off while it waits: nothing the user picks or starts meanwhile is overridden; each
+    // read's outcome is taken once (a late answer after its deadline is ignored), and the last one,
+    // a stalled read included, turns the fields back on
+    readingAgain.current = readAgainUntil(() => { agentReads.current(); return fetchAgentKinds(); }, {
+      every: READ_AGAIN_MS,
+      times: READ_AGAIN_TIMES,
+      later: (run, ms) => { const timer = window.setTimeout(run, ms); return () => window.clearTimeout(timer); },
+      apply: (outcome, last) => {
+        if (!mounted.current) return true;
+        if (outcome.kind === "answer") {
+          setAgents(outcome.value);
+          if (outcome.value.some((agent) => agent.kind === kind)) { setAgentKind(kind); setError(null); setRefreshing(false); return true; }
+        }
+        if (!last) { setError(t("It is installed. Waiting for this PC to offer it here…")); return false; }
+        if (outcome.kind === "failed") setError(said(outcome.reason));
+        else setError(t("It is installed, but this PC does not offer it here yet. Restart Ovis on the PC, or start it in a terminal tab."));
+        setRefreshing(false);
+        return true;
+      },
+    });
   };
 
   const run = async (status: string, request: () => Promise<WorktreeOpened>): Promise<void> => {

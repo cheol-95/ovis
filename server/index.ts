@@ -8,7 +8,7 @@ import { handleIntegrationsRequest } from "./integrations-routes.ts";
 import { randomBytes, randomUUID } from "node:crypto";
 import { OrderSequence } from "./order-sequence.ts";
 import { readHerdrProfiles, type HerdrMachineProfile } from "./herdr-profiles.ts";
-import { accessSync, constants, readFileSync, rmSync } from "node:fs";
+import { accessSync, constants, readFileSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import type { DevicePairedEvent, HealthAuth, PendingMessage, SecuritySummary, SessionSnapshot } from "../shared/protocol.ts";
@@ -24,11 +24,12 @@ import { requestOrigin, serveStatic } from "./static.ts";
 import { compressResponse } from "./compress.ts";
 import { handleTasksRequest } from "./tasks-routes.ts";
 import { handlePlanRequest } from "./plan-routes.ts";
-import { ShellAgentLocator } from "./shell-agent.ts";
+import { SHELL_AGENTS, ShellAgentLocator } from "./shell-agent.ts";
 import { handleAgentsRequest } from "./agents-routes.ts";
 import { AgentDetector, catalogLocator, defaultLoginProbe } from "./agent-catalog-detect.ts";
+import { InstalledLookup } from "./installed-lookup.ts";
 import { agentCatalogFor, handleAgentCatalogRequest } from "./agent-catalog-routes.ts";
-import { catalogPlatform } from "../shared/agent-catalog.ts";
+import { AGENT_CATALOG, catalogPlatform } from "../shared/agent-catalog.ts";
 import { AgentInstaller, INSTALL_PATH, SIGN_IN_PATH } from "./agent-catalog-install.ts";
 import { forgetPageMedia } from "./file-view.ts";
 import { handleFileRequest } from "./file-routes.ts";
@@ -261,6 +262,23 @@ export function createServer(
 
   const shellAgents = options.shellAgents ?? new ShellAgentLocator({ probe: null });
   const agentDetector = options.agentDetector ?? new AgentDetector({ locate: catalogLocator({ probe: null }) });
+  // GET /api/agents: on a PATH a pane's shell starts it from, read again once after an install put it
+  // in its installer's folder (installed-lookup.ts); shell-started kinds through the locator that starts them
+  const catalogPlatformHere = catalogPlatform(process.platform);
+  const installFolder = (binary: string): { path: string; mark: string } | null => {
+    const entry = AGENT_CATALOG.find((candidate) => candidate.detect.binaries.includes(binary));
+    const dirs = entry !== undefined && catalogPlatformHere !== null ? entry.detect.install_dirs?.[catalogPlatformHere] ?? [] : [];
+    const path = catalogPlatformHere === null ? null : agentDetector.inInstallFolder(binary, dirs, catalogPlatformHere);
+    if (path === null) return null;
+    try { return { path, mark: String(statSync(path).mtimeMs) }; } catch { return null; }
+  };
+  const herdrKinds = new InstalledLookup({ onPath: (binary) => agentDetector.onPath(binary), inInstallFolder: installFolder, refresh: () => agentDetector.refreshPath() });
+  const shellKinds = new InstalledLookup({ onPath: (kind) => shellAgents.executable(kind), inInstallFolder: installFolder, refresh: () => shellAgents.refresh() });
+  const agentOffered = (kind: string): Promise<boolean> => {
+    if (kind in SHELL_AGENTS) return shellKinds.has(kind);
+    const entry = AGENT_CATALOG.find((candidate) => candidate.id === kind);
+    return herdrKinds.has(entry?.detect.binaries[0] ?? kind);
+  };
   const agentInstaller = new AgentInstaller(agentDetector);
   const openCodeState = new OpenCodePromptState();
   const draftTimer = setInterval(() => openCodeState.prune(), 60_000);
@@ -603,9 +621,7 @@ export function createServer(
         }
       }
 
-      // the catalog's PATH lookup (service, then login shell), without the installers' own folders: an
-      // agent found only there is not on any PATH herdr's pane shell would start it from
-      const agentsResponse = await handleAgentsRequest(request, pathname, shellAgents, (binary) => agentDetector.executable(binary, [], null));
+      const agentsResponse = await handleAgentsRequest(request, pathname, shellAgents, agentOffered);
       if (agentsResponse) return agentsResponse;
 
       const installResponse = await agentInstaller.handle(request, pathname);

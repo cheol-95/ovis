@@ -23,7 +23,7 @@ import { pairThisBrowser, UnconfirmedPairing } from "../lib/pairing.ts";
 import { isLoopbackHost, phonePlan } from "../lib/phone.ts";
 import { recentDirectories } from "../lib/recent-directories.ts";
 import { useSettings } from "../lib/settings.ts";
-import { agentRows, checkList, foundAgents, installedHere, phoneBoxMode, openInFolder, preferredAgent, settleDelay, setupView, signedInAgents, type CheckStatus, type GuideEvent, type GuideState, type PcCheck } from "../lib/setupGuideFlow.ts";
+import { agentRows, checkList, foundAgents, installedHere, phoneBoxMode, openInFolder, preferredAgent, settleDelay, setupView, signedInAgents, turnsUsageOn, type CheckStatus, type GuideEvent, type GuideState, type PcCheck } from "../lib/setupGuideFlow.ts";
 import { useSignedInUsage } from "../lib/useSetupGuide.ts";
 import { userErrorMessage } from "../lib/userError.ts";
 import { AgentMark } from "./AgentMark.tsx";
@@ -135,7 +135,7 @@ export function SetupGuide(props: SetupGuideProps) {
         </div>
         <p className="visually-hidden" role="status">{announced}</p>
         {view === "checking" && <Checking known={known} catalog={catalog} />}
-        {view === "agents" && catalog !== null && <AgentsScreen catalog={catalog} ready={ready} machineId={machineId} onInstalled={agentInstalled} onLookAgain={loadCatalog} onOpenTerminal={props.onOpenTerminal} onOpened={props.onOpened} onOpenSettings={props.onOpenSettings} auth={props.auth} onStarting={props.onStarting} onPaired={props.onPaired} />}
+        {view === "agents" && catalog !== null && <AgentsScreen catalog={catalog} ready={ready} machineId={machineId} onInstalled={agentInstalled} onLookAgain={loadCatalog} onOpenTerminal={props.onOpenTerminal} onOpened={props.onOpened} onOpenSettings={props.onOpenSettings} auth={props.auth} onStarting={props.onStarting} onPaired={props.onPaired} usageOn={turnsUsageOn(props.state)} />}
         {view === "failed" && <CheckFailed error={catalogError} onLookAgain={loadCatalog} />}
       </div>
     </div>
@@ -213,6 +213,8 @@ function CheckFailed({ error, onLookAgain }: { error: string | null; onLookAgain
 }
 
 interface AgentsScreenProps extends Pick<SetupGuideProps, "onOpenTerminal" | "onOpened" | "onOpenSettings" | "auth" | "onStarting" | "onPaired"> {
+  /** a first run turns plan usage on for a signed-in account; a reopened guide leaves the setting alone */
+  usageOn: boolean;
   catalog: readonly AgentCatalogRow[];
   ready: readonly string[];
   machineId: string;
@@ -221,7 +223,7 @@ interface AgentsScreenProps extends Pick<SetupGuideProps, "onOpenTerminal" | "on
   onLookAgain: () => void;
 }
 
-function AgentsScreen({ catalog, ready, machineId, onInstalled, onLookAgain, onOpenTerminal, onOpened, onOpenSettings, auth, onStarting, onPaired }: AgentsScreenProps) {
+function AgentsScreen({ catalog, ready, machineId, onInstalled, onLookAgain, onOpenTerminal, onOpened, onOpenSettings, auth, onStarting, onPaired, usageOn }: AgentsScreenProps) {
   const t = useT();
   const { settings, update } = useSettings();
   const agents = agentRows(catalog, ready);
@@ -229,7 +231,7 @@ function AgentsScreen({ catalog, ready, machineId, onInstalled, onLookAgain, onO
   const [picked, setPicked] = useState<string | null>(null);
   const chosen = installed.find((agent) => agent.id === picked) ?? preferredAgent(installed, ready.at(-1) ?? null);
   // the agents already signed in here: their plan usage is turned on as soon as they are seen, without a question
-  const signedIn = useSignedInUsage(ready, (refresh) => fetchUsage(refresh).then((report) => signedInAgents(report.providers)), settings.showUsage, () => update({ showUsage: true }));
+  const signedIn = useSignedInUsage(ready, (refresh) => fetchUsage(refresh).then((report) => signedInAgents(report.providers)), settings.showUsage || !usageOn, () => update({ showUsage: true }));
   // the tiles whose install runs: Look again waits for them (a fresh read would end their watch);
   // Start does not: an install runs on in its tab whatever the guide does
   const [installing, setInstalling] = useState<readonly string[]>([]);
@@ -305,7 +307,8 @@ function AgentsScreen({ catalog, ready, machineId, onInstalled, onLookAgain, onO
         ))}
       </ul>
       {Object.values(installErrors).map((message) => <p key={message} className="setup-error" role="alert">{message}</p>)}
-      {signedIn.length > 0 && <p className="setup-note"><Gauge aria-hidden="true" />{t("Plan usage will show in the sidebar for your signed-in accounts.")}</p>}
+      {/* said only where usage shows: a reopened guide leaves a switched-off setting off */}
+      {signedIn.length > 0 && (settings.showUsage || usageOn) && <p className="setup-note"><Gauge aria-hidden="true" />{t("Plan usage will show in the sidebar for your signed-in accounts.")}</p>}
       {error !== null && <p className="setup-error" role="alert">{error}</p>}
       <div className="setup-actions">
         <button type="button" className="btn btn-primary" disabled={opening || (chosen === null && madeWithout === null)} onClick={() => void start()}>
