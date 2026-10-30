@@ -757,6 +757,18 @@ describe("Codex rollout resolution", () => {
     expect(matchCodexTranscript("• The report (output/test/REPORT.md)", candidates)).toBeNull();
   });
 
+  it("matches rendered local file links containing spaces without selecting an ambiguous conversation", () => {
+    for (const target of ["/home/user/My Project/Daily notes/report.md", "C:/Users/User/My Project/report.md",
+      "</home/user/My Project/Daily notes/report.md>", "<C:/Users/User/My Project/report.md>"]) {
+      const linked = `${answer} [Daily report](${target})`;
+      const candidates = [{ path: "own", text: jsonl(message("assistant", linked, "final_answer")) }];
+      const screen = `• ${answer} Daily report (Daily notes/report.md)`;
+      expect(matchCodexTranscript(screen, candidates)).toBe("own");
+      expect(matchCodexTranscript(screen, [...candidates, { ...candidates[0]!, path: "copy" }])).toBeNull();
+      expect(matchCodexTranscript("• Daily report (Daily notes/report.md)", candidates)).toBeNull();
+    }
+  });
+
   // issue #283: no answer of this session reaches 64 letters and digits (40, 29 and 38)
   const short = [
     "세 사진을 확인하고 한 장으로 합칠게요. 이미지 편집을 위해 imagegen 스킬을 사용할게요.",
