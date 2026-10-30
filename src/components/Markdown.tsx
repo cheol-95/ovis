@@ -131,8 +131,10 @@ export function ReservedImage({ src: address, alt, width, className, slot, slotS
   src: string | null; alt: string; width?: number; className?: string; slot: boolean; slotStyle?: CSSProperties; fallback?: ReactNode; onError?: () => void; retry?: number;
 }) {
   const t = useT();
-  const resource = useResourceUrlState(address);
+  const resource = useResourceUrlState(address, retry);
   const src = resource.url;
+  // Transport failures happen before an <img> exists, but must reach the same parent failure path.
+  useEffect(() => { if (resource.error !== null) onError?.(); }, [resource.error, onError]);
   // keyed by address: another one starts from the slot again and never takes the old one's answer
   const [settled, setSettled] = useState<{ src: string; failed: boolean; attempt?: number } | null>(null);
   // an address the transport refused fails like an image that would not decode
@@ -176,7 +178,7 @@ function MarkdownImage({ src, alt, width, fallback, resolve, interactive, standa
       current.failed = failed;
       setPending(false);
       setFailedUrl(null);
-      setLoaded({ src, resolve, preview, retry });
+      setLoaded({ src, resolve, preview, retry: retry + attempt });
     };
     resolve(src).then(
       (preview) => finish(preview),

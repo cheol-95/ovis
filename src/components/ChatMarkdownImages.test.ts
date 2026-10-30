@@ -80,6 +80,78 @@ it("uses the shared transport for pane stats and resolves inline bytes once", as
   expect(resource.searchParams.get("path")).toBe("/foreground/diagram.png");
 });
 
+it("keeps transport byte failures out of inline viewer controls and retries them after reconnect", async () => {
+  // Given inline and standalone failures beside a healthy image, all using transport bytes.
+  const files: string[] = [];
+  const bytes: Array<{ path: string; resolve: (url: string) => void; reject: (error: Error) => void }> = [];
+  setTransport({ ...nativeTransport, kind: "relay", resourceUrl: (path) => new Promise<string>((resolve, reject) => {
+    bytes.push({ path, resolve, reject });
+  }) });
+  const render = async (connected: boolean) => {
+    await act(async () => {
+      const tree = createElement(SettingsProvider, { children:
+        createElement(OpenFileContext.Provider, { value: (path: string) => { files.push(path); }, children:
+          createElement(ChatMarkdownImages, { paneId: "w1:p1", cwd: "/project", connected, onOpen,
+            children: createElement(Markdown, { children: "Before ![Inline](./inline.png) after\n\n![Slot](./slot.png)\n\n![Good](./good.png)" }),
+          }),
+        }),
+      });
+      if (renderer) renderer.update(tree); else renderer = create(tree);
+    });
+  };
+  await render(true);
+  await answer(0, info("/project/inline.png"));
+  await answer(1, info("/project/slot.png"));
+  await answer(2, info("/project/good.png"));
+  await act(async () => { bytes[2]!.resolve("blob:good"); });
+  const good = images()[0]!;
+  await act(async () => { good.props.onLoad(); });
+
+  // When transport byte loads fail before an img can receive an error.
+  await act(async () => {
+    bytes[0]!.reject(new TypeError("relay closed"));
+    bytes[1]!.reject(new TypeError("relay closed"));
+  });
+
+  // Then the inline fallback is one file action, not nested in an image action.
+  expect(buttons().filter((node) => node.props.className === "markdown-image-open")).toHaveLength(0);
+  const file = buttons().find((node) => node.props.className === "markdown-file")!;
+  expect(file.findAll((node) => node !== file && node.type === "button")).toHaveLength(0);
+  await act(async () => { file.props.onClick(); });
+  expect(files).toEqual(["./inline.png"]);
+  expect(opened).toEqual([]);
+  expect(images()).toEqual([good]);
+
+  // Reconnect rechecks only failures, single-flight even across another reconnect.
+  await render(false);
+  await render(true);
+  expect(requests).toHaveLength(5);
+  expect(bytes).toHaveLength(3);
+  await render(false);
+  await render(true);
+  expect(requests).toHaveLength(5);
+  await answer(3, info("/project/inline.png"));
+  await answer(4, info("/project/slot.png"));
+  expect(bytes).toHaveLength(5);
+  expect(bytes.slice(3).map(({ path }) => path)).toEqual(bytes.slice(0, 2).map(({ path }) => path));
+  await render(false);
+  await render(true);
+  expect(requests).toHaveLength(5);
+  expect(bytes).toHaveLength(5);
+  await act(async () => { bytes[3]!.resolve("blob:inline"); bytes[4]!.reject(new TypeError("still closed")); });
+  await render(false);
+  await render(true);
+  expect(requests).toHaveLength(6);
+  await answer(5, { error: { message: "busy" } }, 503);
+  const retry = buttons().find((node) => node.props.className === "btn markdown-image-retry")!;
+  await act(async () => { retry.props.onClick(); });
+  await answer(6, info("/project/slot.png"));
+  expect(bytes).toHaveLength(6);
+  await act(async () => { bytes[5]!.resolve("blob:slot"); });
+  expect(images()).toHaveLength(3);
+  expect(images().find((node) => node.props.alt === "Good")).toBe(good);
+});
+
 it("stats and opens an answer's image on its owning PC and pane, retaining the real filename", async () => {
   await draw({ machine: "other-pc", pane: "w2:p4", cwd: "/project/", text: "![Diagram](./out/chart%20%23%3F.png)" });
   expect(requests[0]!.url.pathname).toBe("/api/machines/other-pc/fs/stat");
