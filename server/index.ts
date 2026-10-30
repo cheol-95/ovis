@@ -226,6 +226,8 @@ export function createServer(
   // a sign-in runs in a herdr tab, which outlives this server: the next one must know its home is taken (#2313)
   usageLogin.persistTo(stateDir);
   const usage = options.usage ?? new UsageService(undefined, undefined, (refresh) => cliProxy.report(refresh));
+  // a sign-in the browser followed ends in the server's own PTY, not a herdr pane: it says so itself
+  usageLogin.onLoginEnded(() => usage.invalidate());
   const voice = options.voice ?? new VoiceService({ stateDir, env: process.env, fetch });
   /** a login named here is taken as it is: a tagged node has none of its own to read (OVIS_TAILSCALE_OWNER) */
   const namedOwner = options.tailscaleOwner !== undefined ? options.tailscaleOwner : process.env["OVIS_TAILSCALE_OWNER"]?.trim() || undefined;
@@ -367,6 +369,8 @@ export function createServer(
         releaseOpenCodeNative();
       });
       piReader.close();
+      // the followed sign-ins run in this server's own terminals: no dialog could reach them once it stops
+      void usageLogin.stopAll();
       void shellAgents.stop();
       agentDetector.close();
       server.stop(true);

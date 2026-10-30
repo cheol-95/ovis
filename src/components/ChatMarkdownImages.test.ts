@@ -6,6 +6,7 @@ import type { FileInfo } from "../../shared/protocol.ts";
 import type { GalleryImage } from "../lib/imageViewer.ts";
 import { MachineContext } from "../lib/machineContext.tsx";
 import { MAX_INLINE_IMAGE_BYTES } from "../lib/markdownImages.ts";
+import { nativeTransport, setTransport } from "../lib/transport.ts";
 import { OpenFileContext } from "../lib/filePaths.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { ChatMarkdownImages } from "./ChatMarkdownImages.tsx";
@@ -50,6 +51,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   if (renderer) await act(async () => { renderer!.unmount(); });
+  setTransport(nativeTransport);
   renderer = undefined;
   for (const [key, descriptor] of descriptors) {
     const target = key === "languages" ? navigator : globalThis;
@@ -57,6 +59,25 @@ afterEach(async () => {
     else Reflect.deleteProperty(target, key);
   }
   descriptors.clear();
+});
+
+it("uses the shared transport for pane stats and resolves inline bytes once", async () => {
+  const resources: string[] = [];
+  let stats = 0;
+  setTransport({ ...nativeTransport, kind: "relay",
+    fetch: (input, init) => { stats++; return nativeTransport.fetch(input, init); },
+    resourceUrl: (path) => { resources.push(path); return `blob:transport-image`; },
+  });
+  await draw({ machine: "other-pc", pane: "w2:p4" });
+  expect(stats).toBe(1);
+  expect(requests[0]!.url.pathname).toBe("/api/machines/other-pc/fs/stat");
+  await answer(0, info("/foreground/diagram.png"));
+  expect(images()[0]!.props.src).toBe("blob:transport-image");
+  expect(resources).toHaveLength(1);
+  const resource = new URL(resources[0]!, "http://test.local");
+  expect(resource.pathname).toBe("/api/machines/other-pc/fs/file");
+  expect(resource.searchParams.get("pane_id")).toBe("w2:p4");
+  expect(resource.searchParams.get("path")).toBe("/foreground/diagram.png");
 });
 
 it("stats and opens an answer's image on its owning PC and pane, retaining the real filename", async () => {

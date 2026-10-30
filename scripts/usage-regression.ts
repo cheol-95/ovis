@@ -282,7 +282,8 @@ const expiredReport = (): UsageReport => ({
 
 /**
  * Sign in again: offered for the expired account on this PC, in the popover and in its Settings row,
- * never for the hub's or Antigravity's; it asks the server by the account's key and hands the tab over.
+ * never for the hub's or Antigravity's; it asks the server by the account's key and follows the login in
+ * a dialog (UsageSignInDialog), whose Open terminal hands the tab over.
  */
 export async function checkUsageSignInAgain(browser: Browser, origin: string): Promise<void> {
   // the account order is shared through the server: whatever an earlier check on it saved (checkUsageMeters
@@ -293,15 +294,45 @@ export async function checkUsageSignInAgain(browser: Browser, origin: string): P
     const context = await usageContext(browser, { viewport: phone ? { width: 390, height: 844 } : { width: 1280, height: 800 }, locale: "en-US", ...(phone ? { hasTouch: true, isMobile: true } : {}) });
     try {
       const posted: unknown[] = [];
+      // a followed start (the dialog) is refused, then runs; Open terminal's start opens the tab
       const answers = [
         { status: 409, json: { error: { code: "cli_unavailable", message: "Install the official CLI on this PC before signing in" } } },
-        { status: 200, json: { pane_id: "w9:p9", workspace_id: "w9", manual: false, device_auth: false } },
+        { status: 200, json: { login_id: "00000000-0000-4000-8000-000000000009", device_auth: false } },
       ];
+      const tab = { status: 200, json: { pane_id: "w9:p9", workspace_id: "w9", manual: false, device_auth: false } };
+      const cancelled: unknown[] = [];
+      // what reached the server, in order: Open terminal's tab starts only once the cancel has been answered
+      const events: string[] = [];
+      // Record the browser's awaited response, not merely arrival at the mock server.
+      await context.addInitScript(() => {
+        const events: string[] = [];
+        Object.assign(window, { usageLoginEvents: events });
+        const original = window.fetch;
+        window.fetch = async (input, init) => {
+          const url = String(input);
+          if (url.endsWith("/api/usage/login") && init?.method === "POST"
+            && typeof init.body === "string" && !JSON.parse(init.body).follow) events.push("tab");
+          const response = await original(input, init);
+          if (url.endsWith("/api/usage/login/cancel")) events.push("cancel");
+          return response;
+        };
+      });
+      await context.route("**/api/usage/login/cancel", async (route) => {
+        cancelled.push(route.request().postDataJSON());
+        events.push("cancel");
+        return route.fulfill({ status: 204 });
+      });
       await context.route("**/api/usage*", (route) => route.fulfill({ json: expiredReport() }));
+      // the dialog reads the provider's sign-ins and the login's screen: a login still starting
+      await context.route("**/api/usage/login?provider=*", (route) => route.fulfill({ json: { accounts: ["me@team.example"] } }));
+      await context.route("**/api/usage/login/prompt*", (route) => route.fulfill({ json: { provider: "claude", url: null, user_code: null, wants_code: false, ended: false } }));
       await context.route("**/api/usage/login", (route) => {
         if (route.request().method() !== "POST") return route.continue();
-        posted.push(route.request().postDataJSON());
-        return route.fulfill(answers[(posted.length - 1) % answers.length]!);
+        const body = route.request().postDataJSON() as { follow?: boolean };
+        posted.push(body);
+        events.push(body.follow ? "follow" : "tab");
+        if (!body.follow) return route.fulfill(tab);
+        return route.fulfill(answers[(posted.filter((sent) => (sent as { follow?: boolean }).follow).length - 1) % answers.length]!);
       });
       await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ showUsage: true })));
       const page = await context.newPage();
@@ -323,12 +354,20 @@ export async function checkUsageSignInAgain(browser: Browser, origin: string): P
         const box = await popover.boundingBox();
         assert.ok(box && box.x >= 0 && box.x + box.width <= 390, "the popover stays inside the phone's screen");
       }
-      // a refusal is said where the button is, and the popover stays
-      await again.click();
-      await popover.getByRole("alert").filter({ hasText: "Install the official CLI on this PC before signing in" }).waitFor();
-      // started: the popover gives way to the sign-in tab
+      // the sign-in is followed in its own dialog, the popover giving way to it; a refusal is said there
+      const following = page.getByRole("dialog", { name: "Sign in to Claude Code", exact: true });
       await again.click();
       await popover.waitFor({ state: "detached" });
+      await following.getByRole("alert").filter({ hasText: "Install the official CLI on this PC before signing in" }).waitFor();
+      await following.getByRole("button", { name: "Done", exact: true }).click();
+      await following.waitFor({ state: "detached" });
+      // started: its Open terminal hands the tab over (a phone's drawer is still out after Done)
+      if (!(await page.locator(".usage-strip").isVisible())) await openDrawer();
+      await page.locator(".usage-strip").click();
+      await popover.getByRole("button", { name: /^Sign in again/ }).click();
+      await following.getByText("Waiting for Claude to show its sign-in page…", { exact: true }).waitFor();
+      await following.getByRole("button", { name: "Open terminal", exact: true }).click();
+      await following.waitFor({ state: "detached" });
 
       await openDrawer();
       await page.locator(".sidebar-footer-row .sidebar-footer-action").click();
@@ -342,10 +381,19 @@ export async function checkUsageSignInAgain(browser: Browser, origin: string): P
       assert.equal(await rows.nth(1).getByRole("button", { name: "Sign in again to Claude · me@team.example", exact: true }).count(), 1);
       assert.equal(await rows.evaluateAll((all) => all.every((row) => row.scrollWidth <= row.clientWidth)), true, "each account row fits, the button included");
       await rowAgain.click();
-      await page.locator(".settings-dialog").getByRole("alert").filter({ hasText: "Install the official CLI" }).waitFor();
+      await following.getByRole("alert").filter({ hasText: "Install the official CLI" }).waitFor();
+      await following.getByRole("button", { name: "Done", exact: true }).click();
+      await following.waitFor({ state: "detached" });
       await rowAgain.click();
+      await following.getByRole("button", { name: "Open terminal", exact: true }).click();
       await page.locator(".settings-dialog").waitFor({ state: "detached" });
-      assert.deepEqual(posted, Array(4).fill({ provider: "claude", account: "claude:team" }), "the server is asked by the account's key, never a path");
+      const followed = { provider: "claude", account: "claude:team", follow: true };
+      const inTab = { provider: "claude", account: "claude:team" };
+      assert.deepEqual(posted, [followed, followed, inTab, followed, followed, inTab], "the server is asked by the account's key, never a path: followed, and in a tab once Open terminal is chosen");
+      assert.deepEqual(cancelled, Array(2).fill({ login: "00000000-0000-4000-8000-000000000009" }), "Open terminal stops the followed sign-in before the tab starts");
+      assert.deepEqual(events, ["follow", "follow", "cancel", "tab", "follow", "follow", "cancel", "tab"], "each tab starts after its followed sign-in was cancelled");
+      assert.deepEqual(await page.evaluate(() => (window as Window & { usageLoginEvents: string[] }).usageLoginEvents),
+        ["cancel", "tab", "cancel", "tab"], "the browser awaits each cancel response before issuing a tab start");
       assert.deepEqual(errors, []);
     } finally {
       await context.close();
