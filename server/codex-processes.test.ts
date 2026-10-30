@@ -301,8 +301,10 @@ it.skipIf(process.platform !== "linux")("reads no conversation from the default 
   // fixture's) holding a conversation the pane's screen shows
   const own = join(root, "own-store");
   mkdirSync(own, { recursive: true });
-  const child = Bun.spawn(["/bin/bash", "-c", 'exec -a codex sleep 600'], { env: { ...process.env, CODEX_HOME: own }, stdout: "ignore", stderr: "ignore" });
+  // READY once the shell runs with its own environment (/proc shows it from then on), then it becomes `codex`
+  const child = Bun.spawn(["/bin/bash", "-c", "echo READY; exec -a codex sleep 600"], { env: { ...process.env, CODEX_HOME: own }, stdout: "pipe", stderr: "ignore" });
   children.push(child);
+  expect(await firstLine(child.stdout)).toBe("READY\n");
   const defaultBefore = process.env["CODEX_HOME"];
   process.env["CODEX_HOME"] = home;
   agentFolders = { cwd: root };
@@ -332,14 +334,41 @@ it.skipIf(process.platform !== "linux")("reads no conversation from the default 
   }
 });
 
+it("reads no conversation from a fallback store when the Codex proven since cannot say where it writes", async () => {
+  // Given the default store holding the conversation the screen shows, and a nested Codex whose
+  // environment cannot be read (another user's process, or one gone)
+  const defaultBefore = process.env["CODEX_HOME"];
+  process.env["CODEX_HOME"] = home;
+  agentFolders = { cwd: root };
+  foreground = [{ pid: 2147483647, argv: ["zsh (kiro-cli-term)"] }];
+  shellPid = 2147483647;
+  screen = answer;
+  const snapshot = { panes: [{
+    pane_id: root, workspace_id: root, tab_id: root, terminal_id: root,
+    cwd: root, agent_status: "unknown", focused: false, revision: 0,
+  }], workspaces: [], tabs: [], agents: [], layouts: [], protocol: 1, version: "test" } satisfies SessionSnapshot;
+  let probes = 0;
+  // When the probe that chooses the store fails and the lookup's proves the Codex
+  const nested = spyOn(kiro, "kiroCodexProcess").mockImplementation(async () => ++probes === 2 ? null : { pid: 2147483646, argv: ["codex"], identity: "10:1,20:1,2147483646:1" });
+  const mac = asOnMac();
+  try {
+    // Then the default store is not taken for its own: nothing says the Codex writes there
+    await expect(paneTranscript(root, undefined, snapshot)).rejects.toMatchObject({ message: "no_session_path" });
+  } finally {
+    nested.mockRestore(); mac.mockRestore();
+    if (defaultBefore === undefined) delete process.env["CODEX_HOME"]; else process.env["CODEX_HOME"] = defaultBefore;
+  }
+});
+
 it("takes no long answer the screen shows only as a tool's output", async () => {
   foreground = [{ pid: 2147483647, argv: ["/usr/bin/codex"] }];
   // Given a pane still working, whose `cat` printed another conversation's long answer
   screen = `OpenAI Codex (v0.165.0)\n\n› Show the notes\n\n• Ran cat notes.txt\n  └ ${answer}\n    (2 more lines)\n\n• Working (3s • esc to interrupt)\n\n› `;
   expect(await resolve()).toBeNull();
-  // its own answer shown as one still tells, a tree it draws included (first: a match binds the pane)
-  screen = `OpenAI Codex (v0.165.0)\n\n› Show the layout\n\n• Here is the layout:\n  root\n  ├ notes\n  └ ${answer}\n\n› `;
-  expect(await resolve()).toBe(path);
+  // nor below a call whose line wraps above its output
+  screen = `OpenAI Codex (v0.165.0)\n\n› Show the notes\n\n• Ran cat /home/user/projects/a-rather-long/path/to/the/notes/that/wraps\n  /notes.txt\n  └ ${answer}\n\n› `;
+  expect(await resolve()).toBeNull();
+  // its own answer shown as one still tells
   screen = `OpenAI Codex (v0.165.0)\n\n› Show the notes\n\n• ${answer}\n\n› `;
   expect(await resolve()).toBe(path);
 });

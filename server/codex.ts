@@ -932,20 +932,19 @@ const promptKey = (text: string): string => text.normalize("NFKC").replace(/^\s*
 /**
  * A Codex screen cut at what was typed: each prompt (a line Codex starts with "›", a prompt sent or
  * the input box, or an indented "↳", a message queued to be sent; with the indented and blank lines
- * it wraps onto), each tool's output (an indented "└" right below its call, and the lines below it) and the stretches
+ * it wraps onto), each tool's output (an indented "└" and the lines below it) and the stretches
  * between them. Neither a prompt nor a tool's output is evidence of the conversation shown: either may
  * quote any conversation's answer.
  */
 function codexScreenParts(screen: string): { prompt: boolean; tool?: true; text: string }[] {
   const parts: { prompt: boolean; tool?: true; text: string }[] = [];
-  let previous = "";
   for (const line of screen.split("\n")) {
     const last = parts.at(-1);
     const prompt = /^(?:\u203a|\s*\u21b3(?:\s|$))/.test(line);
-    // a tool's output: "\u2514" on the line right below its call's bullet, and the lines indented below
-    // it, which may hold any text; a "\u2514" further into an answer (a tree it draws) is the answer's
-    const tool = !prompt && previous.startsWith("\u2022") && /^\s+\u2514(?:\s|$)/.test(line);
-    previous = line;
+    // a tool's output: an indented "\u2514" and the lines indented below it, which may hold any text, as
+    // shownAnswers reads it. A call's line may wrap above it, so it is told by the "\u2514" alone; a tree an
+    // answer draws with one is lost with it, and the screen then tells nothing rather than another's
+    const tool = !prompt && /^\s+\u2514(?:\s|$)/.test(line);
     if (prompt || tool) parts.push({ prompt, ...(tool ? { tool } : {}), text: line });
     else if (last !== undefined && (last.prompt || last.tool) && /^(?:\s|$)/.test(line)) last.text += `\n${line}`;
     else if (last !== undefined && !last.prompt && !last.tool) last.text += `\n${line}`;
@@ -2621,9 +2620,9 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   // Earlier wrapper probes do not prove Codex still runs; residual screen text cannot replace that proof.
   if (agent.nestedTerminal && codexProcesses.length === 0) return null;
   // `home` was chosen while no Codex process of the pane was seen (paneCodexHomePlaced): one seen now
-  // must write there, or what this store holds is not its conversation
+  // must be known to write there (its environment says so), or what this store holds is not proof
   const first = codexProcesses[0];
-  if (homeUnplaced && first !== undefined && ((await processCodexHome(first.pid, first.argv)) ?? defaultCodexHome()) !== home) return null;
+  if (homeUnplaced && first !== undefined && await processCodexHome(first.pid, first.argv) !== home) return null;
   if (open.size === 1) return [...open][0]!;
   const resumed = resumedThread(codexProcesses.map((process) => process.argv ?? []));
 
