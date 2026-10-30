@@ -6,6 +6,7 @@ import type { FileInfo } from "../../shared/protocol.ts";
 import type { GalleryImage } from "../lib/imageViewer.ts";
 import { MachineContext } from "../lib/machineContext.tsx";
 import { MAX_INLINE_IMAGE_BYTES } from "../lib/markdownImages.ts";
+import { OpenFileContext } from "../lib/filePaths.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { ChatMarkdownImages } from "./ChatMarkdownImages.tsx";
 import { InlineMarkdown, Markdown } from "./Markdown.tsx";
@@ -153,22 +154,49 @@ it("keeps a failed image's reserved slot and access to the viewer's download", a
   expect(opened[0]!.file).toBe("diagram.png");
 });
 
-it("retries an offline stat on reconnect, keeping a decoded image when the connection drops", async () => {
-  await draw({ connected: false });
-  await answer(0, { error: { message: "offline" } }, 503);
-  expect(images()).toHaveLength(0);
-  await draw({ connected: false });
-  expect(requests).toHaveLength(1);
-  await draw({ connected: true });
-  expect(requests).toHaveLength(2);
-  await answer(1, info("/project/diagram.png"));
-  const src = images()[0]!.props.src;
-  await draw({ connected: false });
-  expect(images()[0]!.props.src).toBe(src);
-  expect(requests).toHaveLength(2);
-  await draw({ connected: true });
-  expect(requests).toHaveLength(3);
-  expect(images()[0]!.props.src).toBe(src);
-  await answer(2, info("/project/diagram.png"));
-  expect(images()[0]!.props.src).toBe(src);
+it("retries only failed stats without multiplying pending or resolved images across reconnects", async () => {
+  // Given resolved, failed and pending images in the same answer.
+  const text = Array.from({ length: 100 }, (_, index) => `![Image ${index}](./${index}.png)`).join("\n\n");
+  await draw({ text, connected: false });
+  for (let index = 0; index < 50; index++) await answer(index, info(`/project/${index}.png`));
+  await answer(50, { error: { message: "offline" } }, 503);
+  const sources = images().map((image) => image.props.src);
+
+  // When the connection flaps while the retry and other stats remain pending.
+  for (let reconnect = 0; reconnect < 5; reconnect++) {
+    await draw({ text, connected: false });
+    await draw({ text, connected: true });
+  }
+
+  // Then only the failed stat was retried, and its current answer still applies.
+  expect(requests).toHaveLength(101);
+  expect(images().map((image) => image.props.src)).toEqual(sources);
+  await answer(100, info("/project/50.png"));
+  await answer(51, info("/project/51.png"));
+  expect(images()).toHaveLength(52);
+});
+
+it("renders only the file action when an inline image fails decoding", async () => {
+  // Given an inline image with both file and image actions available.
+  const files: string[] = [];
+  await act(async () => {
+    renderer = create(createElement(SettingsProvider, { children:
+      createElement(OpenFileContext.Provider, { value: (path: string) => { files.push(path); }, children:
+        createElement(ChatMarkdownImages, { paneId: "w1:p1", cwd: "/project", connected: true, onOpen,
+          children: createElement(Markdown, { children: "Before ![Broken](./broken.png) after" }),
+        }),
+      }),
+    }));
+  });
+  await answer(0, info("/project/broken.png"));
+
+  // When decoding fails.
+  await act(async () => { images()[0]!.props.onError(); });
+
+  // Then the fallback has no viewer control around it and opens only the file.
+  expect(buttons()).toHaveLength(1);
+  expect(buttons()[0]!.props.className).toBe("markdown-file");
+  await act(async () => { buttons()[0]!.props.onClick(); });
+  expect(files).toEqual(["./broken.png"]);
+  expect(opened).toEqual([]);
 });

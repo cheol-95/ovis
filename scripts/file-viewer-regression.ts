@@ -45,6 +45,7 @@ const chatImages = [
   "![Chat missing](./missing.png)",
   "![Chat text](./notes.txt)",
   "![Chat external](https://example.com/unrequested.png)",
+  "Before ![Chat broken inline](./broken.png) after",
 ].join("\n\n");
 const fidelitySources = ["const last = 7;\n\n", "first\n", "first\n\nlast", "\n"];
 writeFileSync(transcript, [
@@ -148,6 +149,7 @@ writeFileSync(markdownPath, markdownSource);
 writeFileSync(join(root, "other.md"), "# Other notes\n\nLinked from the preview.\n");
 writeFileSync(join(root, "chart #? % 한글.svg"), '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="80"><rect width="240" height="80" fill="teal"/></svg>');
 writeFileSync(join(root, "preview.svg"), '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="80"><rect width="240" height="80" fill="teal"/></svg>');
+writeFileSync(join(root, "broken.png"), "not PNG bytes");
 let workspace: string | undefined;
 // a second workspace, for the pane moves of the docked block alone
 let otherWorkspace: string | undefined;
@@ -1616,6 +1618,19 @@ try {
   const imageErrors: string[] = [];
   imagePage.on("pageerror", (error) => imageErrors.push(error.message));
   await imagePage.goto(`${origin}/?pane=${encodeURIComponent(pane)}&view=chat`);
+  // A decode failure must replace the opener, never put a file button inside it.
+  await imagePage.getByRole("button", { name: "Chat broken inline", exact: true }).scrollIntoViewIfNeeded();
+  const brokenImage = imagePage.locator(".chat-transcript .markdown-file").filter({ hasText: "Chat broken inline" });
+  await brokenImage.waitFor();
+  assert.equal(await imagePage.locator(".markdown-image-open button, .markdown-image-open a").count(), 0);
+  assert.equal(await imagePage.getByRole("button", { name: "Chat broken inline", exact: true }).count(), 1);
+  await brokenImage.click();
+  const brokenFile = imagePage.getByRole("dialog", { name: "broken.png", exact: true });
+  await brokenFile.waitFor();
+  assert.equal(await imagePage.getByRole("dialog", { name: "Image viewer", exact: true }).count(), 0);
+  await brokenFile.getByRole("button", { name: "Close file", exact: true }).click();
+  await brokenFile.waitFor({ state: "detached" });
+  console.log("PASS a failed inline Markdown image has one file action and never opens the image viewer");
   const markdownThumb = imagePage.getByRole("button", { name: "Chat relative", exact: true });
   await markdownThumb.click();
   const markdownGallery = imagePage.getByRole("dialog", { name: "Image viewer" });
