@@ -141,6 +141,23 @@ it("does not reuse a nested conversation binding after a process birth changes w
   } finally { nested.mockRestore(); }
 });
 
+it("chooses no native chat when the final Kiro process probe cannot prove Codex", async () => {
+  unlabelled = true;
+  foreground = [{ pid: 2147483647, argv: ["zsh (kiro-cli-term)"] }];
+  screen = answer;
+  const nested = spyOn(kiro, "kiroCodexProcess")
+    .mockResolvedValueOnce({ pid: 2147483646, argv: ["codex"], identity: "10:1,20:1,2147483646:1" })
+    .mockResolvedValueOnce({ pid: 2147483646, argv: ["codex"], identity: "10:1,20:1,2147483646:1" })
+    .mockResolvedValue(null);
+  const snapshot = { panes: [{
+    pane_id: root, workspace_id: root, tab_id: root, terminal_id: root,
+    cwd: root, agent_status: "unknown", focused: false, revision: 0,
+  }], workspaces: [], tabs: [], agents: [], layouts: [], protocol: 1, version: "test" } satisfies SessionSnapshot;
+  try {
+    await expect(paneTranscript(root, home, snapshot)).rejects.toMatchObject({ message: "no_session_path" });
+  } finally { nested.mockRestore(); }
+});
+
 /** A fixture's first line, whole: a busy pipe can hand "READY" and its newline over in two reads. */
 async function firstLine(stdout: ReadableStream<Uint8Array>): Promise<string> {
   const reader = stdout.getReader();

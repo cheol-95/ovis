@@ -2479,6 +2479,8 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   if (session?.kind === "path" && session.value) return codexRolloutPath(session.value, home);
 
   const { codexProcesses, processes, open } = await openRollouts(paneId, home);
+  // Earlier wrapper probes do not prove Codex still runs; residual screen text cannot replace that proof.
+  if (agent.nestedTerminal && codexProcesses.length === 0) return null;
   if (open.size === 1) return [...open][0]!;
   const resumed = resumedThread(codexProcesses.map((process) => process.argv ?? []));
 
