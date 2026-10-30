@@ -37,11 +37,21 @@ const codexHome = join(root, "codex-home");
 const thread = "01a0c7a1-56d9-7e20-9f08-f7a2d973bc11";
 mkdirSync(join(codexHome, "sessions"), { recursive: true });
 const transcript = join(codexHome, "sessions", `rollout-2026-09-28T00-00-00-${thread}.jsonl`);
+const chatImages = [
+  "![Chat relative](./preview.svg)",
+  `![Chat absolute](${join(root, "preview.svg")})`,
+  `![Chat URI](${new URL(`file://${join(root, "preview.svg")}`).href})`,
+  "![Chat encoded](./chart%20%23%3F%20%25%20%ED%95%9C%EA%B8%80.svg)",
+  "![Chat missing](./missing.png)",
+  "![Chat text](./notes.txt)",
+  "![Chat external](https://example.com/unrequested.png)",
+  "Before ![Chat broken inline](./broken.png) after",
+].join("\n\n");
 const fidelitySources = ["const last = 7;\n\n", "first\n", "first\n\nlast", "\n"];
 writeFileSync(transcript, [
   { type: "session_meta", payload: { id: thread, cwd: root } },
   { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Show me the demo video." }] } },
-  { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `Open [demo video](./preview.webm) or [notes](./notes.txt) or [guide](./docs/guide.md) or [big](./big.txt) or [big code](./big.ts) or [mid code](./mid.ts) or [deep quotes](./deep.md) or [empty](./empty.txt) or [slow preview](./slow.md) or [long notes](./long.md) or [many lines](./lines.txt) or [long list](./list.md) or [contents page](./toc.html) or [file URI notes](${new URL(`file://${join(root, "notes.txt")}`).href}) or [folder](${new URL(`file://${root}`).href}).\n\n${new URL(`file://${join(root, "notes.txt")}`).href}\n\n\`\`\`ts\nconst answer = 42;\n\nexport { answer };\n\`\`\`` }] } },
+  { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `Open [demo video](./preview.webm) or [notes](./notes.txt) or [guide](./docs/guide.md) or [big](./big.txt) or [big code](./big.ts) or [mid code](./mid.ts) or [deep quotes](./deep.md) or [empty](./empty.txt) or [slow preview](./slow.md) or [long notes](./long.md) or [many lines](./lines.txt) or [long list](./list.md) or [contents page](./toc.html) or [file URI notes](${new URL(`file://${join(root, "notes.txt")}`).href}) or [folder](${new URL(`file://${root}`).href}).\n\n${new URL(`file://${join(root, "notes.txt")}`).href}\n\n\`\`\`ts\nconst answer = 42;\n\nexport { answer };\n\`\`\`\n\n${chatImages}` }] } },
   // a block the highlighter is quadratic on (a line of dashes in YAML): seconds on the page
   { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: "References: [source column](./target.ts:60:8), [source range](./target.ts#L60-L65), [Markdown line](./docs/guide.md#L6), [past end](./notes.txt:999), [past preview](./big.txt:999999), [capped line](./lines.txt:5)." }] } },
   { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `Dashes:\n\n\`\`\`yaml\n${"-".repeat(90_000)}\n\`\`\`` }] } },
@@ -137,7 +147,9 @@ const markdownPath = join(root, "preview #1 & 한글.MD");
 const markdownSource = "<p align=\"center\">\n  <img src=\"./preview.svg\" alt=\"Logo\" width=\"64\">\n</p>\n\n<p align=\"center\"><a href=\"https://example.com/\">website</a> &middot; <strong>bold</strong></p>\n\n# Markdown preview\n\n한글 문서도 새 탭에서 읽을 수 있습니다.\n\n| Item | State |\n| --- | --- |\n| Preview | Ready |\n\n- [x] Rendered\n\nSee [the other notes](other.md).\n\n```ts\nconst answer = 42;\n```\n\n![Local image](./preview.svg)\n\n```mermaid\ngraph LR\n  A[Read] --> B[Preview]\n```\n";
 writeFileSync(markdownPath, markdownSource);
 writeFileSync(join(root, "other.md"), "# Other notes\n\nLinked from the preview.\n");
+writeFileSync(join(root, "chart #? % 한글.svg"), '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="80"><rect width="240" height="80" fill="teal"/></svg>');
 writeFileSync(join(root, "preview.svg"), '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="80"><rect width="240" height="80" fill="teal"/></svg>');
+writeFileSync(join(root, "broken.png"), "not PNG bytes");
 let workspace: string | undefined;
 // a second workspace, for the pane moves of the docked block alone
 let otherWorkspace: string | undefined;
@@ -189,6 +201,28 @@ try {
   await page.locator(".markdown-code").first().locator(".hl-keyword", { hasText: "const" }).waitFor();
   await page.locator(".markdown-code .hl-number", { hasText: "42" }).waitFor();
   console.log("PASS Chat fenced code block is syntax highlighted");
+  // A reader's wheel stops follow before lazy images above the newest turn are brought into view.
+  await page.mouse.move(195, 300);
+  await page.mouse.wheel(0, -10_000);
+  for (const alt of ["Chat relative", "Chat absolute", "Chat URI", "Chat encoded"]) {
+    const image = page.locator(`.chat-transcript img.markdown-image[alt="${alt}"]`);
+    await image.scrollIntoViewIfNeeded();
+    await page.waitForFunction((alt) => {
+      const image = document.querySelector<HTMLImageElement>(`.chat-transcript img.markdown-image[alt="${alt}"]`);
+      return image?.complete && image.naturalWidth > 0;
+    }, alt, { timeout: 10_000 });
+    assert.equal(await image.evaluate((node: HTMLImageElement) => node.naturalWidth), 240);
+    const url = new URL((await image.getAttribute("src"))!, origin);
+    assert.equal(url.pathname, "/api/fs/file");
+    assert.equal(url.searchParams.get("path"), join(root, alt === "Chat encoded" ? "chart #? % 한글.svg" : "preview.svg"));
+    assert.equal(url.searchParams.get("pane_id"), pane);
+  }
+  for (const name of ["Chat missing", "Chat text", "Chat external"]) {
+    await page.getByRole(name === "Chat external" ? "link" : "button", { name, exact: true }).waitFor();
+    assert.equal(await page.locator(`img[alt="${name}"]`).count(), 0, `${name} stays a link`);
+  }
+  console.log("PASS Chat local Markdown images load from the pane cwd, absolute paths and file URIs; unresolved and external images stay links");
+
   // a blank line must survive in the text a copy picks up
   const codeText = await page.locator(".markdown-code .hl-code").first().innerText();
   if (codeText !== "const answer = 42;\n\nexport { answer };") throw new Error(`Chat code block text lost its blank line: ${JSON.stringify(codeText)}`);
@@ -1577,6 +1611,51 @@ try {
     delete pageFileHooks.opened;
     delete pageFileHooks.closed;
   }
+  // Own document: a closed image sheet leaves forward entries, while the file-history checks
+  // above deliberately begin with no forward entry.
+  const imagePage = await context.newPage();
+  imagePage.setDefaultTimeout(10_000);
+  const imageErrors: string[] = [];
+  imagePage.on("pageerror", (error) => imageErrors.push(error.message));
+  await imagePage.goto(`${origin}/?pane=${encodeURIComponent(pane)}&view=chat`);
+  // A decode failure must replace the opener, never put a file button inside it.
+  await imagePage.getByRole("button", { name: "Chat broken inline", exact: true }).scrollIntoViewIfNeeded();
+  const brokenImage = imagePage.locator(".chat-transcript .markdown-file").filter({ hasText: "Chat broken inline" });
+  await brokenImage.waitFor();
+  assert.equal(await imagePage.locator(".markdown-image-open button, .markdown-image-open a").count(), 0);
+  assert.equal(await imagePage.getByRole("button", { name: "Chat broken inline", exact: true }).count(), 1);
+  await brokenImage.click();
+  const brokenFile = imagePage.getByRole("dialog", { name: "broken.png", exact: true });
+  await brokenFile.waitFor();
+  assert.equal(await imagePage.getByRole("dialog", { name: "Image viewer", exact: true }).count(), 0);
+  await brokenFile.getByRole("button", { name: "Close file", exact: true }).click();
+  await brokenFile.waitFor({ state: "detached" });
+  console.log("PASS a failed inline Markdown image has one file action and never opens the image viewer");
+  const markdownThumb = imagePage.getByRole("button", { name: "Chat relative", exact: true });
+  await markdownThumb.click();
+  const markdownGallery = imagePage.getByRole("dialog", { name: "Image viewer" });
+  await markdownGallery.waitFor();
+  await imagePage.waitForFunction(() => {
+    const image = document.querySelector<HTMLImageElement>(".image-lightbox img");
+    return image?.complete && image.naturalWidth === 240;
+  }, undefined, { timeout: 10_000 });
+  assert.equal(await markdownGallery.getByRole("link", { name: "Download", exact: true }).getAttribute("download"), "preview.svg");
+  await imagePage.goBack();
+  await markdownGallery.waitFor({ state: "detached" });
+  assert.equal(await markdownThumb.evaluate((node) => node === document.activeElement), true);
+  await imagePage.keyboard.press("Enter");
+  await markdownGallery.waitFor();
+  await imagePage.keyboard.press("Escape");
+  await markdownGallery.waitFor({ state: "detached" });
+  assert.equal(await markdownThumb.evaluate((node) => node === document.activeElement), true);
+  await imagePage.keyboard.press("Space");
+  await markdownGallery.waitFor();
+  await markdownGallery.getByRole("button", { name: "Close", exact: true }).click();
+  await markdownGallery.waitFor({ state: "detached" });
+  assert.equal(await markdownThumb.evaluate((node) => node === document.activeElement), true);
+  assert.deepEqual(imageErrors, []);
+  await imagePage.close();
+  console.log("PASS Chat Markdown image opens by touch, Enter and Space with its filename; Back, Close and Escape restore the thumbnail");
 } finally {
   await browser?.close();
   server?.stop();
