@@ -145,7 +145,8 @@ function codexFileCitation(token: string): { path: string; label: string } | nul
     at = attribute.lastIndex;
   }
   const path = values.get("path");
-  if (!path || !(/^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(path)) || /[\x00-\x1f]/.test(path)
+  // as a file:/// link (fileUri.ts): an absolute local path, never a network share however its separators are written
+  if (!path || !(/^(?:\/|[A-Za-z]:[\\/])/.test(path)) || /^[\\/]{2}/.test(path) || /[\x00-\x1f\x7f]/.test(path)
     || !["source", "output"].includes(values.get("purpose") ?? "") || values.has("mode")) return null;
   const label = path.split(/[\\/]/).pop();
   return label ? { path, label } : null;
@@ -163,7 +164,7 @@ export function* inlineMarks(source: string): Generator<RegExpExecArray> {
   // rendering exactly as it appears in the terminal and native transcript.
   // a bare or <angle> http(s) URL is a link too; it stops at the first non-ASCII character,
   // so `…/pull/36에서` links the address and leaves the Korean after it as text
-  const marker = /(`[^`\n]+`|:codex-file-citation\{[^}\n]*\}|\\\(.+?\\\)|(?<![A-Za-z0-9\\$])\$(?:[^\s$\\`]|[^\s$`][^\n\r\u2028\u2029$`]*[^\s$\\`])\$(?![A-Za-z0-9_${#@*(`])|\[[^\]\n]+\]\([^\s)]+\)|<https?:\/\/[^\s<>]+>|file:\/\/\/[!#-;=?-_a-~]+|https?:\/\/[!-;=?-~]+|(?<![\w.@/-])www\.[!-;=?-~]+|\*\*[^*\n]+\*\*|(?<![\p{L}\p{N}\p{M}_])__(?=\S)[^\n]*?\S__(?![\p{L}\p{N}\p{M}_])|~~[^~\n]+~~|(?<!\*)\*[^*\n]+\*(?!\*)|(?<![\p{L}\p{N}\p{M}_])_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_]))/yu;
+  const marker = /(`[^`\n]+`|:codex-file-citation\{(?:[ \t]*[a-z_]+="[^"\\\n]*(?:\\.[^"\\\n]*)*")+[ \t]*\}|\\\(.+?\\\)|(?<![A-Za-z0-9\\$])\$(?:[^\s$\\`]|[^\s$`][^\n\r\u2028\u2029$`]*[^\s$\\`])\$(?![A-Za-z0-9_${#@*(`])|\[[^\]\n]+\]\([^\s)]+\)|<https?:\/\/[^\s<>]+>|file:\/\/\/[!#-;=?-_a-~]+|https?:\/\/[!-;=?-~]+|(?<![\w.@/-])www\.[!-;=?-~]+|\*\*[^*\n]+\*\*|(?<![\p{L}\p{N}\p{M}_])__(?=\S)[^\n]*?\S__(?![\p{L}\p{N}\p{M}_])|~~[^~\n]+~~|(?<!\*)\*[^*\n]+\*(?!\*)|(?<![\p{L}\p{N}\p{M}_])_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_]))/yu;
   // its last part alone, for a `__` that nothing closes as bold: one `_` may still close it
   const emphasis = /(?<![\p{L}\p{N}\p{M}_])_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_])/yu;
   // what any part of `marker` starts with

@@ -147,6 +147,20 @@ describe("inline markdown", () => {
     expect(parseMarkdown(`\`\`\`text\n${citation}\n\`\`\``)).toEqual([{ type: "code", language: "text", value: citation }]);
   });
 
+  it("opens a Codex citation only where a file:/// link could: no network share, no control character", () => {
+    for (const path of ["//server/share/a.txt", "\\\\server\\share\\a.txt", "/tmp/a\u007fb"]) {
+      expect(parseInline(`:codex-file-citation{path=${JSON.stringify(path)} purpose="output"}`).some((node) => node.type === "file")).toBe(false);
+    }
+    // the same share, its slashes written as JSON escapes
+    expect(parseInline(':codex-file-citation{path="\\u002f\\u002fserver/share/a.txt" purpose="output"}').some((node) => node.type === "file")).toBe(false);
+  });
+
+  it("leaves the markdown after an unfinished Codex citation as markdown, and reads a brace inside a quoted path", () => {
+    const nodes = parseInline(':codex-file-citation{unfinished **urgent** and `code` } then :codex-file-citation{path="/tmp/a.pdf" purpose="output"}');
+    expect(nodes.map((node) => node.type)).toEqual(["text", "strong", "text", "code", "text", "file"]);
+    expect(parseInline(':codex-file-citation{path="/tmp/a}b.pdf" purpose="output"}')).toEqual([{ type: "file", path: "/tmp/a}b.pdf", children: [{ type: "text", value: "a}b.pdf" }] }]);
+  });
+
   it("renders a Codex citation through the existing file opener", () => {
     const citation = ':codex-file-citation{path="/tmp/My report.pdf" purpose="output"}';
     const languages = Object.getOwnPropertyDescriptor(navigator, "languages");
