@@ -159,6 +159,9 @@ describe("inline markdown", () => {
     const nodes = parseInline(':codex-file-citation{unfinished **urgent** and `code` } then :codex-file-citation{path="/tmp/a.pdf" purpose="output"}');
     expect(nodes.map((node) => node.type)).toEqual(["text", "strong", "text", "code", "text", "file"]);
     expect(parseInline(':codex-file-citation{path="/tmp/a}b.pdf" purpose="output"}')).toEqual([{ type: "file", path: "/tmp/a}b.pdf", children: [{ type: "text", value: "a}b.pdf" }] }]);
+    expect(parseInline(':codex-file-citation{path="/tmp/a.pdf" purpose="output" }')).toMatchObject([{ type: "file", path: "/tmp/a.pdf" }]);
+    // an escape JSON has no reading for is no directive: the markdown inside it stays markdown
+    expect(parseInline(':codex-file-citation{path="/tmp/\\q **urgent**" purpose="output"}').some((node) => node.type === "strong")).toBe(true);
   });
 
   it("renders a Codex citation through the existing file opener", () => {
