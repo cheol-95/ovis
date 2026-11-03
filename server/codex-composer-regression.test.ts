@@ -51,10 +51,10 @@ test("keeps a rendered answer unbound while another conversation asked the same 
   // Codex shows a file link's target relative to the folder, so a conversation whose recorded answer differs
   // only in markup may be the one on screen although its letters and digits differ from the screen's
   const asked = "Explain the implementation.";
-  const conversation = (path: string, said: string) => ({ path, text: [
+  const conversation = (path: string, said: string, finished = true) => ({ path, text: [
     event({ type: "item_completed", turn_id: "t", item: { type: "UserMessage", content: [{ text: asked }] } }),
     JSON.stringify({ type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: said }] } }),
-    event({ type: "task_complete", turn_id: "t", last_agent_message: said }),
+    ...finished ? [event({ type: "task_complete", turn_id: "t", last_agent_message: said })] : [],
   ].join("\n") });
   const plain = "The implementation preserves request metadata and trace identifiers while masking sensitive values before recording responses.";
   const bold = conversation("bold", `${plain.replace("request metadata", "**request metadata**")} Read report (docs/report.md) for details.`);
@@ -63,4 +63,8 @@ test("keeps a rendered answer unbound while another conversation asked the same 
   expect(matchCodexTranscript(shown, [bold])).toBe("bold");
   expect(matchCodexTranscript(shown, [bold, linked])).toBeNull();
   expect(matchCodexTranscript(shown, [linked, bold])).toBeNull();
+  // its finish not read yet, or in another folder, the other conversation still may be the one shown
+  const unfinished = conversation("linked", `${plain} Read [report](/repo/docs/report.md) for details.`, false);
+  expect(matchCodexTranscript(shown, [bold, unfinished])).toBeNull();
+  expect(matchCodexTranscript(shown, [bold, unfinished], new Set(), new Map(), false, new Set(["bold"]))).toBeNull();
 });

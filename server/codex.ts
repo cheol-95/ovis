@@ -1155,6 +1155,22 @@ function finishedAnswerTexts(rollout: string): string[] {
  * was asked (null when the read holds no message of it: cut by the tail read, or an older Codex). Null when
  * it records no finished turn.
  */
+/** Every prompt a rollout records as asked (its UserMessage items, finished turn or not), as written. */
+function askedPrompts(rollout: string): string[] {
+  const asked = new Map<string, string>();
+  for (const line of rollout.split("\n")) {
+    if (!line.includes('"item_completed"')) continue;
+    try {
+      const payload = (JSON.parse(line) as { payload?: Record<string, unknown> }).payload ?? {};
+      const turn = payload["turn_id"];
+      const item = payload["item"] as { type?: unknown; content?: unknown } | undefined;
+      if (typeof turn !== "string" || payload["type"] !== "item_completed" || item?.type !== "UserMessage" || !Array.isArray(item.content)) continue;
+      asked.set(turn, (asked.get(turn) ?? "") + item.content.map((part: { text?: unknown }) => typeof part?.text === "string" ? part.text : "").join(""));
+    } catch { /* a record cut by the tail read */ }
+  }
+  return [...asked.values()];
+}
+
 function lastFinishedTurn(rollout: string): { asked: string | null; answer: string } | null {
   const asked = new Map<string, string>();
   let last: { asked: string | null; answer: string } | null = null;
@@ -1258,11 +1274,16 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
   const ownerLast = owner === null ? null : lastFinishedTurn(owner.text);
   // An answer read through its rendering (markup, a table, a link Codex shows relative to the folder) proves
   // less than the same text: it may also be another conversation's that recorded the answer another way. It
-  // counts only while no other candidate's last finished turn was asked the prompt shown
-  const askedElsewhere = owner !== null && candidates.some((candidate) => {
+  // counts only while no other candidate was asked the prompt shown, in any turn: its turn may be unfinished
+  // or its finish cut from the read, and still be the one on screen
+  const askedElsewhere = owner !== null && candidates.some((candidate, index) => {
     if (candidate.path === owner.path) return false;
+    const shownPrompt = alnum(footed!.prompt);
     const last = lastFinishedTurn(candidate.text);
-    return last !== null && (last.asked === null || alnum(last.asked).endsWith(alnum(footed!.prompt)));
+    if (last !== null && (last.asked === null || alnum(last.asked).endsWith(shownPrompt))) return true;
+    return askedPrompts(candidate.text).some((asked) => alnum(asked).endsWith(shownPrompt))
+      || parsed[index]!.some((turn) => turn.role === "user" && alnum(turn.parts.filter((part) => part.kind === "text")
+        .map((part) => part.text).join("\n")).endsWith(shownPrompt));
   });
   const footedOwner = owner !== null && ownerLast?.asked != null && collapsed(ownerLast.asked) === footed!.prompt
     && (collapsed(ownerLast.answer) === collapsed(footed!.text) || !askedElsewhere && completedAnswerMatches(ownerLast.answer, footed!.text)) ? owner.path : null;
