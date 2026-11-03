@@ -45,7 +45,7 @@ const page = (source: "omp-transcript" | "codex-transcript", path: string): Conv
   return { source, history_id: "fixture", cursor: null, turns, metadata };
 };
 const served: string[] = [];
-const mentionedPath = "/Users/fixture/Library/Mobile Documents/notes/.ovis/paste-20261103.png";
+const mentionedPath = "/Users/fixture/Library/Mobile Documents/notes/.ovis/paste-20261103-065352-8f69b25b.png";
 const mentionedReads: URL[] = [];
 
 /**
@@ -169,7 +169,7 @@ try {
     await view.locator(".chat-user-image").click();
     const dialog = view.getByRole("dialog", { name: "Image viewer" });
     await dialog.waitFor();
-    assert.equal(await dialog.getByRole("link", { name: "Download", exact: true }).getAttribute("download"), "paste-20261103.png");
+    assert.equal(await dialog.getByRole("link", { name: "Download", exact: true }).getAttribute("download"), "paste-20261103-065352-8f69b25b.png");
     await view.keyboard.press("Escape");
     await dialog.waitFor({ state: "detached" });
     assert.ok(await view.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
