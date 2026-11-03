@@ -1281,9 +1281,13 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
     const shownPrompt = alnum(footed!.prompt);
     const last = lastFinishedTurn(candidate.text);
     if (last !== null && (last.asked === null || alnum(last.asked).endsWith(shownPrompt))) return true;
-    return askedPrompts(candidate.text).some((asked) => alnum(asked).endsWith(shownPrompt))
-      || parsed[index]!.some((turn) => turn.role === "user" && alnum(turn.parts.filter((part) => part.kind === "text")
-        .map((part) => part.text).join("\n")).endsWith(shownPrompt));
+    const prompts = askedPrompts(candidate.text);
+    const users = parsed[index]!.filter((turn) => turn.role === "user").map((turn) => alnum(turn.parts.filter((part) => part.kind === "text")
+      .map((part) => part.text).join("\n")));
+    // a read that shows no prompt at all may have cut the one asked: it could be this one
+    if (prompts.length === 0 && users.length === 0) return true;
+    // a prompt sent as several messages reads as its parts' run
+    return prompts.some((asked) => alnum(asked).endsWith(shownPrompt)) || users.some((_, at) => users.slice(0, at + 1).join("").endsWith(shownPrompt));
   });
   const footedOwner = owner !== null && ownerLast?.asked != null && collapsed(ownerLast.asked) === footed!.prompt
     && (collapsed(ownerLast.answer) === collapsed(footed!.text) || !askedElsewhere && completedAnswerMatches(ownerLast.answer, footed!.text)) ? owner.path : null;
