@@ -50,6 +50,8 @@ describe("mentioned chat images", () => {
     for (const text of ["see @/docs for the guide, then open logo.png", "import from @/components then check screenshot.png", "@/tmp/example please refer to diagram.png in prose"]) expect(images(text)).toEqual([]);
     // a path with spaces is read only to an upload's own name, never to an earlier image-named folder
     expect(images("@/tmp/My Folder/report.png backup/.ovis/paste-20261103-065352-8f69b25b.png").map((image) => image.name)).toEqual(["/tmp/My Folder/report.png backup/.ovis/paste-20261103-065352-8f69b25b.png"]);
+    // even where the folder's first word already looks like a whole image path
+    expect(images("@/tmp/report.png backup/.ovis/paste-20261103-065352-8f69b25b.png").map((image) => image.name)).toEqual(["/tmp/report.png backup/.ovis/paste-20261103-065352-8f69b25b.png"]);
     // other spaces stop at the next mention too, and a long line of mentions without an upload's name reads none
     expect(images("@/tmp/not-image\u00a0@/A B/.ovis/paste-20261103-065352-8f69b25b.png").map((image) => image.name)).toEqual(["/A B/.ovis/paste-20261103-065352-8f69b25b.png"]);
     expect(images("@/a b c\u00a0".repeat(10_000))).toEqual([]);
