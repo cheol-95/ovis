@@ -51,36 +51,54 @@ test("does not discard impossible percentages or different warning text", () => 
   }
 });
 
-test("keeps an exact reply unbound while a same-prompt conversation's linked answer renders the same", () => {
-  const text = "The implementation preserves request metadata and trace identifiers while masking sensitive values.";
-  const literal = `${text} Read report (docs/report.md) for details.`;
-  const shown = screen.replace(/• The local[\s\S]*?to sign in\./, `• ${literal}`);
-  const linked = candidate("linked", `${text} Read [report](/repo/docs/report.md) for details.`);
-  expect(matchCodexTranscript(shown, [candidate("own", literal), linked], new Set(), new Map(), false, new Set(["own", "linked"]))).toBeNull();
-  // a same-prompt conversation that answered otherwise leaves the exact reply its own
-  const other = candidate("other", `${text} Read [summary](/repo/docs/summary.md) for details.`);
-  expect(matchCodexTranscript(shown, [candidate("own", literal), other], new Set(), new Map(), false, new Set(["own", "other"]))).toBe("own");
-});
-
 const text = "The implementation preserves request metadata and trace identifiers while masking sensitive values.";
 const url = "http://127.0.0.1:4317";
-for (const [kind, literal, rendered] of [
+const shownAs = (literal: string) => screen.replace(/• The local[\s\S]*?to sign in\./, `• ${literal.replaceAll("\n", "\n  ")}`);
+const owners = new Set(["own", "rendered", "other"]);
+// a conversation that was asked the prompt but whose read holds no finish for it, after an older finished turn or none
+const unfinished = (path: string, text: string, older: boolean) => ({ path, text: [
+  ...older ? [event({ type: "task_complete", turn_id: "old", last_agent_message: "A previous unrelated result." })] : [],
+  event({ type: "item_completed", turn_id: "t", item: { type: "UserMessage", content: [{ text: prompt }] } }),
+  JSON.stringify({ type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text }] } }),
+].join("\n") });
+const spaced = [`${text} Read report (docs/my report.md) for details.`, `${text} Read [report](/repo/docs/my report.md) for details.`] as const;
+const collisions: [string, string, { path: string; text: string }][] = [
   // a local link whose path has a space, shown relative to the folder
-  ["a spaced local link", `${text} Read report (docs/my report.md) for details.`, `${text} Read [report](/repo/docs/my report.md) for details.`],
+  ["a spaced local link", spaced[0], candidate("rendered", spaced[1])],
   // a bare URL, shown followed by itself
-  ["a bare URL", `${text} Address: ${url} (${url}).`, `${text} Address: ${url}.`],
+  ["a bare URL", `${text} Address: ${url} (${url}).`, candidate("rendered", `${text} Address: ${url}.`)],
   // an ordered list Codex numbers on from its first marker
-  ["a renumbered list", `${text}\n\n4. Verify the project account.\n5. Submit the supporting documents.`, `${text}\n\n4. Verify the project account.\n8. Submit the supporting documents.`],
-]) {
-  test(`keeps an exact reply unbound while a same-prompt conversation's answer with ${kind} renders the same`, () => {
-    const shown = screen.replace(/• The local[\s\S]*?to sign in\./, `• ${literal!.replaceAll("\n", "\n  ")}`);
-    const owners = new Set(["own", "rendered", "other"]);
-    expect(matchCodexTranscript(shown, [candidate("own", literal), candidate("rendered", rendered)], new Set(), new Map(), false, owners)).toBeNull();
-    // a same-prompt conversation whose answer renders otherwise leaves the exact reply its own
-    const other = candidate("other", rendered!.replace("Verify", "Close").replace("report", "summary").replace(":4317", ":4321"));
-    expect(matchCodexTranscript(shown, [candidate("own", literal), other], new Set(), new Map(), false, owners)).toBe("own");
+  ["a renumbered list", `${text}\n\n4. Verify the project account.\n5. Submit the supporting documents.`, candidate("rendered", `${text}\n\n4. Verify the project account.\n8. Submit the supporting documents.`)],
+  // a reference link, shown as its label alone
+  ["a reference link", `${text} Read report for details.`, candidate("rendered", `${text} Read [report][ref] for details.\n\n[ref]: https://example.com/report`)],
+  ["an unfinished turn", spaced[0], unfinished("rendered", spaced[1], false)],
+  ["an unfinished turn after an older finished one", spaced[0], unfinished("rendered", spaced[1], true)],
+];
+for (const [kind, literal, rendered] of collisions) {
+  test(`keeps an exact reply unbound while a same-prompt conversation's answer with ${kind} may render the same`, () => {
+    expect(matchCodexTranscript(shownAs(literal), [candidate("own", literal), rendered], new Set(), new Map(), false, owners)).toBeNull();
   });
 }
+
+// Accepted false refusal: whether another same-prompt answer renders otherwise is not judged, so the exact reply stays unbound
+test("keeps an exact reply unbound while a same-prompt conversation answered otherwise (accepted false refusal)", () => {
+  for (const [literal, other] of [
+    [`${text} Read report (docs/report.md) for details.`, `${text} Read [summary](/repo/docs/summary.md) for details.`],
+    [spaced[0], `${text} Read [summary](/repo/docs/my summary.md) for details.`],
+    [`${text} Address: ${url} (${url}).`, `${text} Address: http://127.0.0.1:4321.`],
+    [`${text}\n\n4. Verify the project account.\n5. Submit the supporting documents.`, `${text}\n\n4. Close the project account.\n8. Submit the supporting documents.`],
+  ] as const) {
+    expect(matchCodexTranscript(shownAs(literal), [candidate("own", literal), candidate("other", other)], new Set(), new Map(), false, owners)).toBeNull();
+  }
+});
+
+test("matches an exact or rendered reply when its conversation is the only one asked the prompt shown", () => {
+  const elsewhere = candidate("other", "The release notes list three fixes and one new setting for remote access.", "Summarize the release notes.");
+  for (const [shown, recorded] of [[shownAs(spaced[0]), spaced[0]], [screen, answer]] as const) {
+    expect(matchCodexTranscript(shown, [candidate("own", recorded), elsewhere], new Set(), new Map(), false, owners)).toBe("own");
+    expect(matchCodexTranscript(shown, [candidate("own", recorded)], new Set(), new Map(), false, owners)).toBe("own");
+  }
+});
 
 test("keeps changed, ambiguous, unfinished and unknown replies unbound", () => {
   expect(matchCodexTranscript(screen, [candidate("own"), candidate("twin")])).toBeNull();

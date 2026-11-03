@@ -1312,11 +1312,13 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
   // candidate (one herdr reported, or a title named, of another folder) can only keep it from owning one
   const owner = maybe?.length === 1 && (footerOwners === null || footerOwners.has(maybe[0]!.path)) ? maybe[0]! : null;
   const ownerLast = owner === null ? null : lastFinishedTurn(owner.text);
-  // An answer read through its rendering (markup, a table, a link Codex shows relative to the folder) proves
-  // less than the same text: it may also be another conversation's that recorded the answer another way. It
-  // counts only while no other candidate was asked the prompt shown, in any turn: its turn may be unfinished
-  // or its finish cut from the read, and still be the one on screen
-  const askedElsewhere = owner !== null && candidates.some((candidate, index) => {
+  // The footed answer, the same text or read through its rendering (markup, a table, a link Codex shows
+  // relative to the folder), counts only while no other candidate was asked the prompt shown, in any turn:
+  // another conversation may have recorded the answer another way that Codex renders as this text, and its
+  // turn may be unfinished or its finish cut from the read and still be the one on screen. Telling such
+  // renderings apart is not attempted: a same-prompt screen is left to the guarded matches below.
+  // `unread`: a read that shows no prompt at all counts as asked too, as it may have cut the one asked
+  const askedElsewhere = (unread: boolean) => owner !== null && candidates.some((candidate, index) => {
     if (candidate.path === owner.path) return false;
     const shownPrompt = alnum(footed!.prompt);
     const last = lastFinishedTurn(candidate.text);
@@ -1324,20 +1326,13 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
     const prompts = askedPrompts(candidate.text);
     const users = parsed[index]!.filter((turn) => turn.role === "user").map((turn) => alnum(turn.parts.filter((part) => part.kind === "text")
       .map((part) => part.text).join("\n")));
-    // a read that shows no prompt at all may have cut the one asked: it could be this one
-    if (prompts.length === 0 && users.length === 0) return true;
+    if (prompts.length === 0 && users.length === 0) return unread;
     // a prompt sent as several messages reads as its parts' run
     return prompts.some((asked) => alnum(asked).endsWith(shownPrompt)) || users.some((_, at) => users.slice(0, at + 1).join("").endsWith(shownPrompt));
   });
-  // The same text proves less too while another candidate whose last finished turn was asked the prompt shown
-  // ended on an answer Codex's completed rendering may show as that text (mayShowAs)
-  const rendersElsewhere = owner !== null && candidates.some((candidate) => {
-    if (candidate.path === owner.path) return false;
-    const last = lastFinishedTurn(candidate.text);
-    return last !== null && (last.asked === null || alnum(last.asked).endsWith(alnum(footed!.prompt))) && mayShowAs(last.answer, footed!.text);
-  });
-  const footedOwner = owner !== null && ownerLast?.asked != null && collapsed(ownerLast.asked) === footed!.prompt
-    && (collapsed(ownerLast.answer) === collapsed(footed!.text) && !rendersElsewhere || !askedElsewhere && completedAnswerMatches(ownerLast.answer, footed!.text)) ? owner.path : null;
+  // the same text binds while no other candidate records the prompt shown; a rendering only while no other's read may have cut it either
+  const footedOwner = owner !== null && ownerLast?.asked != null && collapsed(ownerLast.asked) === footed!.prompt && !askedElsewhere(false)
+    && (collapsed(ownerLast.answer) === collapsed(footed!.text) || !askedElsewhere(true) && completedAnswerMatches(ownerLast.answer, footed!.text)) ? owner.path : null;
   // every answer each candidate gave, as answerAnchor reads one (cut at link targets), read once
   let shown: Said[] | undefined;
   const givenElsewhere = (index: number, { anchor, words }: Anchor) => (shown ??= parsed.map((turns, at) =>
@@ -1363,26 +1358,6 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
     else open = true;
   }
   return !open && matching.size === 1 ? [...matching][0]! : null;
-}
-
-/**
- * Whether Codex may show an answer as the completed text shown, read through the same completed rendering
- * a candidate's answer is (completedAnswerMatches). Codex shows a link to a local path (one with spaces too,
- * as cutAtLinkTargets reads it) as its words and the path relative to the folder, which the answer cannot
- * tell: such a link reads as its words and the longest end of its path the text shows in brackets.
- */
-function mayShowAs(answer: string, shown: string): boolean {
-  const flat = [collapsed(shown), shown.split("\n").map((row) => row.trim()).join("")];
-  const pieces = cutAtLinkTargets(answer);
-  const text = pieces.map(({ text, target }, at) => {
-    if (at === pieces.length - 1) return text;
-    const path = target.replace(/^<|>$/g, "");
-    const open = text.lastIndexOf("[");
-    const parts = /^(?:\/|[A-Za-z]:[\\/])/.test(path) ? path.split(/(?<=[\\/])/) : [];
-    const end = parts.map((_, from) => parts.slice(from).join("")).find((tail) => flat.some((row) => row.includes(`(${tail})`)));
-    return open < 0 || end === undefined ? `${text}](${target})` : `${text.slice(0, open)}${text.slice(open + 1)} (${end})`;
-  }).join("");
-  return completedAnswerMatches(text, shown);
 }
 
 /** Text as an answer's anchor is looked for in it (answerAnchor): cut at link targets, each piece letters and digits. */
