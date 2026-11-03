@@ -6,7 +6,7 @@ import { open, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import nodePath, { isAbsolute, join, type PlatformPath } from "node:path";
 import { pathToFileURL } from "node:url";
-import { parseMarkdown, shownText } from "../shared/markdown.ts";
+import { parseMarkdown, shownText, type InlineNode } from "../shared/markdown.ts";
 import type { ConversationPart, ConversationTurn, HerdrPane } from "../shared/protocol.ts";
 import { patchFiles, patchText } from "../shared/patch.ts";
 import { processStartedAt, processStartLowerBound, processStartUpperBound } from "./process-start.ts";
@@ -1076,7 +1076,21 @@ function completedRowsMatch(answer: string, screen: string): boolean {
   return offsets.has(expected.length);
 }
 
-/** Compare whole rendered paragraphs/tables, preserving punctuation and cell order. Unsupported blocks keep the old strict path. */
+/** Codex repeats a bare URL's destination even when its label is already that URL. */
+function codexShownText(nodes: InlineNode[]): string | null {
+  const rendered = (node: InlineNode): InlineNode => {
+    if (node.type === "link" || node.type === "file") {
+      const label = shownText(node.children);
+      const target = node.type === "link" ? node.href : node.path;
+      if (label === target) return { type: "text", value: `${label} (${target})` };
+    }
+    if (node.type === "strong" || node.type === "em" || node.type === "del") return { ...node, children: node.children.map(rendered) };
+    return node;
+  };
+  return shownText(nodes.map(rendered), true);
+}
+
+/** Compare whole rendered paragraphs, tables and flat ordered lists, preserving punctuation and order. */
 function completedAnswerMatches(answer: string, screen: string): boolean {
   if (completedRowsMatch(answer, screen)) return true;
   const words: string[] = [];
@@ -1084,16 +1098,23 @@ function completedAnswerMatches(answer: string, screen: string): boolean {
   for (const block of parseMarkdown(answer)) {
     if (block.type === "paragraph") {
       for (const line of block.lines) {
-        const text = shownText(line, true);
+        const text = codexShownText(line);
         if (text === null) return false;
         words.push(text);
       }
     } else if (block.type === "table") {
       table = true;
       for (const row of [block.header, ...block.rows]) {
-        const cells = row.map((cell) => shownText(cell, true));
+        const cells = row.map(codexShownText);
         if (cells.some((cell) => cell === null)) return false;
         words.push(cells.join(" "));
+      }
+    } else if (block.type === "list" && block.ordered) {
+      for (const [index, item] of block.items.entries()) {
+        if (item.checked !== undefined || item.blocks?.length) return false;
+        const text = codexShownText(item.content);
+        if (text === null) return false;
+        words.push(`${(block.start ?? 1) + index}. ${text}`);
       }
     } else return false;
   }
@@ -1101,9 +1122,17 @@ function completedAnswerMatches(answer: string, screen: string): boolean {
   return completedRowsMatch(words.join(" "), shown);
 }
 
-/** Codex 0.166's weekly-limit notice, only between the completed-turn footer and empty composer. */
-const CODEX_LIMIT_NOTICE = /^[ \t]*⚠ weekly limit: (?:100|\d{1,2})% left(?: · resets at (?:1[0-2]|[1-9]):[0-5]\d [AP]M on \d{1,2} [A-Z][a-z]{2})? · \/status[ \t]*$/;
-const CODEX_LIMIT_HEADS_UP = /^⚠ Heads up, you have less than 25% of your weekly limit left\. Run \/status for a breakdown\.[ \t]*$/;
+// Codex wraps notices at the pane width, including in the middle of a word. Match only the complete notice.
+const CODEX_LIMIT_NOTICE_COMPACT = /^⚠weeklylimit:(?:100|\d{1,2})%left(?:·resetsat(?:1[0-2]|[1-9]):[0-5]\d[AP]Mon\d{1,2}[A-Z][a-z]{2})?·\/status$/;
+const CODEX_LIMIT_HEADS_UP_COMPACT = /^⚠Headsup,youhavelessthan(?:100|\d{1,2})%ofyourweeklylimitleft\.Run\/statusforabreakdown\.$/;
+
+function noticeStart(rows: readonly { line: string }[], end: number, kind: "limit" | "heads-up"): number {
+  for (let start = end; start >= Math.max(0, end - 4); start--) {
+    const joined = rows.slice(start, end + 1).map(({ line }) => line.trim()).join("").replace(/\s/g, "");
+    if (kind === "limit" ? CODEX_LIMIT_NOTICE_COMPACT.test(joined) : CODEX_LIMIT_HEADS_UP_COMPACT.test(joined)) return start;
+  }
+  return end + 1;
+}
 
 /**
  * The answer a screen shows Codex finished last, with the prompt of its turn, both whitespace-collapsed: an
@@ -1122,8 +1151,19 @@ function footedAnswer(screen: string): { text: string; prompt: string } | null {
   const status = rows.slice(composer + 1);
   if (status.length === 0 || status.length > 4 || !status.every(({ line }) => FOOTER.test(line.trim()))) return null;
   let before = composer - 1;
-  if (CODEX_LIMIT_NOTICE.test(rows[before]?.line ?? "")) before--;
-  if (CODEX_LIMIT_HEADS_UP.test(rows[before]?.line ?? "")) before--;
+  const notices = new Set<string>();
+  for (let count = 0; count < 3; count++) {
+    let removed = false;
+    for (const kind of ["limit", "heads-up"] as const) {
+      const start = notices.has(kind) ? before + 1 : noticeStart(rows, before, kind);
+      if (start <= before) { notices.add(kind); before = start - 1; removed = true; break; }
+    }
+    if (removed) continue;
+    if (!notices.has("background") && /^\s*[1-9]\d* background terminals? running · \/ps to view · \/stop to close\s*$/.test(rows[before]?.line ?? "")) {
+      notices.add("background"); before--; continue;
+    }
+    break;
+  }
   const footer = rows[before];
   if (footer === undefined || !CODEX_TURN_FOOTER.test(footer.line)) return null;
   const index = footer.at;
@@ -1299,6 +1339,12 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
   const matching = new Set<string>();
   let open = false;
   for (const [index, candidate] of candidates.entries()) {
+    // A linked reply may have no single 64-character anchor. Its complete finished reply still
+    // proves ownership under the same prompt, uniqueness and competing-prompt checks above.
+    if (candidate.path === footedOwner && answersOf(parsed[index]!).some((text) => {
+      const substantial = normalizeDisplay(text);
+      return substantial.length >= 64 && new Set(substantial).size >= 12 && completedAnswerMatches(text, footed!.text);
+    })) matching.add(candidate.path);
     const anchors = answersOf(parsed[index]!.slice(-100)).slice(-8).flatMap((text) => {
       const found = answerAnchor(text);
       return found !== null && displays.some((display) => display.includes(found.anchor))
