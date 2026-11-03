@@ -18,7 +18,9 @@ export function toolGalleryImage(machineId: string, paneId: string, image: WorkI
 /** Pasted pictures first, then image files mentioned as @path, in the message's order. */
 export function userGalleryImages(machineId: string, paneId: string, parts: readonly ConversationPart[], text: string, t: Translate): GalleryImage[] {
   const pasted = parts.filter((part): part is Extract<ConversationPart, { kind: "image" }> => part.kind === "image");
-  const mentioned = [...new Set([...text.matchAll(/(?:^|\s)@(\S+\.(?:png|jpe?g|gif|webp))(?=\s|$)/gi)].map((match) => match[1] ?? ""))];
+  // Uploads insert an unquoted absolute path, including spaces in the pane's cwd. Stop at the
+  // first image extension and never consume the next mention or another line of the message.
+  const mentioned = [...new Set([...text.matchAll(/(?:^|\s)@((?:\S+|(?:\/|[a-z]:[\\/])(?:(?! @)[^\r\n\t])*?)\.(?:png|jpe?g|gif|webp))(?=\s|$)/gi)].map((match) => match[1] ?? ""))];
   return [
     ...pasted.map((part, index): GalleryImage => ({
       src: machinePath(machineId, `pane/conversation/image?${new URLSearchParams({ pane_id: paneId, ref: part.ref }).toString()}`),
