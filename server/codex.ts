@@ -6,6 +6,7 @@ import { open, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import nodePath, { isAbsolute, join, type PlatformPath } from "node:path";
 import { pathToFileURL } from "node:url";
+import { parseMarkdown, shownText } from "../shared/markdown.ts";
 import type { ConversationPart, ConversationTurn, HerdrPane } from "../shared/protocol.ts";
 import { patchFiles, patchText } from "../shared/patch.ts";
 import { processStartedAt, processStartLowerBound, processStartUpperBound } from "./process-start.ts";
@@ -1058,6 +1059,52 @@ const alnum = (text: string): string => text.normalize("NFKC").toLowerCase().rep
 /** A text with each run of whitespace one space, every other character as written (no Unicode folding): how the footer path compares. */
 const collapsed = (text: string): string => text.replace(/\s+/g, " ").trim();
 
+/** A terminal soft wrap may split a word; spaces inside a rendered row still count. */
+function completedRowsMatch(answer: string, screen: string): boolean {
+  const expected = collapsed(answer);
+  let offsets = new Set([0]);
+  for (const row of screen.split("\n").map(collapsed).filter(Boolean)) {
+    const next = new Set<number>();
+    for (const at of offsets) {
+      for (const start of at > 0 && expected[at] === " " ? [at, at + 1] : [at]) {
+        if (expected.startsWith(row, start)) next.add(start + row.length);
+      }
+    }
+    if (next.size === 0) return false;
+    offsets = next;
+  }
+  return offsets.has(expected.length);
+}
+
+/** Compare whole rendered paragraphs/tables, preserving punctuation and cell order. Unsupported blocks keep the old strict path. */
+function completedAnswerMatches(answer: string, screen: string): boolean {
+  if (completedRowsMatch(answer, screen)) return true;
+  const words: string[] = [];
+  let table = false;
+  for (const block of parseMarkdown(answer)) {
+    if (block.type === "paragraph") {
+      for (const line of block.lines) {
+        const text = shownText(line, true);
+        if (text === null) return false;
+        words.push(text);
+      }
+    } else if (block.type === "table") {
+      table = true;
+      for (const row of [block.header, ...block.rows]) {
+        const cells = row.map((cell) => shownText(cell, true));
+        if (cells.some((cell) => cell === null)) return false;
+        words.push(cells.join(" "));
+      }
+    } else return false;
+  }
+  const shown = table ? screen.split("\n").filter((line) => !/^[ \t─━]+$/.test(line)).join("\n") : screen;
+  return completedRowsMatch(words.join(" "), shown);
+}
+
+/** Codex 0.166's weekly-limit notice, only between the completed-turn footer and empty composer. */
+const CODEX_LIMIT_NOTICE = /^[ \t]*⚠ weekly limit: (?:100|\d{1,2})% left(?: · resets at (?:1[0-2]|[1-9]):[0-5]\d [AP]M on \d{1,2} [A-Z][a-z]{2})? · \/status[ \t]*$/;
+const CODEX_LIMIT_HEADS_UP = /^⚠ Heads up, you have less than 25% of your weekly limit left\. Run \/status for a breakdown\.[ \t]*$/;
+
 /**
  * The answer a screen shows Codex finished last, with the prompt of its turn, both whitespace-collapsed: an
  * answer block (its "\u2022" line and the indented lines it wraps onto) with Codex's completed-turn footer
@@ -1074,7 +1121,10 @@ function footedAnswer(screen: string): { text: string; prompt: string } | null {
   if (composer >= rows.length || !/^\u203a(?:\s+Ask Codex to do anything)?$/.test(rows[composer]!.line.trim())) return null;
   const status = rows.slice(composer + 1);
   if (status.length === 0 || status.length > 4 || !status.every(({ line }) => FOOTER.test(line.trim()))) return null;
-  const footer = rows[composer - 1];
+  let before = composer - 1;
+  if (CODEX_LIMIT_NOTICE.test(rows[before]?.line ?? "")) before--;
+  if (CODEX_LIMIT_HEADS_UP.test(rows[before]?.line ?? "")) before--;
+  const footer = rows[before];
   if (footer === undefined || !CODEX_TURN_FOOTER.test(footer.line)) return null;
   const index = footer.at;
   if (index < 2 || lines[index - 1]!.trim() !== "" || lines[index - 2]!.trim() === "") return null;
@@ -1086,7 +1136,7 @@ function footedAnswer(screen: string): { text: string; prompt: string } | null {
   if (prompt < 0) return null;
   let end = prompt + 1;
   while (end < start && /^\s+\S/.test(lines[end]!)) end++;
-  return { text: collapsed(lines.slice(start, index - 1).join("\n").slice(2)), prompt: collapsed(lines.slice(prompt, end).join("\n").slice(1)) };
+  return { text: lines.slice(start, index - 1).join("\n").slice(2).trim(), prompt: collapsed(lines.slice(prompt, end).join("\n").slice(1)) };
 }
 
 /** The answers a conversation's rollout records its turns finished on (task_complete), as written. */
@@ -1206,7 +1256,7 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
   // candidate (one herdr reported, or a title named, of another folder) can only keep it from owning one
   const owner = maybe?.length === 1 && (footerOwners === null || footerOwners.has(maybe[0]!.path)) ? maybe[0]! : null;
   const ownerLast = owner === null ? null : lastFinishedTurn(owner.text);
-  const footedOwner = owner !== null && ownerLast?.asked != null && collapsed(ownerLast.asked) === footed!.prompt && collapsed(ownerLast.answer) === footed!.text ? owner.path : null;
+  const footedOwner = owner !== null && ownerLast?.asked != null && collapsed(ownerLast.asked) === footed!.prompt && completedAnswerMatches(ownerLast.answer, footed!.text) ? owner.path : null;
   // every answer each candidate gave, as answerAnchor reads one (cut at link targets), read once
   let shown: Said[] | undefined;
   const givenElsewhere = (index: number, { anchor, words }: Anchor) => (shown ??= parsed.map((turns, at) =>
@@ -1219,7 +1269,7 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
       const found = answerAnchor(text);
       return found !== null && displays.some((display) => display.includes(found.anchor))
         && (wholeBlocks.some((block) => found.whole.test(block))
-          || (candidate.path === footedOwner && collapsed(text) === footed!.text)) ? [found] : [];
+          || (candidate.path === footedOwner && completedAnswerMatches(text, footed!.text))) ? [found] : [];
     });
     if (anchors.length === 0) continue;
     if (!scrutinized.has(candidate.path) || anchors.some((anchor) => !givenElsewhere(index, anchor))) matching.add(candidate.path);
