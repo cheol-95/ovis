@@ -73,6 +73,8 @@ const collisions: [string, string, { path: string; text: string }][] = [
   ["a reference link", `${text} Read report for details.`, candidate("rendered", `${text} Read [report][ref] for details.\n\n[ref]: https://example.com/report`)],
   ["an unfinished turn", spaced[0], unfinished("rendered", spaced[1], false)],
   ["an unfinished turn after an older finished one", spaced[0], unfinished("rendered", spaced[1], true)],
+  // its prompt pushed out of the tail read (by a large tool output) and its turn not finished in it
+  ["its prompt cut from the read", spaced[0], { path: "rendered", text: unfinished("rendered", spaced[1], false).text.split("\n").slice(1).join("\n") }],
 ];
 for (const [kind, literal, rendered] of collisions) {
   test(`keeps an exact reply unbound while a same-prompt conversation's answer with ${kind} may render the same`, () => {

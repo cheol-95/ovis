@@ -1211,6 +1211,22 @@ function askedPrompts(rollout: string): string[] {
   return [...asked.values()];
 }
 
+/** Whether a rollout's read ends on an answer no task_complete followed: its turn still open, or its finish cut from the read. */
+function endsOnUnfinishedAnswer(rollout: string): boolean {
+  let open = false;
+  for (const line of rollout.split("\n")) {
+    if (!line.includes('"assistant"') && !line.includes('"agent_message"') && !line.includes('"task_complete"')) continue;
+    try {
+      const entry = JSON.parse(line) as { type?: unknown; payload?: Record<string, unknown> };
+      const payload = entry.payload ?? {};
+      if (payload["type"] === "task_complete") open = false;
+      else if (entry.type === "event_msg" && payload["type"] === "agent_message"
+        || entry.type === "response_item" && payload["type"] === "message" && payload["role"] === "assistant" && payload["channel"] !== "analysis") open = true;
+    } catch { /* a record cut by the tail read */ }
+  }
+  return open;
+}
+
 function lastFinishedTurn(rollout: string): { asked: string | null; answer: string } | null {
   const asked = new Map<string, string>();
   let last: { asked: string | null; answer: string } | null = null;
@@ -1326,7 +1342,13 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
     const prompts = askedPrompts(candidate.text);
     const users = parsed[index]!.filter((turn) => turn.role === "user").map((turn) => alnum(turn.parts.filter((part) => part.kind === "text")
       .map((part) => part.text).join("\n")));
-    if (prompts.length === 0 && users.length === 0) return unread;
+    // and, read whole, one whose read may have cut its prompt while its turn is unfinished and its last answer
+    // may be the one shown (rendered the same, too short to tell, or its anchor on screen as answerAnchor reads it)
+    if (prompts.length === 0 && users.length === 0) return unread || endsOnUnfinishedAnswer(candidate.text) && [answersOf(parsed[index]!).at(-1)].some((answer) => {
+      if (answer === undefined) return false;
+      const found = answerAnchor(answer);
+      return found === null || displays.some((display) => display.includes(found.anchor)) || completedAnswerMatches(answer, footed!.text);
+    });
     // a prompt sent as several messages reads as its parts' run
     return prompts.some((asked) => alnum(asked).endsWith(shownPrompt)) || users.some((_, at) => users.slice(0, at + 1).join("").endsWith(shownPrompt));
   });
