@@ -62,6 +62,26 @@ test("keeps an exact reply unbound while a same-prompt conversation's linked ans
   expect(matchCodexTranscript(shown, [candidate("own", literal), other], new Set(), new Map(), false, new Set(["own", "other"]))).toBe("own");
 });
 
+const text = "The implementation preserves request metadata and trace identifiers while masking sensitive values.";
+const url = "http://127.0.0.1:4317";
+for (const [kind, literal, rendered] of [
+  // a local link whose path has a space, shown relative to the folder
+  ["a spaced local link", `${text} Read report (docs/my report.md) for details.`, `${text} Read [report](/repo/docs/my report.md) for details.`],
+  // a bare URL, shown followed by itself
+  ["a bare URL", `${text} Address: ${url} (${url}).`, `${text} Address: ${url}.`],
+  // an ordered list Codex numbers on from its first marker
+  ["a renumbered list", `${text}\n\n4. Verify the project account.\n5. Submit the supporting documents.`, `${text}\n\n4. Verify the project account.\n8. Submit the supporting documents.`],
+]) {
+  test(`keeps an exact reply unbound while a same-prompt conversation's answer with ${kind} renders the same`, () => {
+    const shown = screen.replace(/• The local[\s\S]*?to sign in\./, `• ${literal!.replaceAll("\n", "\n  ")}`);
+    const owners = new Set(["own", "rendered", "other"]);
+    expect(matchCodexTranscript(shown, [candidate("own", literal), candidate("rendered", rendered)], new Set(), new Map(), false, owners)).toBeNull();
+    // a same-prompt conversation whose answer renders otherwise leaves the exact reply its own
+    const other = candidate("other", rendered!.replace("Verify", "Close").replace("report", "summary").replace(":4317", ":4321"));
+    expect(matchCodexTranscript(shown, [candidate("own", literal), other], new Set(), new Map(), false, owners)).toBe("own");
+  });
+}
+
 test("keeps changed, ambiguous, unfinished and unknown replies unbound", () => {
   expect(matchCodexTranscript(screen, [candidate("own"), candidate("twin")])).toBeNull();
   expect(matchCodexTranscript(screen.replaceAll(":4317", ":4321"), [candidate("own")])).toBeNull();

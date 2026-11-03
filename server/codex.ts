@@ -1330,11 +1330,11 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
     return prompts.some((asked) => alnum(asked).endsWith(shownPrompt)) || users.some((_, at) => users.slice(0, at + 1).join("").endsWith(shownPrompt));
   });
   // The same text proves less too while another candidate whose last finished turn was asked the prompt shown
-  // ended on an answer that may render as that text (a link shown as its label and its target relative to the folder)
+  // ended on an answer Codex's completed rendering may show as that text (mayShowAs)
   const rendersElsewhere = owner !== null && candidates.some((candidate) => {
     if (candidate.path === owner.path) return false;
     const last = lastFinishedTurn(candidate.text);
-    return last !== null && (last.asked === null || alnum(last.asked).endsWith(alnum(footed!.prompt))) && mayRenderAs(last.answer, footed!.text);
+    return last !== null && (last.asked === null || alnum(last.asked).endsWith(alnum(footed!.prompt))) && mayShowAs(last.answer, footed!.text);
   });
   const footedOwner = owner !== null && ownerLast?.asked != null && collapsed(ownerLast.asked) === footed!.prompt
     && (collapsed(ownerLast.answer) === collapsed(footed!.text) && !rendersElsewhere || !askedElsewhere && completedAnswerMatches(ownerLast.answer, footed!.text)) ? owner.path : null;
@@ -1366,14 +1366,23 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
 }
 
 /**
- * Whether an answer may render as the text shown: their letters and digits alike with each markdown link
- * read as its label, and a parenthesised path shown after it dropped when one of the answer's link targets ends with it.
+ * Whether Codex may show an answer as the completed text shown, read through the same completed rendering
+ * a candidate's answer is (completedAnswerMatches). Codex shows a link to a local path (one with spaces too,
+ * as cutAtLinkTargets reads it) as its words and the path relative to the folder, which the answer cannot
+ * tell: such a link reads as its words and the longest end of its path the text shows in brackets.
  */
-function mayRenderAs(answer: string, shown: string): boolean {
+function mayShowAs(answer: string, shown: string): boolean {
+  const flat = [collapsed(shown), shown.split("\n").map((row) => row.trim()).join("")];
   const pieces = cutAtLinkTargets(answer);
-  const targets = pieces.map((piece) => piece.target.replace(/^<|>$/g, "")).filter((target) => target !== "");
-  const label = pieces.map((piece) => piece.text).join("");
-  return alnum(label) === alnum(shown.replace(/\(([^()\s]+)\)/g, (whole, path: string) => targets.some((target) => target.endsWith(path)) ? "" : whole));
+  const text = pieces.map(({ text, target }, at) => {
+    if (at === pieces.length - 1) return text;
+    const path = target.replace(/^<|>$/g, "");
+    const open = text.lastIndexOf("[");
+    const parts = /^(?:\/|[A-Za-z]:[\\/])/.test(path) ? path.split(/(?<=[\\/])/) : [];
+    const end = parts.map((_, from) => parts.slice(from).join("")).find((tail) => flat.some((row) => row.includes(`(${tail})`)));
+    return open < 0 || end === undefined ? `${text}](${target})` : `${text.slice(0, open)}${text.slice(open + 1)} (${end})`;
+  }).join("");
+  return completedAnswerMatches(text, shown);
 }
 
 /** Text as an answer's anchor is looked for in it (answerAnchor): cut at link targets, each piece letters and digits. */
