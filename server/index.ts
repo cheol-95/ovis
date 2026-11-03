@@ -322,12 +322,7 @@ export function createServer(
 
     websocket: core.websocket,
   });
-
-  const requestLog = new RequestLog(stateDir);
-  const services: RequestServices = {
-    options, relay: ovisRelay, hostname, token, bridgeToken, bootId, devices, preferences, herdrSidebar, identityOf, serveOnly, portalGuards, shellAgents, agentDetector, agentOffered, agentInstaller, openCodeState, cliProxyRoutes, usageLogin, usage, voice, browserSnapshot, core, seen, piReader, orderSequence, clientConnectionLog, requestLog, portalStartup,
-    get portalStartupResult() { return portalStartupResult; },
-  };
+  // bound before anything else opens, so a failed ::1 bind leaves only what a failed primary bind would
   let ipv6: Bun.Server<SocketData> | null = null;
   if (ipv6Loopback) {
     try {
@@ -341,6 +336,12 @@ export function createServer(
       throw error;
     }
   }
+
+  const requestLog = new RequestLog(stateDir);
+  const services: RequestServices = {
+    options, relay: ovisRelay, hostname, token, bridgeToken, bootId, devices, preferences, herdrSidebar, identityOf, serveOnly, portalGuards, shellAgents, agentDetector, agentOffered, agentInstaller, openCodeState, cliProxyRoutes, usageLogin, usage, voice, browserSnapshot, core, seen, piReader, orderSequence, clientConnectionLog, requestLog, portalStartup,
+    get portalStartupResult() { return portalStartupResult; },
+  };
   ovisRelay.resume(services, server.port ?? DEFAULT_PORT);
 
   if (options.portal) {
