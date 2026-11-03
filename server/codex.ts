@@ -1329,8 +1329,15 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
     // a prompt sent as several messages reads as its parts' run
     return prompts.some((asked) => alnum(asked).endsWith(shownPrompt)) || users.some((_, at) => users.slice(0, at + 1).join("").endsWith(shownPrompt));
   });
+  // The same text proves less too while another candidate whose last finished turn was asked the prompt shown
+  // ended on an answer that may render as that text (a link shown as its label and its target relative to the folder)
+  const rendersElsewhere = owner !== null && candidates.some((candidate) => {
+    if (candidate.path === owner.path) return false;
+    const last = lastFinishedTurn(candidate.text);
+    return last !== null && (last.asked === null || alnum(last.asked).endsWith(alnum(footed!.prompt))) && mayRenderAs(last.answer, footed!.text);
+  });
   const footedOwner = owner !== null && ownerLast?.asked != null && collapsed(ownerLast.asked) === footed!.prompt
-    && (collapsed(ownerLast.answer) === collapsed(footed!.text) || !askedElsewhere && completedAnswerMatches(ownerLast.answer, footed!.text)) ? owner.path : null;
+    && (collapsed(ownerLast.answer) === collapsed(footed!.text) && !rendersElsewhere || !askedElsewhere && completedAnswerMatches(ownerLast.answer, footed!.text)) ? owner.path : null;
   // every answer each candidate gave, as answerAnchor reads one (cut at link targets), read once
   let shown: Said[] | undefined;
   const givenElsewhere = (index: number, { anchor, words }: Anchor) => (shown ??= parsed.map((turns, at) =>
@@ -1356,6 +1363,17 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
     else open = true;
   }
   return !open && matching.size === 1 ? [...matching][0]! : null;
+}
+
+/**
+ * Whether an answer may render as the text shown: their letters and digits alike with each markdown link
+ * read as its label, and a parenthesised path shown after it dropped when one of the answer's link targets ends with it.
+ */
+function mayRenderAs(answer: string, shown: string): boolean {
+  const pieces = cutAtLinkTargets(answer);
+  const targets = pieces.map((piece) => piece.target.replace(/^<|>$/g, "")).filter((target) => target !== "");
+  const label = pieces.map((piece) => piece.text).join("");
+  return alnum(label) === alnum(shown.replace(/\(([^()\s]+)\)/g, (whole, path: string) => targets.some((target) => target.endsWith(path)) ? "" : whole));
 }
 
 /** Text as an answer's anchor is looked for in it (answerAnchor): cut at link targets, each piece letters and digits. */

@@ -51,6 +51,17 @@ test("does not discard impossible percentages or different warning text", () => 
   }
 });
 
+test("keeps an exact reply unbound while a same-prompt conversation's linked answer renders the same", () => {
+  const text = "The implementation preserves request metadata and trace identifiers while masking sensitive values.";
+  const literal = `${text} Read report (docs/report.md) for details.`;
+  const shown = screen.replace(/• The local[\s\S]*?to sign in\./, `• ${literal}`);
+  const linked = candidate("linked", `${text} Read [report](/repo/docs/report.md) for details.`);
+  expect(matchCodexTranscript(shown, [candidate("own", literal), linked], new Set(), new Map(), false, new Set(["own", "linked"]))).toBeNull();
+  // a same-prompt conversation that answered otherwise leaves the exact reply its own
+  const other = candidate("other", `${text} Read [summary](/repo/docs/summary.md) for details.`);
+  expect(matchCodexTranscript(shown, [candidate("own", literal), other], new Set(), new Map(), false, new Set(["own", "other"]))).toBe("own");
+});
+
 test("keeps changed, ambiguous, unfinished and unknown replies unbound", () => {
   expect(matchCodexTranscript(screen, [candidate("own"), candidate("twin")])).toBeNull();
   expect(matchCodexTranscript(screen.replaceAll(":4317", ":4321"), [candidate("own")])).toBeNull();
