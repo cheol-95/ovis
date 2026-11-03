@@ -333,6 +333,9 @@ export function createServer(
       });
     } catch (error) {
       server.stop(true);
+      // createCore already started the status hub's watchers and timers
+      core.stop(() => clearInterval(draftTimer));
+      piReader.close();
       throw error;
     }
   }
