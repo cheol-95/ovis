@@ -19,35 +19,45 @@ describe("mentioned chat images", () => {
   });
 
   it("keeps multiple spaced paths separate, in order, without the following prose", () => {
-    const paths = ["/My Images/one.png", "/Other Folder/two.JPEG"];
+    const paths = ["/My Images/.ovis/paste-20261103-065352-8f69b25b.png", "/Other Folder/.ovis/two-20261103-065400-0123abcd.JPEG"];
     expect(images(`${paths.map(imageMention).join("")}compare these images`).map((image) => image.name)).toEqual(paths);
     expect(images(`${imageMention(paths[0]!)}설명에 다른 image.png도 있음`).map((image) => image.name)).toEqual([paths[0]!]);
   });
 
   it("supports Windows absolute paths with spaces", () => {
-    const path = "C:\\Users\\Test User\\My Images\\one.webp";
+    const path = "C:\\Users\\Test User\\My Images\\.ovis\\paste-20261103-065352-8f69b25b.webp";
     expect(images(imageMention(path)).map((image) => image.name)).toEqual([path]);
   });
 
   it("preserves relative and no-space mentions and deduplicates each path", () => {
     expect(images("@shots/one.gif @/tmp/two.png @shots/one.gif").map((image) => image.name)).toEqual(["shots/one.gif", "/tmp/two.png"]);
-    expect(images("@shots/me@home.png @/Users/test@example/My Images/one.png").map((image) => image.name)).toEqual(["shots/me@home.png", "/Users/test@example/My Images/one.png"]);
+    expect(images("@shots/me@home.png @/Users/test@example/My Images/.ovis/paste-20261103-065352-8f69b25b.png").map((image) => image.name)).toEqual(["shots/me@home.png", "/Users/test@example/My Images/.ovis/paste-20261103-065352-8f69b25b.png"]);
   });
 
   it("does not join paths across lines, tabs or another mention", () => {
     for (const text of ["@/My Folder\nnot-an-attachment.png", "@/My Folder\rnot-an-attachment.png", "@/My Folder\tnot-an-attachment.png", "@/My Folder @other prose.png"]) {
       expect(images(text)).toEqual([]);
     }
-    expect(images("@/My Folder @/Other Folder/two.png").map((image) => image.name)).toEqual(["/Other Folder/two.png"]);
+    expect(images("@/My Folder @/Other Folder/.ovis/paste-20261103-065352-8f69b25b.png").map((image) => image.name)).toEqual(["/Other Folder/.ovis/paste-20261103-065352-8f69b25b.png"]);
   });
 
   it("leaves addresses, unsupported types and extension prefixes alone", () => {
     for (const text of ["person@example.png", "@/My Folder/notes.txt", "@/My Folder/one.png.backup", "@/My Folder/one.pngsuffix"]) expect(images(text)).toEqual([]);
   });
 
+  it("reads no prose as a spaced path, only what an upload names", () => {
+    // after another mention with no extension, prose that ends in an image name is not a file
+    for (const text of ["see @/docs for the guide, then open logo.png", "import from @/components then check screenshot.png", "@/tmp/example please refer to diagram.png in prose"]) expect(images(text)).toEqual([]);
+    // a path with spaces is read only to an upload's own name, never to an earlier image-named folder
+    expect(images("@/tmp/My Folder/report.png backup/.ovis/paste-20261103-065352-8f69b25b.png").map((image) => image.name)).toEqual(["/tmp/My Folder/report.png backup/.ovis/paste-20261103-065352-8f69b25b.png"]);
+    // other spaces stop at the next mention too, and a long line of mentions without an upload's name reads none
+    expect(images("@/tmp/not-image\u00a0@/A B/.ovis/paste-20261103-065352-8f69b25b.png").map((image) => image.name)).toEqual(["/A B/.ovis/paste-20261103-065352-8f69b25b.png"]);
+    expect(images("@/a b c\u00a0".repeat(10_000))).toEqual([]);
+  });
+
   it("keeps native attachments before mentioned files", () => {
-    const gallery = userGalleryImages("local", "p:1", [{ kind: "image", ref: "codex-example", media_type: "image/jpeg" }], "@/My Images/one.png", t);
-    expect(gallery.map((image) => image.file)).toEqual(["image-1.jpg", "one.png"]);
+    const gallery = userGalleryImages("local", "p:1", [{ kind: "image", ref: "codex-example", media_type: "image/jpeg" }], "@/My Images/.ovis/one-20261103-065352-8f69b25b.png", t);
+    expect(gallery.map((image) => image.file)).toEqual(["image-1.jpg", "one-20261103-065352-8f69b25b.png"]);
     expect(new URL(gallery[0]!.src, "http://fixture").searchParams.get("ref")).toBe("codex-example");
   });
 });

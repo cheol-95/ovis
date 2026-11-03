@@ -18,9 +18,11 @@ export function toolGalleryImage(machineId: string, paneId: string, image: WorkI
 /** Pasted pictures first, then image files mentioned as @path, in the message's order. */
 export function userGalleryImages(machineId: string, paneId: string, parts: readonly ConversationPart[], text: string, t: Translate): GalleryImage[] {
   const pasted = parts.filter((part): part is Extract<ConversationPart, { kind: "image" }> => part.kind === "image");
-  // Uploads insert an unquoted absolute path, including spaces in the pane's cwd. Stop at the
-  // first image extension and never consume the next mention or another line of the message.
-  const mentioned = [...new Set([...text.matchAll(/(?:^|\s)@((?:\S+|(?:\/|[a-z]:[\\/])(?:(?! @)[^\r\n\t])*?)\.(?:png|jpe?g|gif|webp))(?=\s|$)/gi)].map((match) => match[1] ?? ""))];
+  // Uploads insert an unquoted absolute path, and the pane's cwd may hold spaces (an iCloud folder).
+  // A path with spaces counts only in the shape an upload takes (server/paste.ts: `<name>-<YYYYMMDD>-
+  // <HHMMSS>-<8 hex>.<ext>`), so prose after another @mention never reads as a file; it stops at a
+  // line break or the next mention, and is bounded so a long line stays quick to scan.
+  const mentioned = [...new Set([...text.matchAll(/(?:^|\s)@(\S+\.(?:png|jpe?g|gif|webp)|(?:\/|[a-z]:[\\/])(?:(?!\s@)[^\r\n\t]){0,1024}?-\d{8}-\d{6}-[0-9a-f]{8}\.(?:png|jpe?g|gif|webp))(?=\s|$)/gi)].map((match) => match[1] ?? ""))];
   return [
     ...pasted.map((part, index): GalleryImage => ({
       src: machinePath(machineId, `pane/conversation/image?${new URLSearchParams({ pane_id: paneId, ref: part.ref }).toString()}`),
