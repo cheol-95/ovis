@@ -1256,7 +1256,16 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
   // candidate (one herdr reported, or a title named, of another folder) can only keep it from owning one
   const owner = maybe?.length === 1 && (footerOwners === null || footerOwners.has(maybe[0]!.path)) ? maybe[0]! : null;
   const ownerLast = owner === null ? null : lastFinishedTurn(owner.text);
-  const footedOwner = owner !== null && ownerLast?.asked != null && collapsed(ownerLast.asked) === footed!.prompt && completedAnswerMatches(ownerLast.answer, footed!.text) ? owner.path : null;
+  // An answer read through its rendering (markup, a table, a link Codex shows relative to the folder) proves
+  // less than the same text: it may also be another conversation's that recorded the answer another way. It
+  // counts only while no other candidate's last finished turn was asked the prompt shown
+  const askedElsewhere = owner !== null && candidates.some((candidate) => {
+    if (candidate.path === owner.path) return false;
+    const last = lastFinishedTurn(candidate.text);
+    return last !== null && (last.asked === null || alnum(last.asked).endsWith(alnum(footed!.prompt)));
+  });
+  const footedOwner = owner !== null && ownerLast?.asked != null && collapsed(ownerLast.asked) === footed!.prompt
+    && (collapsed(ownerLast.answer) === collapsed(footed!.text) || !askedElsewhere && completedAnswerMatches(ownerLast.answer, footed!.text)) ? owner.path : null;
   // every answer each candidate gave, as answerAnchor reads one (cut at link targets), read once
   let shown: Said[] | undefined;
   const givenElsewhere = (index: number, { anchor, words }: Anchor) => (shown ??= parsed.map((turns, at) =>
