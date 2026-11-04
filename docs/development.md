@@ -223,7 +223,7 @@ after a herdr restart. It prints the time each step took. `KEEP=1` leaves the co
 
 Tests run against a herdr session of their own, `ovis-test`. The first run starts a headless `herdr --session ovis-test server` and later runs reuse it, so test workspaces never show in the herdr you work in (`scripts/test-herdr.ts`). Stop it with `herdr --session ovis-test server stop`. `HERDR_TEST_SESSION` picks another name, and `HERDR_TEST_LIVE=1` runs against `HERDR_SOCKET` or your default session instead.
 
-Browser checks launch `CHROME_PATH` when it is set, else Google Chrome at `/opt/google/chrome/chrome` where that exists, else the lockfile's Playwright Chromium (`scripts/chrome-path.ts`; install it with `bun node_modules/playwright-core/cli.js install chromium`). After a herdr upgrade, refresh the generated wire types with `bun run generate:types --refresh` (and `--check` to verify).
+Browser checks launch `CHROME_PATH` when it is set, else Google Chrome at `/opt/google/chrome/chrome` where that exists, else the lockfile's Playwright Chromium (`scripts/chrome-path.ts`; install it with `bun node_modules/playwright-core/cli.js install chromium`). After a herdr upgrade, refresh the generated wire types with `bun run generate:types --refresh` (and `--check` to verify). When ci.yml's `herdr-core-live` job pins a new `HC_VERSION`, refresh herdr-core's with `OVIS_HC_BIN=<that hc> bun run generate:types --refresh-hc`: the live job fails while the snapshot differs from what that hc's `hc schema` prints.
 
 `HEADED=1 bun scripts/chat-browser-qa.ts` opens its owned native-transcript fixture in a
 visible Chrome window. Its detected Codex fixture process keeps the rollout open; no
@@ -920,8 +920,9 @@ The [CI workflow](../.github/workflows/ci.yml) runs on every PR and `main` push:
     process, server and fixture panes. Those helpers stay sequential within their own fixture.
     The context suite prints each helper's elapsed time and stops its owned daemon on exit.
     `bun run test:ui` also runs both suites.
-  - **Browser regression (other scripts)** runs every other browser script, four at a time
-    on hosted CI and six at a time on self-hosted CI.
+  - **Browser regression (other scripts)** runs every other browser script: six at a time in
+    one job on self-hosted CI, and on hosted CI split over four jobs (`BROWSER_SHARD=k/4`,
+    balanced by `scripts/ci-browser-timings.json`) that run three at a time each.
 
   Both browser jobs run `scripts/ci-browser-parallel.ts`, which takes its script list from
   `scripts/ci-browser.sh` (`BROWSER_SCRIPTS` picks from it, `BROWSER_EXCLUDE` leaves scripts out,
@@ -1001,9 +1002,11 @@ pages or credentials.
 
 ### Self-hosted runner
 
-`ci.yml`'s Linux jobs of a push or a same-repository pull request run on the maintainer PC's runners
-(labels `["self-hosted","self-hosted-ovis"]`) by default; other events stay on `ubuntu-24.04`. The repository variable `CI_SELF_HOSTED_LABELS`
-overrides that with another JSON array of runner labels that contains `"self-hosted"`, or with the
+`ci.yml`'s Linux jobs of a push run on the maintainer PC's runners (labels
+`["self-hosted","self-hosted-ovis"]`) by default; other events, pull requests included, stay on
+`ubuntu-24.04`, so a pull request's timing-sensitive browser checks do not share that PC's CPU with
+the agents working there. The repository variable `CI_SELF_HOSTED_LABELS` overrides that (labels
+send same-repository pull requests back to the self-hosted runners) with another JSON array of runner labels that contains `"self-hosted"`, or with the
 JSON string `"ubuntu-24.04"` to keep every job GitHub-hosted while that PC is offline. `pages.yml`
 and `release.yml` stay on `ubuntu-24.04` unless the variable holds labels. The variable routes:
 

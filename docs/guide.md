@@ -422,7 +422,7 @@ A phone reaches the app on this PC in one of two ways. The **Ovis relay** needs 
 
 ### Through the Ovis relay
 
-The Ovis relay lets your phone reach this PC from anywhere, with no Tailscale, no account and nothing to set up on the phone. It's off until you turn it on. While it's on, the PC and the phone each connect out to a relay that Ovis runs at `relay.ovis.sh`, which passes their traffic between them. Everything they send is end-to-end encrypted between the phone and the PC, so the relay can't read it. To turn it on, open **Settings → Phone & devices** on the PC, switch on **Ovis relay**, then point the phone's camera at the QR code that shows up.
+The Ovis relay lets your phone reach this PC from anywhere, with no Tailscale, no account and nothing to set up on the phone. It's off until you turn it on. While it's on, the PC and the phone each connect out to a relay that Ovis runs at `relay.ovis.sh`, which passes their traffic between them. Everything they send is end-to-end encrypted between the phone and the PC, so the relay can't read it. To turn it on, open **Settings → Phone & devices** on the PC, switch on **Ovis relay**, then point the phone's camera at the QR code that shows up. On a fresh install, the setup guide's **Connect your phone** offers it first: choose **Turn on the Ovis relay** and its QR code shows right there. **Use Tailscale or Wi-Fi instead**, under it, shows this page's own address and pairing QR code, or sends you to **Settings → Phone & devices** when the page is open on the PC itself.
 
 Step by step:
 
@@ -806,8 +806,9 @@ Ovis refuses to start with this runtime on Windows; use the default `herdr` runt
   not kept current behind your back. A recent tab you switch away from keeps its last screen until
   you are back, **Use alongside herdr's own window** lets go of a pane only when you leave the
   window, and after a reconnect a tab attaches again at once.
-- **Chat:** screen reads carry no colors, so a grey suggestion Claude Code or Hermes leaves in an
-  empty input box reads as typed text, and a send waits for you to confirm it.
+- **Chat:** while a line the terminal wrapped is on screen, its colors cannot be matched to the
+  screen's text, so a grey suggestion Claude Code or Hermes leaves in an empty input box then reads
+  as typed text, and a send waits for you to confirm it.
 - **Not on herdr-core:** renaming, moving or reordering workspaces, tabs and panes, and
   splitting, swapping, zooming or resizing panes, which belong to the app's window; Ovis hides
   those actions on such a PC. Search and scrollback selection in a pane, plugins and worktrees
