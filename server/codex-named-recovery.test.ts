@@ -75,3 +75,9 @@ it("allows an append but refuses replacement and truncation during a named read"
   expect(namedCodexAppendCompatible(before, { ...before, ino: 3 })).toBe(false);
   expect(namedCodexAppendCompatible(before, { ...before, dev: 2 })).toBe(false);
 });
+
+it("takes no prompt still in the composer, nor one too short to tell", () => {
+  const asked = "Please continue with the restored conversation";
+  expect(namedCodexAnswerShown(`› ${asked}\n\n  gpt-5.1-codex default · /project`, message("user", asked))).toBe(false);
+  expect(namedCodexAnswerShown("› yes\n• Ran command", message("user", "yes"))).toBe(false);
+});

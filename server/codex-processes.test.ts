@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import * as fs from "node:fs";
 import { appendFileSync, closeSync, mkdirSync, mkdtempSync, openSync, rmSync, statSync, symlinkSync, truncateSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { asCodexTitle, codexOpenRollout, codexTranscriptPath, limitCodexHistoryForTests } from "./codex.ts";
 import * as codexModule from "./codex.ts";
 import * as conversationModule from "./conversation.ts";
@@ -2619,5 +2619,72 @@ describe("another session's conversation is never shown for a plain Codex pane",
     // nor one in a message queued to be sent
     screen = `OpenAI Codex (v0.165.0)\n\n• Working (2s • esc to interrupt)\n  ↳ Explain this quoted answer: ${answer}\n\n› `;
     expect(await resolve()).toBeNull();
+  });
+});
+
+describe("a Codex pane recovered by its saved thread name (#3442)", () => {
+  const live = [{ pid: 2147483647, argv: ["/usr/bin/codex"] }];
+  const named = "01a0c7a1-56d9-7e20-9f08-f7a2d973bc02";
+  const asked = "Check the restored records before changing anything";
+  const toolScreen = `› ${asked}\n\n• Ran ls\n  └ output\n\n› Ask Codex to do anything`;
+  /** A second thread of this folder, saved under the name, whose latest prompt is [asked]. */
+  function namedThread(name: string): string {
+    const file = join(home, "sessions", `rollout-${named}.jsonl`);
+    writeFileSync(file, [
+      { type: "session_meta", payload: { id: named, cwd: root } },
+      { type: "event_msg", payload: { type: "user_message", message: asked } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    const db = new Database(join(home, "state_5.sqlite"));
+    db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, 2, 2, 'cli')").run(named, file, root);
+    db.close();
+    writeFileSync(join(home, "session_index.jsonl"), `${JSON.stringify({ id: named, thread_name: name })}\n`);
+    foreground = live;
+    return file;
+  }
+
+  it("reads the thread the title names when the screen shows its latest prompt and tool work", async () => {
+    const file = namedThread("Investigate a restored conversation");
+    title = "Investigate a restored conversation | project";
+    screen = toolScreen;
+    expect(await resolve()).toBe(file);
+  });
+
+  it("takes no thread named like the folder, which a title without a thread name shows", async () => {
+    namedThread(asCodexTitle(basename(root)));
+    title = basename(root);
+    screen = toolScreen;
+    expect(await resolve()).toBeNull();
+  });
+
+  it("takes no prompt still in the composer", async () => {
+    namedThread("Investigate a restored conversation");
+    title = "Investigate a restored conversation | project";
+    screen = `› ${asked}\n\n  gpt-5.1-codex default · ${root}`;
+    expect(await resolve()).toBeNull();
+  });
+
+  it("keeps the thread the pane was bound to by its screen over the one its title names", async () => {
+    namedThread("Investigate a restored conversation");
+    title = "Investigate a restored conversation | project";
+    screen = `• ${answer}`;
+    expect(await resolve()).toBe(path);
+    screen = toolScreen;
+    expect(await resolve()).toBe(path);
+  });
+
+  it("does not hold the server on a FIFO in place of the name index", async () => {
+    namedThread("Investigate a restored conversation");
+    const index = join(home, "session_index.jsonl");
+    rmSync(index);
+    expect(Bun.spawnSync(["mkfifo", index]).exitCode).toBe(0);
+    // in a child, so a read that blocks on the pipe fails the test by its timeout instead of hanging the run
+    const script = `import { codexTranscriptPath } from ${JSON.stringify(join(import.meta.dir, "codex.ts"))};
+      console.log(JSON.stringify(await codexTranscriptPath(${JSON.stringify(root)}, ${JSON.stringify(root)}, ${JSON.stringify(home)})));`;
+    title = "Investigate a restored conversation | project";
+    screen = toolScreen;
+    const child = Bun.spawn([process.execPath, "-e", script], { env: { ...process.env, HERDR_SOCKET: join(root, "herdr.sock") }, stdout: "pipe", stderr: "inherit", timeout: 10_000 });
+    children.push(child);
+    expect(await child.exited).toBe(0);
+    expect((await new Response(child.stdout).text()).trim()).toBe("null");
   });
 });

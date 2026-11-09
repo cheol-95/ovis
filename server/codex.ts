@@ -21,6 +21,7 @@ import { kiroCodexProcess, kiroNested, kiroWrapper } from "./kiro-terminal.ts";
 import { resolveAgent } from "./pane-context.ts";
 import { FOOTER } from "./codex-steering.ts";
 import { codexStartScreenUnused } from "./start-screen.ts";
+import { readRegularText } from "./pi-models.ts";
 
 type RecordValue = Record<string, unknown>;
 const record = (value: unknown): RecordValue => value !== null && typeof value === "object" && !Array.isArray(value) ? value as RecordValue : {};
@@ -1869,13 +1870,15 @@ export function namedCodexAnswerShown(screen: string, rollout: string): boolean 
     if (promptKey(prompt) === promptKey(footed.prompt) && prompt.trim().length >= 2
       && last.parts.some((part) => part.kind === "text" && part.text.trim().length >= 4 && completedAnswerMatches(part.text, footed.text))) return true;
   }
-  const prompts = screen.split("\n").filter((line) => line.startsWith("›"));
+  // a prompt still in the composer is a draft, not a sent one: only one Codex answered or ran a tool after counts
+  const lines = screen.split("\n");
+  const prompts = lines.filter((line, at) => line.startsWith("›") && lines.slice(at + 1).some((next) => next.startsWith("•")));
   const latestPrompt = user?.parts.flatMap((part) => part.kind === "text" ? [part.text] : []).join("\n") ?? "";
   const exactPrompt = (text: string) => text.normalize("NFKC").replace(/\s+/g, "");
   for (const prompt of prompts) {
     // A complete prompt is evidence even while tools are running. A clipped prefix is not.
     const whole = prompt.replace(/^›[ \t]?/, "").trim();
-    if (whole !== "" && whole !== "Ask Codex to do anything" && !whole.includes("…")
+    if (exactPrompt(whole).length >= 4 && whole !== "Ask Codex to do anything" && !whole.includes("…")
       && exactPrompt(whole) === exactPrompt(latestPrompt)) return true;
     const shown = normalizeDisplay(prompt.replace(/[…].*$/, ""));
     if (shown.length >= 48 && new Set(shown).size >= 16 && asked.some((text) => text.includes(shown))) return true;
@@ -1913,13 +1916,18 @@ async function namedConversation(paneId: string, cwd: string, home: string, titl
   let opened: ReturnType<typeof openCodexStore> | undefined;
   try {
     const indexPath = join(home, "session_index.jsonl");
+    // with no thread name Codex's title shows the project alone: a thread named like the folder is no identity then
+    const item = asCodexTitle(title).replace(/^[\u2800-\u28ff]\s+/, "").split(" | ")[0];
+    if ([false, true].some((screen) => item === asCodexTitle(nodePath.basename(cwd), screen))) return null;
     const indexStat = statSync(indexPath);
-    if (indexStat.size > 8 * 1024 * 1024) return null;
+    // read non-blocking from the descriptor it checks, so a FIFO here cannot hold the server's thread
+    const index = indexStat.isFile() ? readRegularText(indexPath, 8 * 1024 * 1024) : null;
+    if (index === null) return null;
     const signature = (value: NonNullable<ReturnType<typeof statSync>>) => `${value.dev}:${value.ino}:${value.size}:${value.mtimeMs}:${value.ctimeMs}`;
     opened = openCodexStore(home);
     const folder = storedCwdCondition(cwd);
     const eligible = new Set(opened.db.query<{ id: string }, string[]>(`SELECT id FROM threads WHERE ${folder.where} AND archived = 0${interactive(opened.db)}`).all(...folder.params).map((row) => row.id));
-    const id = namedCodexThread(title, readFileSync(indexPath, "utf8"), eligible);
+    const id = namedCodexThread(title, index, eligible);
     if (id === null) return null;
     const row = opened.db.query<{ rollout_path: string }, [string]>("SELECT rollout_path FROM threads WHERE id = ? AND archived = 0").get(id);
     opened.settled();
@@ -3322,9 +3330,10 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
     try { return [{ path, text: codexHistoryTail(path, 1024 * 1024, home) }]; } catch { return []; }
   });
   const matched = screen ? matchCodexTranscript(screen.text, candidates, new Set(titledElsewhere === null ? [] : [titledElsewhere]), new Map(), false, folderRollouts) : null;
-  if (matched === null) {
+  // only for a pane nothing else ties to a thread: never over its binding or resumed thread, nor onto another pane's
+  if (matched === null && boundHere === undefined && resumed === null) {
     const named = await namedConversation(paneId, cwd, home, agent.terminal_title_stripped ?? agent.terminal_title ?? "", processes);
-    if (named !== null) return named;
+    if (named !== null && ![...boundRollouts].some(([pane, bound]) => pane !== paneId && bound.path === named)) return named;
   }
   if (matched !== null) {
     boundRollouts.delete(paneId);
