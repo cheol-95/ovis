@@ -1845,7 +1845,13 @@ export function namedCodexAnswerShown(screen: string, rollout: string): boolean 
       && last.parts.some((part) => part.kind === "text" && part.text.trim().length >= 4 && completedAnswerMatches(part.text, footed.text))) return true;
   }
   const prompts = screen.split("\n").filter((line) => line.startsWith("›"));
+  const latestPrompt = user?.parts.flatMap((part) => part.kind === "text" ? [part.text] : []).join("\n") ?? "";
+  const exactPrompt = (text: string) => text.normalize("NFKC").replace(/\s+/g, "");
   for (const prompt of prompts) {
+    // A complete prompt is evidence even while tools are running. A clipped prefix is not.
+    const whole = prompt.replace(/^›[ \t]?/, "").trim();
+    if (whole !== "" && whole !== "Ask Codex to do anything" && !whole.includes("…")
+      && exactPrompt(whole) === exactPrompt(latestPrompt)) return true;
     const shown = normalizeDisplay(prompt.replace(/[…].*$/, ""));
     if (shown.length >= 48 && new Set(shown).size >= 16 && asked.some((text) => text.includes(shown))) return true;
   }
@@ -1870,6 +1876,11 @@ export function namedCodexAnswerShown(screen: string, rollout: string): boolean 
     }
   }
   return false;
+}
+
+/** Appending is normal during tool work; replacement or truncation invalidates the read. */
+export function namedCodexAppendCompatible(before: { dev: number; ino: number; size: number }, after: { dev: number; ino: number; size: number }): boolean {
+  return before.dev === after.dev && before.ino === after.ino && after.size >= before.size;
 }
 
 /** Recover an unbound pane using two independent facts, rechecked across the read. Never remembers a guessed binding. */
@@ -1899,7 +1910,10 @@ async function namedConversation(paneId: string, cwd: string, home: string, titl
     const current = await openRollouts(paneId, home, after.processRead?.info);
     if (current.codexProcesses.length === 0 || current.processes !== processes || processes === "") return null;
     const shown = await paneRead({ paneId, source: "recent", lines: 400, stripAnsi: true });
-    return shown.text === screen.text && signature(before) === signature(statSync(path))
+    const reread = codexHistoryTail(path, 16 * 1024 * 1024, home);
+    const finalMeta = rolloutHeader(path);
+    return namedCodexAnswerShown(shown.text, reread) && namedCodexAppendCompatible(before, statSync(path))
+      && finalMeta?.id === id && typeof finalMeta.cwd === "string" && sameDirectory(finalMeta.cwd, cwd)
       && signature(indexStat) === signature(statSync(indexPath)) ? path : null;
   } catch { return null; }
   finally { opened?.db.close(); }

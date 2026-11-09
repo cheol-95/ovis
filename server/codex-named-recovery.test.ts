@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { namedCodexAnswerShown, namedCodexThread } from "./codex.ts";
+import { namedCodexAnswerShown, namedCodexAppendCompatible, namedCodexThread } from "./codex.ts";
 
 const first = "00000000-0000-4000-8000-000000000001";
 const second = "00000000-0000-4000-8000-000000000002";
@@ -50,4 +50,28 @@ it("uses a whole completed short exchange only alongside independent name identi
   const screen = "› Hello there\n\n• Hello! How can I help?\n\n  Worked for 4s • 7:05 PM\n\n› Ask Codex to do anything\n\n  GPT-6-Luna low · /project · Context 90% left\n  ← for agents · ? for shortcuts";
   expect(namedCodexAnswerShown(screen, message("user", "Hello there") + "\n" + message("assistant", "Hello! How can I help?"))).toBe(true);
   expect(namedCodexAnswerShown(screen, message("user", "Different greeting") + "\n" + message("assistant", "Hello! How can I help?"))).toBe(false);
+});
+
+it("recognizes a complete short latest prompt while only tool output follows", () => {
+  const asked = "실행 결과 확인해줘.";
+  expect(namedCodexAnswerShown(`› ${asked}   \n    + Show details\n\n• Ran command\n  └ output\n\n› Ask Codex to do anything`, message("user", asked))).toBe(true);
+  expect(namedCodexAnswerShown("› 실행 결과 확인해줘.\n• Ran command", message("user", "실행  결과 확인해줘."))).toBe(true);
+});
+
+it("rejects short prefixes, clipping, changed punctuation and old prompts", () => {
+  const asked = "실행 결과 확인해줘.";
+  for (const shown of ["실행 결과", "실행 결과…", "실행 결과 확인해줘?", "Ask Codex to do anything"]) {
+    expect(namedCodexAnswerShown(`› ${shown}\n• Ran command`, message("user", asked))).toBe(false);
+  }
+  expect(namedCodexAnswerShown(`› ${asked}\n• Ran command`, message("user", asked) + "\n" + message("assistant", "Done") + "\n" + message("user", "다른 요청"))).toBe(false);
+  expect(namedCodexAnswerShown(`• Ran command\n  └ ${asked}`, message("user", asked))).toBe(false);
+});
+
+it("allows an append but refuses replacement and truncation during a named read", () => {
+  const before = { dev: 1, ino: 2, size: 100 };
+  expect(namedCodexAppendCompatible(before, { ...before, size: 150 })).toBe(true);
+  expect(namedCodexAppendCompatible(before, { ...before, size: 100 })).toBe(true);
+  expect(namedCodexAppendCompatible(before, { ...before, size: 90 })).toBe(false);
+  expect(namedCodexAppendCompatible(before, { ...before, ino: 3 })).toBe(false);
+  expect(namedCodexAppendCompatible(before, { ...before, dev: 2 })).toBe(false);
 });
