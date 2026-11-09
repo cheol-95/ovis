@@ -1917,8 +1917,9 @@ async function namedConversation(paneId: string, cwd: string, home: string, titl
   try {
     const indexPath = join(home, "session_index.jsonl");
     // with no thread name Codex's title shows the project alone: a thread named like the folder is no identity then
-    const item = asCodexTitle(title).replace(/^[\u2800-\u28ff]\s+/, "").split(" | ")[0];
-    if ([false, true].some((screen) => item === asCodexTitle(nodePath.basename(cwd), screen))) return null;
+    // (the whole title too: a folder's own name may hold the " | " Codex puts between items)
+    const titled = asCodexTitle(title).replace(/^[\u2800-\u28ff]\s+/, "");
+    if ([false, true].some((screen) => [titled, titled.split(" | ")[0]].includes(asCodexTitle(nodePath.basename(cwd), screen)))) return null;
     const indexStat = statSync(indexPath);
     // read non-blocking from the descriptor it checks, so a FIFO here cannot hold the server's thread
     const index = indexStat.isFile() ? readRegularText(indexPath, 8 * 1024 * 1024) : null;

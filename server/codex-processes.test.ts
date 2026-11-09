@@ -2628,14 +2628,14 @@ describe("a Codex pane recovered by its saved thread name (#3442)", () => {
   const asked = "Check the restored records before changing anything";
   const toolScreen = `› ${asked}\n\n• Ran ls\n  └ output\n\n› Ask Codex to do anything`;
   /** A second thread of this folder, saved under the name, whose latest prompt is [asked]. */
-  function namedThread(name: string): string {
+  function namedThread(name: string, folder = root): string {
     const file = join(home, "sessions", `rollout-${named}.jsonl`);
     writeFileSync(file, [
-      { type: "session_meta", payload: { id: named, cwd: root } },
+      { type: "session_meta", payload: { id: named, cwd: folder } },
       { type: "event_msg", payload: { type: "user_message", message: asked } },
     ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
     const db = new Database(join(home, "state_5.sqlite"));
-    db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, 2, 2, 'cli')").run(named, file, root);
+    db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, 2, 2, 'cli')").run(named, file, folder);
     db.close();
     writeFileSync(join(home, "session_index.jsonl"), `${JSON.stringify({ id: named, thread_name: name })}\n`);
     foreground = live;
@@ -2654,6 +2654,15 @@ describe("a Codex pane recovered by its saved thread name (#3442)", () => {
     title = basename(root);
     screen = toolScreen;
     expect(await resolve()).toBeNull();
+  });
+
+  it("takes no thread named like the start of a folder name that holds the title's separator", async () => {
+    const folder = join(root, "release | api");
+    mkdirSync(folder);
+    namedThread("release", folder);
+    title = "release | api";
+    screen = toolScreen;
+    expect(await codexTranscriptPath(root, folder, home)).toBeNull();
   });
 
   it("takes no prompt still in the composer", async () => {
