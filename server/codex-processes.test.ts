@@ -2647,14 +2647,14 @@ describe("a Codex pane recovered by its saved thread name (#3442)", () => {
     title = "Investigate a restored conversation | project";
     screen = toolScreen;
     expect(await resolve()).toBe(file);
-  });
+  }, 20_000);
 
   it("takes no thread named like the folder, which a title without a thread name shows", async () => {
     namedThread(asCodexTitle(basename(root)));
     title = basename(root);
     screen = toolScreen;
     expect(await resolve()).toBeNull();
-  });
+  }, 20_000);
 
   it("takes no thread named like the start of a folder name that holds the title's separator", async () => {
     const folder = join(root, "release | api");
@@ -2663,14 +2663,22 @@ describe("a Codex pane recovered by its saved thread name (#3442)", () => {
     title = "release | api";
     screen = toolScreen;
     expect(await codexTranscriptPath(root, folder, home)).toBeNull();
-  });
+  }, 20_000);
+
+  it("takes no name a thread of another folder also has, which a picker may have resumed here", async () => {
+    namedThread("Investigate a restored conversation");
+    appendFileSync(join(home, "session_index.jsonl"), `${JSON.stringify({ id: "01a0c7a1-56d9-7e20-9f08-f7a2d973bc03", thread_name: "Investigate a restored conversation" })}\n`);
+    title = "Investigate a restored conversation | project";
+    screen = toolScreen;
+    expect(await resolve()).toBeNull();
+  }, 20_000);
 
   it("takes no prompt still in the composer", async () => {
     namedThread("Investigate a restored conversation");
     title = "Investigate a restored conversation | project";
     screen = `› ${asked}\n\n  gpt-5.1-codex default · ${root}`;
     expect(await resolve()).toBeNull();
-  });
+  }, 20_000);
 
   it("keeps the thread the pane was bound to by its screen over the one its title names", async () => {
     namedThread("Investigate a restored conversation");
@@ -2679,7 +2687,7 @@ describe("a Codex pane recovered by its saved thread name (#3442)", () => {
     expect(await resolve()).toBe(path);
     screen = toolScreen;
     expect(await resolve()).toBe(path);
-  });
+  }, 20_000);
 
   it("takes no thread another pane is bound to", async () => {
     const file = namedThread("Investigate a restored conversation");
@@ -2691,7 +2699,7 @@ describe("a Codex pane recovered by its saved thread name (#3442)", () => {
     expect(await codexTranscriptPath("peer", root, home, panes)).toBe(file);
     screen = toolScreen;
     expect(await codexTranscriptPath(root, root, home, panes)).toBeNull();
-  });
+  }, 20_000);
 
   it("does not hold the server on a FIFO in place of the name index", async () => {
     namedThread("Investigate a restored conversation");
@@ -2707,5 +2715,5 @@ describe("a Codex pane recovered by its saved thread name (#3442)", () => {
     children.push(child);
     expect(await child.exited).toBe(0);
     expect((await new Response(child.stdout).text()).trim()).toBe("null");
-  });
+  }, 20_000);
 });

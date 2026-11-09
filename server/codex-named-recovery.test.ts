@@ -13,7 +13,9 @@ it("uses the latest saved name and requires one unique title match", () => {
   expect(namedCodexThread(`${name} | project`, index(row(first, name)))).toBe(first);
   expect(namedCodexThread(`⠋ ${name} | project`, index(row(first, name)))).toBe(first);
   expect(namedCodexThread(`${name} | project`, index(row(first, name), row(second, name)))).toBeNull();
-  expect(namedCodexThread(`${name} | project`, index(row(first, name), row(second, name)), new Set([first]))).toBe(first);
+  // a namesake in another folder (not eligible here) may be the thread the pane resumed
+  expect(namedCodexThread(`${name} | project`, index(row(first, name), row(second, name)), new Set([first]))).toBeNull();
+  expect(namedCodexThread(`${name} | project`, index(row(first, name)), new Set([second]))).toBeNull();
   expect(namedCodexThread(`${name} | project`, index(row(first, name), row(first, "Renamed conversation")))).toBeNull();
   expect(namedCodexThread(`${name} | project`, index(row(first, name), row(second, `${name} | project`)))).toBeNull();
   expect(namedCodexThread(`other ${name} | project`, index(row(first, name)))).toBeNull();
@@ -22,6 +24,9 @@ it("uses the latest saved name and requires one unique title match", () => {
 it("refuses a cut index, malformed identity, short name or merely similar title", () => {
   expect(namedCodexThread(name, index(row(first, name)) + '\n{"id":')).toBeNull();
   expect(namedCodexThread(name, index(row("not-a-thread", name)))).toBeNull();
+  expect(namedCodexThread(`${name} | project`, index(row(first, name), { id: first, thread_name: null }))).toBeNull();
+  // a row of another shape elsewhere does not turn recovery off for every pane
+  expect(namedCodexThread(`${name} | project`, index(row("not-a-thread", "other"), { id: second }, row(first, name)))).toBe(first);
   expect(namedCodexThread("Hi | project", index(row(first, "Hi")))).toBeNull();
   expect(namedCodexThread(`${name} extra | project`, index(row(first, name)))).toBeNull();
 });

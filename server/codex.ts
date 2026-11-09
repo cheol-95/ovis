@@ -1848,13 +1848,17 @@ export function namedCodexThread(title: string, index: string, eligible?: Readon
     for (const line of index.split("\n")) {
       if (line.trim() === "") continue;
       const row = record(JSON.parse(line));
-      if (!UUID.test(string(row.id)) || typeof row.thread_name !== "string") return null;
-      names.set(string(row.id), asCodexTitle(row.thread_name));
+      const id = string(row.id);
+      // a row of another shape names no thread; one without a name clears its thread's
+      if (!UUID.test(id)) continue;
+      if (typeof row.thread_name === "string") names.set(id, asCodexTitle(row.thread_name));
+      else names.delete(id);
     }
   } catch { return null; }
   const shown = asCodexTitle(title).replace(/^[\u2800-\u28ff]\s+/, "");
-  const ids = [...names].filter(([id, name]) => (eligible === undefined || eligible.has(id)) && name.length >= 4 && (shown === name || shown.startsWith(`${name} | `))).map(([id]) => id);
-  return ids.length === 1 ? ids[0]! : null;
+  const ids = [...names].filter(([, name]) => name.length >= 4 && (shown === name || shown.startsWith(`${name} | `))).map(([id]) => id);
+  // unique among every saved name, not only this folder's: a namesake elsewhere may be the thread a picker resumed here
+  return ids.length === 1 && (eligible === undefined || eligible.has(ids[0]!)) ? ids[0]! : null;
 }
 
 /** A long fragment of the latest prompt or answer. Only with independent unique name identity. */
