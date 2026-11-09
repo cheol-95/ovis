@@ -1916,16 +1916,33 @@ export function namedCodexAppendCompatible(before: { dev: number; ino: number; s
   return before.dev === after.dev && before.ino === after.ino && after.size >= before.size;
 }
 
+/** More other panes than this, and a saved name recovers no thread: each would cost a process read. */
+export const CODEX_PEER_PANE_LIMIT = 64;
+/** Process reads in flight at once while other panes are asked. */
+const PEER_PROCESS_READS = 4;
+
 /**
  * Whether another pane has this thread: bound to it here, or started on it (`codex resume <id>`, which binds
- * nothing). Every other pane is asked, in any folder and with any label; one that cannot be asked counts as having it.
+ * nothing). Every other pane is asked, in any folder and with any label, and any of its processes may hold it; one
+ * that cannot be asked, or a process whose command line cannot be read, counts as having it.
  */
 async function heldByAnotherPane(paneId: string, thread: { id: string; path: string }, panes?: HerdrPane[]): Promise<boolean> {
   if ([...boundRollouts].some(([pane, bound]) => pane !== paneId && bound.path === thread.path)) return true;
   try {
     const others = (panes ?? (await sessionSnapshot()).panes).filter((pane) => pane.pane_id !== paneId);
-    const resumed = await Promise.all(others.map(async (pane) => resumedThread((await codexProcessesOf(pane.pane_id)).list.map((codex) => codex.argv ?? []))));
-    return resumed.some((id) => id?.toLowerCase() === thread.id.toLowerCase());
+    if (others.length > CODEX_PEER_PANE_LIMIT) return true;
+    let held = false, next = 0;
+    // a few reads at a time, and none once one pane holds it
+    await Promise.all(Array.from({ length: Math.min(PEER_PROCESS_READS, others.length) }, async () => {
+      while (!held && next < others.length) {
+        const pane = others[next++]!;
+        try {
+          const { list, unread } = await codexProcessesOf(pane.pane_id);
+          if (unread || resumedThreads(list.map((codex) => codex.argv ?? [])).some((id) => id.toLowerCase() === thread.id.toLowerCase())) held = true;
+        } catch { held = true; }
+      }
+    }));
+    return held;
   } catch { return true; }
 }
 
@@ -2041,12 +2058,16 @@ export async function codexFreshSession(paneId: string, cwds: readonly string[],
 
 /** `codex resume <thread>`: the thread a TUI was started on, straight from its command line. */
 export function resumedThread(argvs: readonly (readonly string[])[]): string | null {
-  for (const argv of argvs) {
+  return resumedThreads(argvs)[0] ?? null;
+}
+
+/** Every thread these processes were resumed on (`codex resume <thread>`), in order. */
+export function resumedThreads(argvs: readonly (readonly string[])[]): string[] {
+  return argvs.flatMap((argv) => {
     const at = argv.indexOf("resume");
     const thread = at < 0 ? undefined : argv[at + 1];
-    if (thread !== undefined && UUID.test(thread)) return thread;
-  }
-  return null;
+    return thread !== undefined && UUID.test(thread) ? [thread] : [];
+  });
 }
 
 /** A lock Codex takes for a thread it loads to write: `<thread>.lock` in `thread-writer-locks`. */
@@ -2638,18 +2659,24 @@ export async function paneCodexProcess(paneId: string): Promise<{ pid: number; a
 }
 
 /** `known`: herdr's `pane.process_info` answer the caller's poll already read for this pane (null: no processes). */
-async function codexProcessesOf(paneId: string, known?: ProcessInfo | null): Promise<{ list: { pid: number; argv?: string[] }[]; key: string }> {
+/**
+ * `unread`: herdr gave no process list, or a foreground process's command line could not be read, so this list may
+ * miss a Codex.
+ */
+async function codexProcessesOf(paneId: string, known?: ProcessInfo | null): Promise<{ list: { pid: number; argv?: string[] }[]; key: string; unread?: true }> {
   const processInfo = known !== undefined ? known ?? undefined : await paneProcessInfo(paneId);
+  let unread = processInfo?.foreground_processes == null;
   // herdr's schema allows `argv: null`; this reader has always read argv as absent or a list
   // (the cast is the inline result type herdrRpc was given before the typed seam)
   const list = ((processInfo?.foreground_processes ?? []) as { pid: number; argv?: string[] }[])
     .map((foreground) => {
-      if (foreground.argv?.length || process.platform !== "linux") return foreground;
+      if (foreground.argv?.length) return foreground;
+      if (process.platform !== "linux") { unread = true; return foreground; }
       // herdr can report only pid/name. Read this process, never infer argv from
       // its name; an exited or inaccessible process provides no binding evidence.
       try {
         return { ...foreground, argv: readFileSync(`/proc/${foreground.pid}/cmdline`, "utf8").split("\0") };
-      } catch { return foreground; }
+      } catch { unread = true; return foreground; }
     })
     .filter(({ argv = [] }) => {
       const executable = argv[0] ?? "";
@@ -2675,9 +2702,9 @@ async function codexProcessesOf(paneId: string, known?: ProcessInfo | null): Pro
   if (list.length === 0) {
     const nested = await kiroCodexProcess(processInfo);
     // A PID can be reused between reads: the verified births identify the whole nested chain.
-    if (nested !== null) return { list: [nested], key: `kiro:${nested.identity}` };
+    if (nested !== null) return { list: [nested], key: `kiro:${nested.identity}`, ...unread ? { unread: true as const } : {} };
   }
-  return { list, key: list.map((process) => process.pid).sort((left, right) => left - right).join(",") };
+  return { list, key: list.map((process) => process.pid).sort((left, right) => left - right).join(","), ...unread ? { unread: true as const } : {} };
 }
 
 /** A missing label is expected for Kiro's outer PTY, but only its proven live Codex can use this fallback. */
