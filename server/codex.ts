@@ -1815,6 +1815,96 @@ function titledCandidate(agent: Pick<AgentInfo, "terminal_title" | "terminal_tit
   return rows.length === 1 ? codexRolloutPath(rows[0]!.rollout_path, home) : null;
 }
 
+/** A unique current session-index name in the terminal title; names alone never authorize a read. */
+export function namedCodexThread(title: string, index: string, eligible?: ReadonlySet<string>): string | null {
+  const names = new Map<string, string>();
+  try {
+    for (const line of index.split("\n")) {
+      if (line.trim() === "") continue;
+      const row = record(JSON.parse(line));
+      if (!UUID.test(string(row.id)) || typeof row.thread_name !== "string") return null;
+      names.set(string(row.id), asCodexTitle(row.thread_name));
+    }
+  } catch { return null; }
+  const shown = asCodexTitle(title).replace(/^[\u2800-\u28ff]\s+/, "");
+  const ids = [...names].filter(([id, name]) => (eligible === undefined || eligible.has(id)) && name.length >= 4 && (shown === name || shown.startsWith(`${name} | `))).map(([id]) => id);
+  return ids.length === 1 ? ids[0]! : null;
+}
+
+/** A long fragment of the latest prompt or answer. Only with independent unique name identity. */
+export function namedCodexAnswerShown(screen: string, rollout: string): boolean {
+  const turns = parseCodexTranscript(rollout, Infinity);
+  const last = turns.filter((turn) => turn.role === "assistant").at(-1);
+  const answers = last?.parts.flatMap((part) => part.kind === "text" ? [normalizeDisplay(part.text)] : []) ?? [];
+  const user = turns.filter((turn) => turn.role === "user").at(-1);
+  const asked = user?.parts.flatMap((part) => part.kind === "text" ? [normalizeDisplay(part.text)] : []) ?? [];
+  const footed = footedAnswer(screen);
+  if (footed !== null && user !== undefined && last !== undefined) {
+    const prompt = user.parts.flatMap((part) => part.kind === "text" ? [part.text] : []).join("\n");
+    if (promptKey(prompt) === promptKey(footed.prompt) && prompt.trim().length >= 2
+      && last.parts.some((part) => part.kind === "text" && part.text.trim().length >= 4 && completedAnswerMatches(part.text, footed.text))) return true;
+  }
+  const prompts = screen.split("\n").filter((line) => line.startsWith("›"));
+  for (const prompt of prompts) {
+    const shown = normalizeDisplay(prompt.replace(/[…].*$/, ""));
+    if (shown.length >= 48 && new Set(shown).size >= 16 && asked.some((text) => text.includes(shown))) return true;
+  }
+  if (answers.length === 0) return false;
+  for (const part of codexScreenParts(screen)) {
+    if (part.tool) continue;
+    let body = part.text;
+    if (part.prompt) {
+      // A clipped screen can retain the prompt and only the indented tail of its answer.
+      // Its completed-turn footer, after the first blank line, is required in this case.
+      const lines = body.split("\n");
+      const gap = lines.findIndex((line) => line.trim() === "");
+      const reverse = [...lines].reverse().findIndex((line) => CODEX_TURN_FOOTER.test(line));
+      const footer = reverse < 0 ? -1 : lines.length - 1 - reverse;
+      if (gap < 0 || footer <= gap) continue;
+      body = lines.slice(gap + 1, footer).join("\n");
+    }
+    const shown = normalizeDisplay(body);
+    for (let at = 0; at + 160 <= shown.length; at += 16) {
+      const fragment = shown.slice(at, at + 160);
+      if (new Set(fragment).size >= 24 && answers.some((answer) => answer.includes(fragment))) return true;
+    }
+  }
+  return false;
+}
+
+/** Recover an unbound pane using two independent facts, rechecked across the read. Never remembers a guessed binding. */
+async function namedConversation(paneId: string, cwd: string, home: string, title: string, processes: string): Promise<string | null> {
+  let opened: ReturnType<typeof openCodexStore> | undefined;
+  try {
+    const indexPath = join(home, "session_index.jsonl");
+    const indexStat = statSync(indexPath);
+    if (indexStat.size > 8 * 1024 * 1024) return null;
+    const signature = (value: NonNullable<ReturnType<typeof statSync>>) => `${value.dev}:${value.ino}:${value.size}:${value.mtimeMs}:${value.ctimeMs}`;
+    opened = openCodexStore(home);
+    const folder = storedCwdCondition(cwd);
+    const eligible = new Set(opened.db.query<{ id: string }, string[]>(`SELECT id FROM threads WHERE ${folder.where} AND archived = 0${interactive(opened.db)}`).all(...folder.params).map((row) => row.id));
+    const id = namedCodexThread(title, readFileSync(indexPath, "utf8"), eligible);
+    if (id === null) return null;
+    const row = opened.db.query<{ rollout_path: string }, [string]>("SELECT rollout_path FROM threads WHERE id = ? AND archived = 0").get(id);
+    opened.settled();
+    const path = row && codexRolloutPath(row.rollout_path, home);
+    if (!path) return null;
+    const meta = rolloutHeader(path);
+    if (meta?.id !== id || typeof meta.cwd !== "string" || !sameDirectory(meta.cwd, cwd)) return null;
+    const before = statSync(path);
+    const screen = await paneRead({ paneId, source: "recent", lines: 400, stripAnsi: true });
+    if (!namedCodexAnswerShown(screen.text, codexHistoryTail(path, 16 * 1024 * 1024, home))) return null;
+    const after = await codexAgentInfo(paneId);
+    if (asCodexTitle(after.terminal_title_stripped ?? after.terminal_title ?? "") !== asCodexTitle(title)) return null;
+    const current = await openRollouts(paneId, home, after.processRead?.info);
+    if (current.codexProcesses.length === 0 || current.processes !== processes || processes === "") return null;
+    const shown = await paneRead({ paneId, source: "recent", lines: 400, stripAnsi: true });
+    return shown.text === screen.text && signature(before) === signature(statSync(path))
+      && signature(indexStat) === signature(statSync(indexPath)) ? path : null;
+  } catch { return null; }
+  finally { opened?.db.close(); }
+}
+
 /**
  * The history id of the conversation a Codex started in a terminal has not begun, or null unless
  * every fact says it has begun none (#1191). This server did not start it (launched-agents.ts),
@@ -3154,6 +3244,10 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
     try { return [{ path, text: codexHistoryTail(path, 1024 * 1024, home) }]; } catch { return []; }
   });
   const matched = screen ? matchCodexTranscript(screen.text, candidates, new Set(titledElsewhere === null ? [] : [titledElsewhere]), new Map(), false, folderRollouts) : null;
+  if (matched === null) {
+    const named = await namedConversation(paneId, cwd, home, agent.terminal_title_stripped ?? agent.terminal_title ?? "", processes);
+    if (named !== null) return named;
+  }
   if (matched !== null) {
     boundRollouts.delete(paneId);
     boundRollouts.set(paneId, { processes, path: matched, at: Date.now(), ...(matched === titledElsewhere ? { titled: true } : {}) });
