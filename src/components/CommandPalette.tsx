@@ -1,7 +1,7 @@
 import { moveDestinations } from "../lib/layoutTargets.ts";
 import { useAppLayout, MachineContext, useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { Bell, Columns2, CornerLeftUp, Folder, FolderInput, FolderOpen, FolderSearch, History, ListFilter, LoaderCircle, Maximize2, MessageSquarePlus, Minimize2, Monitor, PanelLeft, Pencil, Pin, Plus, Puzzle, RefreshCw, Rows2, Settings, SunMoon, SwitchCamera, X } from "lucide-react";
+import { Bell, Columns2, CornerLeftUp, Folder, FolderInput, FolderOpen, FolderSearch, Globe, History, ListFilter, LoaderCircle, Maximize2, MessageSquarePlus, Minimize2, Monitor, PanelLeft, Pencil, Pin, Plus, Puzzle, RefreshCw, Rows2, Settings, SunMoon, SwitchCamera, TextSearch, X } from "lucide-react";
 
 import "./CommandPalette.css";
 
@@ -11,7 +11,7 @@ import { ApiError } from "../lib/api.ts";
 import { paneStatus, STATUS_WORD } from "../lib/status.ts";
 import { zoomMode } from "../lib/layoutMap.ts";
 import type { AppActions, PaneView } from "../lib/actions.ts";
-import { FILTER_KEYS, offeredPluginActions, parseQuery, STATUS_FILTERS, statusCounts, type OfferedPluginAction, type PaletteStatusFilter } from "../lib/paletteSearch.ts";
+import { FILTER_KEYS, filterKeyOf, offeredPluginActions, parseQuery, STATUS_FILTERS, statusCounts, type OfferedPluginAction, type PaletteStatusFilter } from "../lib/paletteSearch.ts";
 import { actionAliases, rankByTitle, requestSettingsPage, settingsPageEntries } from "../lib/paletteSettings.ts";
 import { Ownership, runPluginActionToEnd } from "../lib/pluginRun.ts";
 import { shortcutDisplayKeys, formatKeys, type ShortcutId } from "../lib/shortcuts.ts";
@@ -19,12 +19,14 @@ import { useSettings } from "../lib/settings.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { displayPaneTitle, StatusBadge } from "./Sidebar.tsx";
 import { PAGES } from "./SettingsDialog.tsx";
-import { folderName, placeLine } from "../lib/paneName.ts";
+import { folderName, taskRowLines, unsaidLine } from "../lib/paneName.ts";
 import { agentTabName } from "../lib/sidebarAgents.ts";
-import { autoTabLabel, tabLabel } from "../lib/tabName.ts";
+import { autoTabLabel, customTabLabel, tabLabel } from "../lib/tabName.ts";
 import { shownTabLabels, subscribeTabLabels } from "../lib/tabLabels.ts";
 import { useT } from "../lib/i18n.ts";
 import { useFocusTrap } from "../lib/useFocusTrap.ts";
+import { localPageAddress, panelUrl } from "../lib/webPanel.ts";
+import { paneCovered } from "../lib/panePresentation.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
@@ -327,15 +329,19 @@ export function CommandPalette({ open, initialQuery = "", onClose, machines, onS
     ] satisfies PaletteAction[] : []),
     ...(zoomPane && zoom && tabPanes > 1 ? [{ id: "zoom", label: t(zoom === "off" ? "Unzoom pane" : "Zoom pane"), icon: zoom === "off" ? Minimize2 : Maximize2, shortcut: "zoom-pane" as const, run: () => zoomPane(zoom) }] : []),
     { id: "view", label: t(view === "chat" ? "Switch to terminal" : "Switch to chat"), icon: SwitchCamera, shortcut: "toggle-view", run: actions.toggleView },
+    // the selected pane's chat, older pages included (ChatView's ConversationSearch)
+    ...(actions.searchConversation ? [{ id: "search-conversation", label: t("Search conversation"), icon: TextSearch, run: actions.searchConversation }] : []),
     { id: "sidebar", label: t("Toggle sidebar"), icon: PanelLeft, shortcut: "toggle-sidebar", run: actions.toggleSidebar },
     // the sidebar's Filter field, also where Settings → Appearance → Sidebar filter leaves it out
     { id: "filter-sidebar", label: t("Filter workspaces and agents"), icon: ListFilter, run: actions.openSidebarFilter },
     { id: "theme", label: t("Toggle theme"), icon: SunMoon, run: actions.toggleTheme },
     { id: "settings", label: t("Settings"), icon: Settings, shortcut: "settings", run: actions.openSettings },
-    { id: "add-pc", label: t("Add PC"), icon: Monitor, run: actions.openAddPc },
+    { id: "add-pc", label: t("Add PC"), icon: Monitor, run: () => actions.openAddPc() },
     ...(actions.enableNotifications ? [{ id: "notifications", label: t("Enable notifications"), icon: Bell, run: actions.enableNotifications }] : []),
     ...(actions.openFiles ? [{ id: "files", label: t("Browse files"), icon: FolderOpen, run: actions.openFiles }] : []),
     ...(online ? [{ id: "browse-folders", label: t("Browse folders"), icon: FolderSearch, keepOpen: true, run: () => browseTo(browseStart ?? home ?? "~") }] : []),
+    // starts the address a page this PC serves is typed as (below), the port left to type
+    ...(actions.openLocalPage ? [{ id: "local-page", label: t("Open a page on this PC…"), icon: Globe, keepOpen: true, run: () => { setQuery("localhost:"); setFilter("all"); setSelection(NO_SELECTION); inputRef.current?.focus(); } }] : []),
     { id: "refresh", label: t("Refresh"), icon: RefreshCw, run: actions.refresh },
   ], [actions, splitPane, zoomPane, tabPanes, zoom, view, t, selectedPaneId, tabShown, renameOffered, online, browseTo, browseStart, home]);
 
@@ -395,6 +401,18 @@ export function CommandPalette({ open, initialQuery = "", onClose, machines, onS
       const names = listing ? browseEntries(listing.directories, folder.filter) : [];
       if (listing && names.length > 0) list.push({ id: "folder-list", heading: t("Folders"), machineName, branch: null, placeNamesWorkspace: false, rows: names.map((name) => ({ kind: "folder", id: `dir:${name}`, label: name, path: childPath(listing.path, name), detail: null, icon: Folder })) });
       return list;
+    }
+    // an address on this PC leads the list, the page opened in the web panel (as VS Code's Simple
+    // Browser takes one); not one the panel refuses (lib/webPanel.ts panelUrl), the app itself included.
+    // A status filter is about panes: it leaves the page out, as it does the actions. So does a dialog
+    // under the palette (a popup file, Files, Settings, Earlier sessions…): the page would open beneath
+    // it, where no link of a pane opens one. A page popup it replaces is no such dialog
+    const { openLocalPage } = actions;
+    const page = openLocalPage === null || (!actionsOnly && filter !== "all") || paneCovered(".command-palette, .web-panel-popup") ? null : localPageAddress(text, window.location);
+    if (openLocalPage !== null && page !== null && panelUrl(page, window.location) !== null) {
+      const { host, pathname, search, hash } = new URL(page);
+      const rest = `${pathname}${search}${hash}`;
+      list.push({ id: "local-page", heading: t("Page on this PC"), branch: null, placeNamesWorkspace: false, rows: [{ kind: "action", action: { id: "open-local-page", label: t("Open {address}", { address: `${host}${rest === "/" ? "" : rest}` }), icon: Globe, run: () => openLocalPage(page) } }] });
     }
     if (!actionsOnly) {
       const panes = rankMachinePanes(text, machines, filter, branches, t);
@@ -628,6 +646,13 @@ export function CommandPalette({ open, initialQuery = "", onClose, machines, onS
   const placeTabName = ({ machine }: MachinePane, tab: TabInfo, place: number): string => (settings.autoTabNames
     ? autoTabLabel(tab, machine.snapshot?.panes.filter((pane) => pane.tab_id === tab.tab_id) ?? [], machine.id, firstLines, place) : null)
     ?? tabLabel(tab, t, place);
+  // the name the tab strip tells a tab by, someone's own or its first message's (never "Tab n"): the row's lead when it
+  // says more than the pane's title does (G-115), so the palette names a task as the strip and the sidebar do
+  const givenTabName = (row: MachinePane): string | null => {
+    const { tab, place } = tabOf(row);
+    if (!tab) return null;
+    return customTabLabel(tab, place) ?? (settings.autoTabNames ? autoTabLabel(tab, row.machine.snapshot?.panes.filter((pane) => pane.tab_id === tab.tab_id) ?? [], row.machine.id, firstLines, place) : null);
+  };
   const activeRow = rows[activeIndex];
   const activeWorkspace = activeRow?.kind === "pane" ? activeRow.machine.snapshot?.workspaces.find((workspace) => workspace.workspace_id === activeRow.pane.workspace_id) : undefined;
   const activeTab = activeRow?.kind === "pane" ? tabOf(activeRow) : undefined;
@@ -655,23 +680,31 @@ export function CommandPalette({ open, initialQuery = "", onClose, machines, onS
       <section ref={surface} className="menu command-palette" role="dialog" aria-modal="true" aria-label={t("Command palette")} onKeyDown={onSurfaceKeyDown} onFocus={onSurfaceFocus}>
         <div className="palette-search">
           <input ref={inputRef} className="input" type="search" value={query} placeholder={t("Search panes and actions…")} aria-label={t("Search panes and actions")} aria-controls="palette-results" aria-activedescendant={itemCount ? `palette-item-${activeIndex}` : undefined} onKeyDown={onInputKeyDown} onChange={(event) => { setQuery(event.target.value); setSelection(NO_SELECTION); }} />
-          <button type="button" className="icon-button" aria-label={t("Close command palette")} onClick={onClose}><X /></button>
+          <button type="button" className="icon-button" aria-label={t("Close command palette")} title={t("Close command palette")} onClick={onClose}><X /></button>
         </div>
         {!actionsOnly && folder === null && (
           <div className="palette-filters" role="radiogroup" aria-label={t("Filter panes by status")} onKeyDown={onChipsKeyDown}>
-            {STATUS_FILTERS.map((status) => (
-              <button key={status} type="button" role="radio" className="palette-filter" data-status={status} aria-checked={filter === status} tabIndex={filter === status ? 0 : -1} data-empty={counts[status] === 0 || undefined} onClick={(event) => onChipClick(event, status)}>
-                <span className="palette-filter-word">{status === "all" ? t("All") : t(STATUS_WORD[status])}</span>
-                <span className="palette-filter-count">{counts[status]}</span>
-              </button>
-            ))}
+            {STATUS_FILTERS.map((status) => {
+              const word = status === "all" ? t("All") : t(STATUS_WORD[status]);
+              const key = filterKeyOf(status);
+              const hint = key === null ? word : `${word} · ${key}`;
+              return (
+                <button key={status} type="button" role="radio" className="palette-filter" data-status={status} aria-checked={filter === status} aria-keyshortcuts={key ?? undefined} title={hint} tabIndex={filter === status ? 0 : -1} data-empty={counts[status] === 0 || undefined} onClick={(event) => onChipClick(event, status)}>
+                  <span className="palette-filter-word">{word}</span>
+                  <span className="palette-filter-count">{counts[status]}</span>
+                </button>
+              );
+            })}
           </div>
         )}
         {pluginError !== null && <p className="palette-error" role="alert">{pluginError}</p>}
         <div ref={resultsRef} className="palette-results" id="palette-results" role="listbox">
-          {sections.map((section) => (
-            <div key={section.id} className="palette-section" data-section={section.workspaceId ?? section.id} data-machine={section.machineId}>
-              <div className="menu-heading palette-section-heading">
+          {sections.map((section) => {
+            const headingId = `palette-heading-${section.id}`;
+            const fullHeading = [section.machineName, section.heading, section.branch].filter(Boolean).join(" › ");
+            return (
+            <div key={section.id} className="palette-section" role="group" aria-labelledby={headingId} data-section={section.workspaceId ?? section.id} data-machine={section.machineId}>
+              <div id={headingId} className="menu-heading palette-section-heading" title={fullHeading}>
                 {section.machineName && <span className="palette-section-machine">{section.machineName}</span>}
                 <span className="palette-section-name">{section.heading}</span>
                 {section.branch && <span className="palette-section-branch">{section.branch}</span>}
@@ -707,22 +740,35 @@ export function CommandPalette({ open, initialQuery = "", onClose, machines, onS
                 const { pane } = row;
                 const workspace = row.machine.snapshot?.workspaces.find((item) => item.workspace_id === pane.workspace_id);
                 const folder = folderName(panePath(pane));
-                const panePlace = section.placeNamesWorkspace
-                  ? placeLine(workspace?.label ?? t("Unknown workspace"), folder)
-                  : placeLine(tabName(row) ?? "", folder);
-                const place = multiMachine && section.placeNamesWorkspace ? `${row.machine.name} › ${panePlace}` : panePlace;
+                const workspaceLabel = workspace?.label ?? t("Unknown workspace");
+                const paneTitle = displayPaneTitle(pane);
+                // the row leads with the task's name: the tab's given name, else the pane's title, else (a shell titled by its
+                // folder, which the heading already says) the workspace, as the sidebar's rows do (lib/paneName.ts)
+                const named = givenTabName(row);
+                const branch = branches.get(row.machineId)?.get(pane.workspace_id)?.branch ?? null;
+                const title = named !== null && named !== paneTitle ? named
+                  : taskRowLines({ paneTitle, labelled: Boolean(pane.label?.trim()), folder, workspace: workspaceLabel, alias: branch }).title;
+                // what the lead left unsaid, each part once: the pane's own title under a tab's name, then the tab, or (Recent,
+                // under no workspace heading) the workspace and its branch, and the folder
+                const under = unsaidLine(title, [title !== paneTitle && paneTitle !== folder ? paneTitle : null, ...(section.placeNamesWorkspace
+                  ? [workspaceLabel, branch, folder]
+                  : [named !== null ? "" : tabName(row) ?? "", folder])]);
+                const place = multiMachine && section.placeNamesWorkspace ? `${row.machine.name} › ${under}` : under;
                 const selected = row.machineId === machineId && pane.pane_id === selectedPaneId;
                 return (
-                  <button key={targetKey(row)} data-machine={row.machineId} data-pane={pane.pane_id} id={`palette-item-${index}`} type="button" role="option" className="menu-item palette-pane" aria-selected={activeIndex === index} aria-current={selected ? "true" : undefined} onFocus={() => select(index)} onMouseMove={() => select(index)} onClick={() => runPane(row)}>
+                  <button key={targetKey(row)} data-machine={row.machineId} data-pane={pane.pane_id} id={`palette-item-${index}`} type="button" role="option" className="menu-item palette-pane" aria-selected={activeIndex === index} aria-current={selected ? "true" : undefined} title={title} onFocus={() => select(index)} onMouseMove={() => select(index)} onClick={() => runPane(row)}>
                     <span className="palette-mark"><AgentMark agent={pane.agent ?? "shell"} /></span>
-                    <span className="menu-item-main"><span className="palette-row-title">{displayPaneTitle(pane)}{selected && <span className="palette-selected">{t("Selected")}</span>}</span><span className="palette-row-subtitle">{place}</span></span>
+                    <span className="menu-item-main"><span className="palette-row-title"><span className="palette-row-name">{title}</span>{selected && <span className="palette-selected">{t("Selected")}</span>}</span><span className="palette-row-subtitle">{place}</span></span>
                     <StatusBadge status={paneStatus(pane)} />
                   </button>
                 );
               })}
             </div>
-          ))}
+            );
+          })}
           {(itemCount === 0 || listingFailed) && <p className="palette-empty" role="status">{emptyText}</p>}
+          {/* the empty list says what to do next (G-118): a query or a filter narrowed it, and both are a key away */}
+          {itemCount === 0 && folder === null && (text !== "" || filter !== "all") && <p className="palette-empty palette-empty-hint">{t(filter !== "all" ? "Try fewer words, or pick All above to search every pane." : "Try fewer words, or clear the search.")}</p>}
           {listingFailed && (
             <p className="palette-empty">
               <button type="button" className="btn" onClick={(event) => {
@@ -735,12 +781,14 @@ export function CommandPalette({ open, initialQuery = "", onClose, machines, onS
         </div>
         <footer className="palette-footer">
           <div className="palette-footer-where" aria-live="polite">
-            {footerPlace && <span className="palette-footer-place">{footerPlace}</span>}
-            {footerPath && <span className="palette-footer-path" title={footerPath}>{footerPath}</span>}
+            {footerPlace && <span className="palette-footer-place" title={footerPlace}>{footerPlace}</span>}
+            <span className="palette-footer-path" title={footerPath || undefined}>{footerPath}</span>
           </div>
           <div className="palette-footer-keys" aria-hidden="true">
             <span className="palette-footer-key"><kbd className="kbd">←</kbd><kbd className="kbd">→</kbd>{t("Workspace")}</span>
             <span className="palette-footer-key"><kbd className="kbd">&gt;</kbd>{t("Actions")}</span>
+            <span className="palette-footer-key"><kbd className="kbd">a</kbd><kbd className="kbd">b</kbd><kbd className="kbd">w</kbd><kbd className="kbd">i</kbd><kbd className="kbd">d</kbd>{t("Status filter")}</span>
+            <span className="palette-footer-key"><kbd className="kbd">/</kbd>{t("Search")}</span>
           </div>
         </footer>
       </section>

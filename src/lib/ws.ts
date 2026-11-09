@@ -12,8 +12,9 @@ type Handler = (message: ServerMessage) => void;
 /** immediate: typed now; queue: waits for the next turn; hold: waits for the user's Send now */
 export type SubmitDelivery = "immediate" | "queue" | "hold";
 /** `unconfirmed`: written to an older bridge that sends no receipt, so nothing says the pane took it.
- * `typedNow`: a queued send this request typed at once (ServerMessage submit-result `typed_now`) */
-export type SubmitResult = { ok: true; pending?: PendingMessage; unconfirmed?: true; typedNow?: true } | { ok: false; code: string; message: string; draft?: string; box?: string };
+ * `typedNow`: a queued send this request typed at once (ServerMessage submit-result `typed_now`).
+ * `sendingAt`: the PC's clock before it typed this request's message (submit-result `sending_at`) */
+export type SubmitResult = { ok: true; pending?: PendingMessage; unconfirmed?: true; typedNow?: true; sendingAt?: string } | { ok: false; code: string; message: string; draft?: string; box?: string };
 
 /** Right after a reconnect what the server supports may still be on its way: its `features` frame, or an older bridge's snapshot. */
 const FEATURES_WAIT_MS = 2000;
@@ -160,6 +161,8 @@ export class HerdrSocket {
   private retries = 0;
   /** When this connection opened; a brief open must not restart a flapping connection's retries. */
   private openedAt: number | null = null;
+  /** when the last open connection ended; null while one is open or none ever was. Failed attempts since leave it */
+  private lostAt: number | null = null;
   private reconnectTimer: number | null = null;
   /** the deadline of the attempt still in CONNECTING */
   private connectTimer: number | null = null;
@@ -276,6 +279,16 @@ export class HerdrSocket {
     }));
   }
 
+  /** when the open connection opened (Date.now()); null while none is open. A later time than an earlier reading means it dropped in between */
+  get connectedSince(): number | null {
+    return this.openedAt;
+  }
+
+  /** when the open connection this one had ended (Date.now()), however many attempts failed since; null while open or before any */
+  get lostSince(): number | null {
+    return this.lostAt;
+  }
+
   get connected(): boolean {
     return this.socket?.readyState === SOCKET_OPEN;
   }
@@ -360,6 +373,7 @@ export class HerdrSocket {
       this.connectionState = "open";
       this.trace.record("open", { elapsed_ms: Date.now() - started });
       this.openedAt = Date.now();
+      this.lostAt = null;
       this.lastFrameAt = this.openedAt;
       this.watchIdle(socket);
       // the path is back: reads sent on the lost one would hold the browser's connections to the server
@@ -485,7 +499,7 @@ export class HerdrSocket {
       // every readiness the bridge states is a lease of its own, a ready after a ready included
       if (readyPane !== null && (message.type === "input-ready" || wasReady !== this.inputReady.has(readyPane))) this.changeLease(readyPane);
       if (message.type === "submit-result" && this.matchesRequest(message.id, "submit", message.pane_id)) {
-        this.resolveRequest(message.id, message.ok ? { ok: true, ...(message.pending ? { pending: message.pending } : {}), ...(message.typed_now === true ? { typedNow: true as const } : {}) }
+        this.resolveRequest(message.id, message.ok ? { ok: true, ...(message.pending ? { pending: message.pending } : {}), ...(message.typed_now === true ? { typedNow: true as const } : {}), ...(typeof message.sending_at === "string" ? { sendingAt: message.sending_at } : {}) }
           : { ok: false, code: message.code ?? "submit_failed", message: message.message ?? "the pane did not take the message", ...(message.draft ? { draft: message.draft } : {}),
             ...(!message.draft && typeof message.box === "string" ? { box: message.box } : {}) });
       }
@@ -561,6 +575,7 @@ export class HerdrSocket {
     this.machineEventsOffered = null;
     if (this.submits.size > 0) this.trace.record("submit_disconnect", { pending: this.submits.size }, true);
     if (this.openedAt !== null && Date.now() - this.openedAt >= STABLE_CONNECTION_MS) this.retries = 0;
+    if (this.openedAt !== null) this.lostAt = Date.now();
     this.openedAt = null;
     this.socket = null;
     this.clearConnectTimer();
@@ -904,6 +919,11 @@ export class HerdrSocket {
     return !this.featuresKnown || this.features.has("watch");
   }
 
+  /** Whether this connection's server has listed its features yet (hasTerminalHistory is final once it has). */
+  featuresListed(): boolean {
+    return this.featuresKnown;
+  }
+
   /** Whether the browser keeps a pane's scrollback (`terminal-history`); false until the features come. */
   hasTerminalHistory(): boolean {
     return this.terminalHistory;
@@ -943,6 +963,11 @@ export class HerdrSocket {
     state.keepSize = false;
     state.releaseSizeOwed = true;
     this.send({ type: "resize", pane_id: paneId, cols, rows });
+  }
+
+  /** Whether the PC searches a pane's conversation (`conversation-search`); false until the features come, and from an older bridge. */
+  canSearchConversation(): boolean {
+    return this.features.has("conversation-search");
   }
 
   /** Whether this connection may take a held pane from another web bridge: a server that knows how, and not observing. */
@@ -1083,8 +1108,9 @@ export class HerdrSocket {
    */
   /** `typed`: from the terminal's input line, typed into the pane like the keyboard (see ClientMessage).
    * `clearDraft`: an immediate send over the draft an input_draft refusal named (ClientMessage `clear_draft`)
-   * `sendAnyway`: an immediate send after a refusal that showed the box (ClientMessage `send_anyway`) */
-  submit(paneId: string, text: string, payload: string, typed = false, delivery: SubmitDelivery = "immediate", clearDraft?: string, sendAnyway = false, resendId?: string, generation?: number, agentOnly = false): Promise<SubmitResult> | null {
+   * `sendAnyway`: an immediate send after a refusal that showed the box (ClientMessage `send_anyway`)
+   * `holdOnly`: a hold that must never go on its own (the composer's Alt+Enter): refused, not queued, where the bridge cannot hold */
+  submit(paneId: string, text: string, payload: string, typed = false, delivery: SubmitDelivery = "immediate", clearDraft?: string, sendAnyway = false, resendId?: string, generation?: number, agentOnly = false, holdOnly = false): Promise<SubmitResult> | null {
     const socket = this.socket;
     if (!this.connected || socket === null || this.mode === "observe") return null;
     if (resendId !== undefined && sendAnyway) return Promise.resolve({ ok: false, code: "invalid_delivery", message: "Use a held-copy resend id only for an immediate chat message" });
@@ -1097,7 +1123,10 @@ export class HerdrSocket {
       // message as raw typed input, past every check it makes before typing (#1591), so nothing is sent
       if (!this.featuresKnown) return CAPABILITIES_UNKNOWN;
       // hold is decided once the bridge said what it supports: one too old to hold queues it as before
-      if (delivery === "hold" && !this.canHoldMessages()) delivery = "queue";
+      if (delivery === "hold" && !this.canHoldMessages()) {
+        if (holdOnly) return { ok: false, code: "pending_hold_unsupported", message: "Update this PC to hold messages. Nothing was sent." };
+        delivery = "queue";
+      }
       if (delivery === "queue" && !this.canQueueMessages()) return { ok: false, code: "pending_input_unsupported", message: "Update this PC to queue messages." };
       // an older bridge ignores agent_only and would type the message into whatever is in front, a shell too
       if (agentOnly && !this.features.has("agent-only")) return { ok: false, code: "agent_only_unsupported", message: "Update this PC to send comments on a reply. Nothing was sent." };

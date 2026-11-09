@@ -16,6 +16,41 @@ export function optionName(prompt: InteractivePrompt, label: string): { text: st
   return { text, recommended: text !== label, words: text };
 }
 
+/** What an approval's option grants: this one call, every call like it from now on, or nothing. */
+export type ApprovalScope = "once" | "always" | "deny";
+
+/** a key the agent's menu names after the option: "(y)", "(esc)", "[shift+tab]"; a trailing "(Recommended)" is read off the same way */
+const TRAILING_HINT = /\s*[([][^)\]]*[)\]]\s*$/u;
+
+/**
+ * The scope an approval option's own words state, or `yes` for a bare consent whose scope they
+ * leave unsaid: "No…", "Deny", "Reject" and pi's "Block" deny; a consent that says "don't ask
+ * again", "always", "allow all" or "this session" keeps allowing; one that says "once" or "this
+ * time" allows this once. Any other wording ("Modify with external editor") states no scope.
+ */
+function statedScope(label: string): ApprovalScope | "yes" | null {
+  const words = label.replace(TRAILING_HINT, "").trim().toLowerCase();
+  if (/^(?:no|deny|reject|block)\b/u.test(words)) return "deny";
+  if (!/^(?:yes|allow|approve|always)\b/u.test(words)) return null;
+  if (/\balways\b|\b(?:don'?t|do not|never) ask(?: me)? again\b|\ballow all\b|\b(?:for|during) (?:the rest of )?this (?:session|project)\b|\bfrom now on\b/u.test(words)) return "always";
+  if (/\bonce\b|\bone time\b|\bthis time\b|\bjust this\b/u.test(words)) return "once";
+  return /^(?:yes|allow|approve)(?:,?\s+(?:proceed|allow|approve|run it))?$/u.test(words) ? "yes" : null;
+}
+
+/**
+ * What an approval option grants, read off the agent's own words and never guessed (G-071): the
+ * scope its label states, or, for a bare "Yes" beside an option that keeps allowing (Codex's
+ * "Yes, and don't ask again…", Claude's "Yes, allow all edits this session"), this once. A bare
+ * "Yes" with no such neighbour, any other wording, and every other kind of card get no scope.
+ */
+export function approvalScope(prompt: InteractivePrompt, index: number): ApprovalScope | null {
+  if (prompt.kind !== "approval") return null;
+  const stated = prompt.options.map((option) => statedScope(option.label));
+  const own = stated[index] ?? null;
+  if (own !== "yes") return own;
+  return stated.includes("always") ? "once" : null;
+}
+
 /** Card text the bridge wrote itself (shared/card-text.ts), in the user's language: its key translated, its values filled in. */
 export function cardText(card: CardText, t: Translate = inCurrentLanguage): string {
   const vars = card.vars === undefined ? undefined
@@ -55,19 +90,21 @@ export function screenWordsToShow(prompt: InteractivePrompt, turns: readonly Con
  * The card a poll keeps (ChatView). Another prompt, or none, replaces it. The same prompt (its id) keeps
  * its object while nothing it shows changed, so the card is not drawn again, and takes what changed
  * without being replaced, so the card keeps its edits: its navigation (steps, step back, own_text), the
- * words read off the screen over it (screen_words, #2088), and how its words are drawn, an omp card's
- * own Markdown arriving after its first read or withdrawn.
+ * words read off the screen over it (screen_words, #2088), the preview Claude redraws as its cursor moves
+ * (option_preview, #1212), and how its words are drawn, an omp card's own Markdown arriving after its
+ * first read or withdrawn.
  */
 export function polledPrompt(current: InteractivePrompt | null, next: InteractivePrompt | null): InteractivePrompt | null {
   if (current === null || next === null || current.id !== next.id) return next;
-  const shown = (prompt: InteractivePrompt) => JSON.stringify([prompt.steps, prompt.can_step_back, prompt.own_text, prompt.question, prompt.options, prompt.text_format ?? null, prompt.screen_words ?? null]);
+  const shown = (prompt: InteractivePrompt) => JSON.stringify([prompt.steps, prompt.can_step_back, prompt.own_text, prompt.question, prompt.options, prompt.text_format ?? null, prompt.screen_words ?? null, prompt.option_preview ?? null]);
   if (shown(current) === shown(next)) return current;
-  const { text_format: _format, screen_words: _words, ...kept } = current;
+  const { text_format: _format, screen_words: _words, option_preview: _preview, ...kept } = current;
   // own_text names steps by index: it goes with the steps it was read with
   return {
     ...kept, steps: next.steps, can_step_back: next.can_step_back, own_text: next.own_text,
     question: next.question, options: next.options, ...(next.text_format ? { text_format: next.text_format } : {}),
     ...(next.screen_words !== undefined ? { screen_words: next.screen_words } : {}),
+    ...(next.option_preview !== undefined ? { option_preview: next.option_preview } : {}),
   };
 }
 

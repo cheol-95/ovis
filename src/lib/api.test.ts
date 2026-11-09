@@ -1,7 +1,7 @@
 import { afterEach, expect, it, jest } from "bun:test";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { NOTICE_VERSION } from "../../shared/telemetry.ts";
-import { AttachmentTooLargeError, ApiError, cancelUsageLogin, changeTelemetry, fetchAgentKinds, fetchTelemetry, swapPaneWith, uploadPaneImage, verifySourceBoot } from "./api.ts";
+import { AttachmentTooLargeError, ApiError, cancelUsageLogin, changeTelemetry, fetchAgentCatalog, fetchAgentKinds, fetchTelemetry, movePaneBeside, swapPaneWith, uploadPaneImage, verifySourceBoot } from "./api.ts";
 import { movingHerdrFocusOn } from "./followFocus.ts";
 import { DEFAULT_SETTINGS, telemetrySettingsSnapshot } from "./settings.ts";
 
@@ -32,6 +32,25 @@ it("suppresses this PC's focus frames until an explicit swap answers, including 
     }
     expect(movingHerdrFocusOn("office")).toBe(false);
   }
+});
+
+it("asks the pane's PC to move it beside another pane, holding that PC's focus frames until it answers", async () => {
+  const response = Promise.withResolvers<Response>();
+  const sent: { url: string; body: unknown }[] = [];
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    sent.push({ url, body: JSON.parse(String(init?.body)) });
+    return response.promise;
+  }) as typeof fetch;
+  const pending = movePaneBeside("source", "target", "up", "office");
+  try {
+    expect(movingHerdrFocusOn("office")).toBe(true);
+    expect(movingHerdrFocusOn("local")).toBe(false);
+  } finally {
+    response.resolve(Response.json({ ok: true, changed: true, reason: null }));
+  }
+  expect(await pending).toEqual({ ok: true, changed: true, reason: null });
+  expect(sent).toEqual([{ url: "/api/machines/office/pane/move", body: { pane_id: "source", target_pane_id: "target", side: "up" } }]);
+  expect(movingHerdrFocusOn("office")).toBe(false);
 });
 
 it("offers installed Copilot in agent menus while filtering missing and unsupported agents", async () => {
@@ -197,6 +216,23 @@ it("ends a source boot check when the caller aborts it or after 20 s, without Ab
   expect(requests[2]!.signal.aborted).toBe(false);
   jest.advanceTimersByTime(1);
   expect(await slow).toMatchObject({ name: "AbortError" });
+});
+
+it("ends an agent catalog read that never answers after 30 s, so Check again can try again", async () => {
+  withoutAbortSignalStatics("any", "timeout");
+  jest.useFakeTimers();
+  const requests = heldFetch();
+
+  const stalled = fetchAgentCatalog("local", new AbortController().signal).catch((error: unknown) => error);
+  jest.advanceTimersByTime(29_999);
+  expect(requests[0]!.signal.aborted).toBe(false);
+  jest.advanceTimersByTime(1);
+  expect(await stalled).toMatchObject({ name: "AbortError" });
+
+  const caller = new AbortController();
+  const cancelled = fetchAgentCatalog("local", caller.signal).catch((error: unknown) => error);
+  caller.abort();
+  expect(await cancelled).toMatchObject({ name: "AbortError" });
 });
 
 it("offers Letta Code in the agent menus where it is installed, and from an older bridge that does not say", async () => {

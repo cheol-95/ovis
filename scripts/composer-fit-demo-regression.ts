@@ -8,6 +8,7 @@ import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { openSettingsPage } from "./settings-page.ts";
 import { chromePath } from "./chrome-path.ts";
+import { MAX_COMPOSER_CHARS } from "../src/lib/compose.ts";
 import { MAX_ATTACHMENT_BYTES } from "../shared/attachments.ts";
 import { SUPPORTED_ENTRIES } from "../src/lib/themes.ts";
 
@@ -24,7 +25,7 @@ const LONG_MODEL = "gpt-5.6-sol-codex-preview-2026-10";
 // ids it names: "GPT-5.6" and "Opus 5.5"; null: the conversation names no model
 const NAMED = ["gpt-5.6", "claude-opus-5-5"] as const;
 
-interface Case { model: string | null; agent?: "claude" | "codex" | "pi" | "omo"; pending?: boolean; effort?: string | null; status?: "working" | "idle"; mic?: boolean; ring?: boolean; chatFontSize?: number | null; showUsage?: boolean; weeklyOnly?: boolean; suggestion?: string | null; contextUsed?: number; stream?: number; freezeConversation?: boolean; language?: "en" | "ko" | "ja" | "zh"; theme?: "light" | "dark"; scale?: number }
+interface Case { model: string | null; agent?: "claude" | "codex" | "pi" | "omo"; provider?: string; pending?: boolean; effort?: string | null; status?: "working" | "idle"; mic?: boolean; ring?: boolean; chatFontSize?: number | null; showUsage?: boolean; weeklyOnly?: boolean; suggestion?: string | null; suggestionChip?: boolean; contextUsed?: number; stream?: number; freezeConversation?: boolean; language?: "en" | "ko" | "ja" | "zh"; theme?: "light" | "dark"; scale?: number; autoSend?: boolean }
 type Draw = "full" | "no-effort" | "out";
 interface ComposerScrollGeometry {
   height: number;
@@ -77,7 +78,7 @@ const measure = (page: Page) => page.evaluate(() => {
       };
     })(),
     name: document.querySelector<HTMLElement>(".composer-model")?.textContent ?? null, named: !document.querySelector(".composer-model")?.classList.contains("is-id"),
-    label: part(".composer-model-info"), model: part(".composer-model"), effort: part(".composer-reasoning"), ring: part(".composer-context"), ringText: part(".composer-context-text"),
+    label: part(".composer-model-info"), model: part(".composer-model"), effort: part(".composer-reasoning"), ring: part(".composer-context"),
     // the ring's track, and the two tokens it can be: the bare ring's and the one on the pill's fill
     track: (() => {
       const track = document.querySelector(".composer-context-track");
@@ -119,21 +120,6 @@ const drawn = async (page: Page, draw: Draw, what: string): Promise<Row> => {
   return row;
 };
 
-const ring = (page: Page) => page.locator(".composer-context");
-/**
- * Opens or closes the context number and answers how the label is drawn in that same task: React
- * commits a click in a microtask, and the label is fitted with that commit, not by whatever
- * renders the composer next (a poll, a status change), which no wait here would tell apart.
- */
-const toggleRing = async (page: Page, open: boolean, draw?: Draw): Promise<void> => {
-  const marked = await ring(page).evaluate(async (node: HTMLElement) => {
-    node.click();
-    await new Promise<void>((done) => queueMicrotask(done));
-    return { open: node.getAttribute("aria-expanded"), draw: node.closest(".composer-status")!.getAttribute("data-model") ?? "full" };
-  });
-  assert.equal(marked.open, String(open));
-  if (draw) assert.equal(marked.draw, draw, `the model label is fitted as the context number ${open ? "opens" : "closes"}`);
-};
 const draft = async (page: Page): Promise<void> => {
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("hold this");
   await page.getByRole("button", { name: "Send message", exact: true }).waitFor();
@@ -170,7 +156,7 @@ try {
         { name: "plugin:deploy", description: "Deploy through a plugin", source: "plugin" }
       );
       if (window.fitCase.weeklyOnly && value.id === "codex" && Array.isArray(value.windows)) value.windows = value.windows.filter((limit) => limit.kind !== "session");
-      if (Array.isArray(value.turns) && value.metadata) value.metadata = { model: window.fitCase.model, reasoning_effort: window.fitCase.effort, ...(window.fitCase.ring ? { context: { used: window.fitCase.contextUsed ?? 151000, window: 272000 } } : {}) };
+      if (Array.isArray(value.turns) && value.metadata) value.metadata = { model: window.fitCase.model, reasoning_effort: window.fitCase.effort, ...(window.fitCase.provider ? { provider: window.fitCase.provider } : {}), ...(window.fitCase.ring ? { context: { used: window.fitCase.contextUsed ?? 151000, window: 272000 } } : {}) };
       if (Array.isArray(value.turns) && window.fitCase.stream) {
         const turn = value.turns.findLast((turn) => turn.role === "assistant");
         const text = "Streamed update " + window.fitCase.stream;
@@ -196,6 +182,7 @@ try {
       const send = socket.send.bind(socket);
       socket.send = (raw) => {
         const frame = JSON.parse(raw);
+        if (frame.type === "submit") window.fitSubmitCount = (window.fitSubmitCount ?? 0) + 1;
         if (!window.fitHoldSend || frame.type !== "submit") return send(raw);
         window.fitReply = (ok) => socket.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({
           type: "submit-result", id: frame.id, pane_id: frame.pane_id, ok,
@@ -223,7 +210,7 @@ try {
     const context = await browser.newContext({ viewport: { width, height: 844 }, hasTouch: touch, isMobile: touch, locale: state.language ?? "en-US", ...(state.scale ? { deviceScaleFactor: state.scale } : {}) });
     try {
       await context.addInitScript((fitCase) => {
-        if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", JSON.stringify({ language: fitCase.language ?? "en", voiceInput: fitCase.mic ? "on" : "off", chatFontSize: fitCase.chatFontSize ?? null, showUsage: fitCase.showUsage ?? false, usageCount: "used", ...(fitCase.theme ? { theme: fitCase.theme } : {}) }));
+        if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", JSON.stringify({ language: fitCase.language ?? "en", voiceInput: fitCase.mic ? "on" : "off", suggestionChip: fitCase.suggestionChip ?? false, chatFontSize: fitCase.chatFontSize ?? null, showUsage: fitCase.showUsage ?? false, usageCount: "used", ...(fitCase.theme ? { theme: fitCase.theme } : {}), ...(fitCase.autoSend === undefined ? {} : { autoSendQueued: fitCase.autoSend }) }));
         Object.assign(window, { fitCase });
       }, { agent: "claude", pending: true, status: "working", effort: "xhigh", mic: false, ring: true, ...state });
       const page = await context.newPage();
@@ -596,6 +583,7 @@ try {
         await page.evaluate(() => { (window as any).fitHoldSend = true; });
         await draft(page);
         await page.locator(".composer-send").click();
+        await page.waitForFunction(() => document.querySelector(".composer-send")?.getAttribute("aria-busy") === "true");
         await page.getByRole("textbox", { name: "Message", exact: true }).fill("");
         assert.equal(await page.locator('.composer-send[aria-busy="true"]').count(), 1, "editing a working send to empty does not replace progress with Stop");
         await page.evaluate(() => (window as any).fitReply(true));
@@ -700,6 +688,121 @@ try {
       });
       console.log("PASS prompt updates preserve a focused, internally scrolled draft and its mid-text caret at 390 and 1440px");
 
+      // by default a tap on the grey words only focuses the box: typing there writes the user's own reply
+      await withCard(browser, 390, { model: "gpt-5.6", status: "idle", pending: false, freezeConversation: true, suggestion: "Review the changes" }, async (page) => {
+        const box = page.getByRole("textbox", { name: "Message", exact: true });
+        await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>(".composer-text")?.placeholder === "Review the changes");
+        assert.equal(await page.locator(".composer-inline-suggestion").count(), 0);
+        assert.equal(await box.evaluate((node) => getComputedStyle(node, "::placeholder").color === "rgba(0, 0, 0, 0)"), false, "the placeholder itself shows the suggestion");
+        const bounds = await box.boundingBox();
+        assert.ok(bounds);
+        await box.tap({ position: { x: 40, y: Math.min(bounds.height / 2, 20) } });
+        assert.equal(await box.inputValue(), "", "a tap on the suggestion does not take it unless Settings asks");
+        await page.keyboard.type("My own reply");
+        assert.equal(await box.inputValue(), "My own reply");
+      });
+      console.log("PASS by default a tap on the grey suggestion focuses the box without taking it");
+
+      for (const width of [390, 1440]) await withCard(browser, width, { model: "gpt-5.6", status: "idle", pending: false, freezeConversation: true, suggestion: "Review the changes", suggestionChip: true }, async (page) => {
+        const box = page.getByRole("textbox", { name: "Message", exact: true });
+        await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>(".composer-text")?.placeholder === "Review the changes");
+        await page.evaluate(() => Object.assign(window, { fitSubmitCount: 0 }));
+        const suggestion = page.locator(".composer-inline-suggestion > span");
+        if (width === 390) {
+          // Padding is still the textarea, not an acceptance button.
+          await box.tap({ position: { x: 4, y: 4 } });
+          assert.equal(await box.inputValue(), "");
+          await page.keyboard.type("My own reply");
+          assert.equal(await box.inputValue(), "My own reply");
+          assert.equal(await page.locator(".composer-inline-suggestion").count(), 0);
+          await box.fill("");
+          const bounds = await suggestion.boundingBox();
+          assert.ok(bounds);
+          const session = await page.context().newCDPSession(page);
+          const x = bounds.x + 8, y = bounds.y + bounds.height / 2;
+          await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
+          await session.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y - 60 }] });
+          await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+          await session.detach();
+          assert.equal(await box.inputValue(), "", "a swipe across the suggestion does not accept it");
+          await box.dispatchEvent("compositionstart", { data: "" });
+          await suggestion.tap();
+          assert.equal(await box.inputValue(), "", "an active composition blocks suggestion acceptance");
+          await box.dispatchEvent("compositionend", { data: "" });
+          await suggestion.tap();
+        } else {
+          assert.equal(await suggestion.isVisible(), false);
+          await box.click();
+          await box.press("Shift+Tab");
+          assert.equal(await box.inputValue(), "");
+          await box.focus();
+          await box.press("Tab");
+        }
+        assert.equal(await box.inputValue(), "Review the changes");
+        assert.equal(await box.evaluate((node: HTMLTextAreaElement) => document.activeElement === node && node.selectionStart === node.value.length && node.selectionEnd === node.value.length), true);
+        await page.keyboard.type(" please");
+        assert.equal(await box.inputValue(), "Review the changes please");
+        assert.equal(await page.locator(".composer-inline-suggestion").count(), 0);
+        await box.evaluate((node: HTMLTextAreaElement) => node.setSelectionRange(0, 0));
+        await page.keyboard.type("Now ");
+        assert.equal(await box.inputValue(), "Now Review the changes please");
+        assert.equal(await page.evaluate(() => (window as unknown as { fitSubmitCount: number }).fitSubmitCount), 0, "accepting and editing never sends a message");
+      });
+      console.log("PASS touch suggestion acceptance and desktop Tab preserve focus, caret and editing without sending");
+
+      // the grey words sit in the textarea's row: an attachment strip above keeps its own taps
+      await withCard(browser, 390, { model: "gpt-5.6", status: "idle", freezeConversation: true, suggestion: "Review the changes", suggestionChip: true }, async (page) => {
+        const box = page.getByRole("textbox", { name: "Message", exact: true });
+        await page.locator('.composer-controls-left input[type="file"]').setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("x") });
+        const attachment = page.locator(".composer-attachment").first();
+        await attachment.waitFor();
+        const words = await page.locator(".composer-inline-suggestion > span").boundingBox();
+        const input = await box.boundingBox();
+        const strip = await attachment.boundingBox();
+        assert.ok(words && input && strip);
+        assert.ok(words.y >= input.y && words.y + words.height <= input.y + input.height, "the words are drawn inside the message box");
+        assert.ok(words.y >= strip.y + strip.height, "the words do not cover the attachment strip");
+        assert.equal(await page.evaluate(([x, y]) => Boolean(document.elementFromPoint(x, y)?.closest(".composer-inline-suggestion")), [strip.x + strip.width / 2, strip.y + strip.height / 2]), false, "a tap on the attachment reaches the attachment");
+      });
+      console.log("PASS the inline suggestion stays in the message row below an attachment");
+
+      for (const key of ["Enter", " "]) await withCard(browser, 390, { model: "gpt-5.6", status: "idle", freezeConversation: true, suggestion: "Review the changes", suggestionChip: true }, async (page) => {
+        const box = page.getByRole("textbox", { name: "Message", exact: true });
+        const suggestion = page.getByRole("button", { name: "Use the suggestion", exact: true });
+        await suggestion.waitFor();
+        await page.evaluate(() => Object.assign(window, { fitSubmitCount: 0 }));
+        await suggestion.focus();
+        await suggestion.press(key);
+        assert.equal(await box.inputValue(), "Review the changes");
+        assert.equal(await box.evaluate((node: HTMLTextAreaElement) => document.activeElement === node && node.selectionStart === node.value.length && node.selectionEnd === node.value.length), true);
+        assert.equal(await page.evaluate(() => (window as unknown as { fitSubmitCount: number }).fitSubmitCount), 0);
+      });
+      console.log("PASS Enter and Space activate the focused inline suggestion without sending");
+
+      await withCard(browser, 390, { model: "gpt-5.6", status: "idle", freezeConversation: true, suggestion: "Review the changes", suggestionChip: true }, async (page) => {
+        await page.evaluate(() => Object.assign(window, { fitSubmitCount: 0 }));
+        await page.locator(".composer-suggestion").tap();
+        assert.equal(await page.getByRole("textbox", { name: "Message", exact: true }).inputValue(), "Review the changes");
+        assert.equal(await page.evaluate(() => (window as unknown as { fitSubmitCount: number }).fitSubmitCount), 0, "the suggestion chip never submits");
+      });
+      console.log("PASS the optional suggestion chip accepts a draft without sending");
+
+      for (const width of [390, 1440]) for (const length of [MAX_COMPOSER_CHARS, MAX_COMPOSER_CHARS + 1]) await withCard(browser, width, { model: "gpt-5.6", status: "idle", freezeConversation: true, suggestion: "x".repeat(length), suggestionChip: true }, async (page) => {
+        const box = page.getByRole("textbox", { name: "Message", exact: true });
+        await page.waitForFunction((length) => document.querySelector<HTMLTextAreaElement>(".composer-text")?.placeholder.length === length, length);
+        await page.evaluate(() => Object.assign(window, { fitSubmitCount: 0 }));
+        if (width === 390) await page.locator(".composer-inline-suggestion > span").tap({ position: { x: 4, y: 4 } });
+        else { await box.focus(); await box.press("Tab"); }
+        if (length > MAX_COMPOSER_CHARS) {
+          assert.equal(await box.inputValue(), "", "an oversized suggestion leaves the draft unchanged");
+          assert.match(await page.locator(".composer-note[role=alert]").innerText(), /20,000-character limit · 1 over/);
+        } else {
+          assert.equal(await box.inputValue(), "x".repeat(length), "a suggestion at the limit is accepted in full");
+        }
+        assert.equal(await page.evaluate(() => (window as unknown as { fitSubmitCount: number }).fitSubmitCount), 0);
+      });
+      console.log("PASS touch and Tab accept the exact limit and reject oversized suggestions with an alert and no submit");
+
       for (const agent of ["claude", "codex", "pi"] as const) for (const width of [320, 1280]) await withCard(browser, width, { agent, model: "gpt-5.6", status: "idle" }, async (page) => {
         const box = page.getByRole("textbox", { name: "Message", exact: true });
         const menu = page.getByRole("listbox", { name: "Slash commands", exact: true });
@@ -771,19 +874,21 @@ try {
       for (const agent of ["claude", "codex"] as const) for (const width of [350, 390, 800, 1440]) for (const mic of [false, true]) await withCard(browser, width, { agent, model: "gpt-5.6", mic }, async (page) => {
         const rest = await measure(page);
         assert.ok(rest.stop && !rest.send && !rest.sendOptions && !rest.queue, JSON.stringify(rest));
-        if (width <= 480) assert.equal(await page.locator(".composer-context").evaluate((node) =>
-          node.tagName === "SPAN" && !node.hasAttribute("title") && !node.hasAttribute("aria-expanded") && !node.hasAttribute("tabindex")), true, "mobile context is a read-only ring");
+        // the ring only shows: a span with its number in a tooltip, nothing to press, open or focus
+        assert.equal(await page.locator(".composer-context").evaluate((node) =>
+          node.tagName === "SPAN" && node.getAttribute("title")?.includes("%") === true && !node.hasAttribute("aria-expanded") && !node.hasAttribute("tabindex")), true, "the context ring is display-only");
         await draft(page);
         const row = await measure(page);
         await drawn(page, row.draw as Draw, `${agent} ${width}px, a written follow-up`);
         assert.ok(row.send && !row.stop && !row.sendOptions && !row.queue && row.ring, JSON.stringify(row));
         assert.equal(row.card.height, rest.card.height, "Send replaces Stop on the same row");
         if (width >= 800) {
-          await toggleRing(page, true);
-          const opened = await measure(page);
-          await drawn(page, opened.draw as Draw, `${agent} ${width}px, context opened`);
-          assert.equal(opened.card.height, row.card.height);
-          await toggleRing(page, false);
+          // a press on the ring does nothing: no number opens and the row is drawn as before
+          await page.locator(".composer-context").click();
+          const pressed = await measure(page);
+          assert.equal(pressed.draw, row.draw, `${agent} ${width}px: a press on the ring leaves the row as drawn`);
+          assert.equal(pressed.card.height, row.card.height);
+          assert.equal(await page.locator(".composer-context-text").count(), 0, "a press opens no context number");
         }
         await page.getByRole("textbox", { name: "Message", exact: true }).fill("");
         assert.equal((await measure(page)).stop, true);
@@ -845,9 +950,27 @@ try {
       });
       console.log("PASS selectable pending bubbles fit phones; explicit Send now and Discard act on IDs");
 
-      // A confirmed hold can be sent explicitly on a new connection. An unconfirmed queued
-      // request instead becomes uncertain and never offers an automatic or explicit retry.
-      for (const held of [false, true]) await withCard(browser, 390, { agent: "codex", model: "gpt-5.6" }, async (page) => {
+      // With automatic sending turned off, a follow-up sent while the agent works is held by the PC at once:
+      // a reconnect leaves it held and sends nothing, and only Send now delivers it.
+      await withCard(browser, 390, { agent: "codex", model: "gpt-5.6", autoSend: false }, async (page) => {
+        const text = "held at once follow-up";
+        await page.getByRole("textbox", { name: "Message", exact: true }).fill(text);
+        await page.getByRole("button", { name: "Send message", exact: true }).click();
+        await page.locator('.pending-message[data-state="held"]').waitFor();
+        await page.evaluate(() => (window as unknown as { fitSocket: { close: () => void } }).fitSocket.close());
+        await page.waitForFunction(() => (window as unknown as { fitSocket?: { readyState: number } }).fitSocket?.readyState === 1);
+        await page.waitForFunction(() => !(document.querySelector(".pending-message-send") as HTMLButtonElement | null)?.disabled);
+        assert.equal(await page.locator(".pending-message").getAttribute("data-state"), "held", "a reconnect leaves a held follow-up held");
+        const notSent = await page.evaluate(async (paneId) => await (await fetch(`/api/pane/conversation?pane_id=${encodeURIComponent(paneId)}`)).json(), panes.api);
+        assert.ok(!JSON.stringify(notSent).includes(text), "a held follow-up is not sent by the reconnect");
+        await page.getByRole("button", { name: `Send now: ${text}`, exact: true }).click();
+        await page.locator(".pending-message-bubble").waitFor({ state: "hidden" });
+        const sent = await page.evaluate(async (paneId) => await (await fetch(`/api/pane/conversation?pane_id=${encodeURIComponent(paneId)}`)).json(), panes.api);
+        assert.equal(JSON.stringify(sent).split(text).length - 1, 1, "Send now delivers it once");
+      });
+      // With automatic sending on, a follow-up is queued: a confirmed hold can be sent explicitly on a new
+      // connection, and an unconfirmed queued request becomes uncertain and never offers an automatic or explicit retry.
+      for (const held of [false, true]) await withCard(browser, 390, { agent: "codex", model: "gpt-5.6", autoSend: true }, async (page) => {
         const text = held ? "confirmed held follow-up" : "unconfirmed follow-up";
         await page.getByRole("textbox", { name: "Message", exact: true }).fill(text);
         await page.getByRole("button", { name: "Send message", exact: true }).click();
@@ -904,7 +1027,21 @@ try {
         assert.equal(await page.locator(".composer-status .composer-usage").count(), 0, "mobile omits the desktop quota even when sidebar limits are enabled");
         assert.equal(await page.locator(".composer-context").evaluate((node) => node.tagName === "SPAN" && !node.hasAttribute("aria-expanded")), true);
       });
-      console.log("PASS desktop quota is read-only and session-first with weekly fallback; mobile keeps only the inert context ring");
+      // a pi pane draws on the plan of the provider its conversation runs at, and on none without one
+      for (const [agent, provider, text, account] of [["pi", "openai-codex", "5h 22%", /sam@work\.example/], ["omo", "anthropic-subscription", "5h 38%", /Claude · sam@example\.com/]] as const) {
+        await withCard(browser, 1440, { agent, model: "gpt-5.6", provider, showUsage: true }, async (page) => {
+          const usage = page.locator(".composer-status .composer-usage");
+          await usage.waitFor();
+          assert.equal(await usage.locator('span[aria-hidden="true"]').textContent(), text);
+          assert.match(await usage.getAttribute("title") ?? "", account);
+        });
+      }
+      // a plain `anthropic` is recorded the same for a Claude sign-in and an API key
+      for (const provider of [undefined, "zai", "anthropic"]) await withCard(browser, 1440, { agent: "pi", model: "gpt-5.6", ...(provider ? { provider } : {}), showUsage: true }, async (page) => {
+        await page.locator(".composer-status").waitFor();
+        assert.equal(await page.locator(".composer-status .composer-usage").count(), 0, "no plan without a provider that names one");
+      });
+      console.log("PASS desktop quota is read-only and session-first with weekly fallback; mobile keeps only the inert context ring; a pi pane follows its provider's plan");
 
       // The message box is typed at the transcript's size (Settings → Chat font size): with a mouse
       // exactly, on a phone never under 16px, the smallest size iOS does not zoom the page for
@@ -1047,8 +1184,8 @@ try {
           return { text: paragraph.textContent!, offset: paragraph.getBoundingClientRect().top - view.top, gap: node.scrollHeight - node.clientHeight - node.scrollTop };
         });
         assert.ok(reading.gap > 48, "the reader is away from the end before changing lenses");
-        await page.getByTitle("Live terminal (⌘⇧J)", { exact: true }).click();
-        await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
+        await page.locator(".view-switch .is-terminal").click();
+        await page.locator(".view-switch .is-chat").click();
         await page.waitForFunction((saved) => {
           const node = document.querySelector(".chat-view");
           if (!node) return false;
@@ -1061,15 +1198,15 @@ try {
         // Leave in the same task: the list's deferred scroll cannot update memory first.
         await page.evaluate(() => {
           document.querySelector<HTMLButtonElement>('button[title="Jump to latest"]')!.click();
-          document.querySelector<HTMLButtonElement>('button[title="Live terminal (⌘⇧J)"]')!.click();
+          document.querySelector<HTMLButtonElement>('.view-switch .is-terminal')!.click();
         });
-        await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
+        await page.locator(".view-switch .is-chat").click();
         await page.waitForFunction(() => {
           const node = document.querySelector(".chat-view")!;
           return node.scrollHeight - node.clientHeight - node.scrollTop <= 1;
         }, undefined, { timeout: 5_000 });
-        await page.getByTitle("Live terminal (⌘⇧J)", { exact: true }).click();
-        await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
+        await page.locator(".view-switch .is-terminal").click();
+        await page.locator(".view-switch .is-chat").click();
         await page.waitForFunction(() => {
           const node = document.querySelector(".chat-view")!;
           return node.scrollHeight - node.clientHeight - node.scrollTop <= 1;
@@ -1220,6 +1357,41 @@ try {
       });
       console.log("PASS Korean, Japanese and Chinese drafts and wrapped placeholders fit their native text height on phone and desktop");
 
+      // Korean typed in the box keeps each word whole, as the rest of the app and the box's own placeholder do (#3374):
+      // a word that fits a line alone moves to the next line whole instead of being split after a short first word, so
+      // "가 <word> 나" takes three lines, not two, and the box grows to all three.
+      for (const width of [390, 1440]) await withCard(browser, width, { language: "ko", status: "idle", pending: false, model: "gpt-5.6", freezeConversation: true }, async (page) => {
+        const box = page.locator(".composer-text");
+        const word = await box.evaluate(async (node: HTMLTextAreaElement) => {
+          const style = getComputedStyle(node);
+          const syllables = "가나다라마바사아자차카타파하";
+          await document.fonts.load(`${style.fontWeight} ${style.fontSize} ${style.fontFamily}`, syllables);
+          const probe = document.body.appendChild(document.createElement("span"));
+          Object.assign(probe.style, { position: "absolute", visibility: "hidden", whiteSpace: "pre", font: style.font, letterSpacing: style.letterSpacing });
+          const line = node.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
+          // the longest word that still fits one line of the box
+          let longest = "";
+          try {
+            for (let index = 0; ; index += 1) {
+              probe.textContent = longest + syllables[index % syllables.length];
+              if (probe.getBoundingClientRect().width > line) break;
+              longest = probe.textContent;
+            }
+          } finally { probe.remove(); }
+          return longest;
+        });
+        await box.fill(`가 ${word} 나`);
+        await page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
+        const drawn = await box.evaluate((node: HTMLTextAreaElement) => {
+          const style = getComputedStyle(node);
+          const lines = Math.round((node.scrollHeight - Number.parseFloat(style.paddingTop) - Number.parseFloat(style.paddingBottom)) / Number.parseFloat(style.lineHeight));
+          return { lines, fits: node.scrollHeight <= node.clientHeight + 1 };
+        });
+        assert.equal(drawn.lines, 3, `${width}px: "가 ${word} 나" keeps the ${word.length}-syllable word whole on a line of its own`);
+        assert.ok(drawn.fits, `${width}px: the box grows to the three lines its words take`);
+      });
+      console.log("PASS Korean typed in the message box keeps its words whole on phone and desktop");
+
       // Changing the setting in an already-open chat rewraps the existing draft: an automatic
       // box grows and shrinks with it.
       for (const width of [390, 1440]) await withCard(browser, width, { model: "claude-opus-5-5" }, async (page) => {
@@ -1229,7 +1401,7 @@ try {
         const height = () => box.evaluate((node) => node.clientHeight);
         const chooseSize = async (size: number) => {
           await page.keyboard.press("ControlOrMeta+Shift+Comma");
-          await openSettingsPage(page, "Chat");
+          await openSettingsPage(page, "Appearance");
           const current = Number.parseInt(await page.locator('.settings-stepper[aria-label="Chat font size"] output').innerText(), 10);
           const button = page.getByRole("button", { name: size > current ? "Increase chat font size" : "Decrease chat font size", exact: true });
           for (let step = 0; step < Math.abs(size - current); step++) await button.click();

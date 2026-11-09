@@ -13,6 +13,7 @@
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { mergeFeeds } from "./feed.ts";
+import { importedPackages, pruneUnused } from "./server-packages.ts";
 import { BUN, BUN_LICENSE, BUN_VERSION, download, HC, HC_VERSION, hostTarget, sha256, type Pinned } from "./runtimes.ts";
 
 const here = resolve(import.meta.dir, "..");
@@ -88,7 +89,7 @@ async function stageAll(): Promise<void> {
   const bun = (await sh([join(stage, "bin", `bun${exe}`), "--version"], stage)).trim();
   if (bun !== BUN_VERSION) throw new Error(`The staged Bun says ${bun}, not ${BUN_VERSION}`);
 
-  // the server as the installer and the remote bundles run it: its sources, the built client and its production packages
+  // the server as the installer and the remote bundles run it: its sources, the built client and the production packages its code imports
   await sh(["bun", "run", "build"], repo);
   const server = join(stage, "server");
   for (const dir of ["server", "shared", "integrations", "dist", "patches"]) {
@@ -99,6 +100,9 @@ async function stageAll(): Promise<void> {
   await sh([join(stage, "bin", `bun${exe}`), "install", "--production", "--frozen-lockfile", "--ignore-scripts"], server, { ...process.env, BUN_INSTALL_CACHE_DIR: join(here, ".cache", "bun-install") });
   // package-manager links: nothing runs them, and an installer need not carry symlinks
   rmSync(join(server, "node_modules", ".bin"), { recursive: true, force: true });
+  // the client's packages are bundled into dist/: only what the server's own code imports stays
+  const removed = pruneUnused(server, importedPackages(["server", "shared", "integrations", "scripts"].map((dir) => join(server, dir))));
+  console.log(`left out ${removed.length} packages the server does not import`);
   // the release's Rust PTY host (checked against the release manifest), which a sign-in the server
   // follows in a terminal of its own needs on a PC without Node; without it the build goes on
   await sh(["bun", "scripts/pty-sidecar.ts", "install"], repo);
@@ -170,8 +174,24 @@ async function windowsIcon(): Promise<void> {
   writeFileSync(join(here, ".cache", "icon.ico"), Buffer.concat([header, ...images]));
 }
 
+/**
+ * The Linux icons, one PNG per size the hicolor theme lists (16 to 512 pixels), in the folder
+ * electron-builder.yml names: the app's icon is 1024 pixels, a size no hicolor index lists, so
+ * desktops that look only in listed folders showed a generic icon.
+ */
+const LINUX_ICON_SIZES = [16, 24, 32, 48, 64, 128, 256, 512];
+
+async function linuxIcons(): Promise<void> {
+  const source = join(here, "..", "assets", "icon-only.png");
+  const dir = join(here, ".cache", "linux-icons");
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  await Promise.all(LINUX_ICON_SIZES.map(async (size) => writeFileSync(join(dir, `${size}x${size}.png`), await Bun.file(source).image().resize(size, size).png().bytes())));
+}
+
 async function dist(): Promise<void> {
   if (windows) await windowsIcon();
+  if (target.startsWith("linux-")) await linuxIcons();
   const version = (JSON.parse(readFileSync(join(repo, "package.json"), "utf8")) as { version: string }).version;
   // the app says the release's version, which is also the server's it carries
   const tag = process.env["OVIS_RELEASE_TAG"]?.trim();

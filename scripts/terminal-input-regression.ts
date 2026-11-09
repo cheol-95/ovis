@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { Browser } from "playwright-core";
 import { openSettingsPage } from "./settings-page.ts";
 import { chromePath } from "./chrome-path.ts";
+import { shownRows } from "./shown-rows.ts";
 
 export async function checkTerminalInput(browser: Browser, origin: string, pane: string, otherPane: string): Promise<void> {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
@@ -75,7 +76,7 @@ export async function checkTerminalInput(browser: Browser, origin: string, pane:
   };
   try {
     await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
-    await page.getByTitle("Live terminal (⌘⇧J)", { exact: true }).click();
+    await page.locator(".view-switch").getByRole("button", { name: "Terminal", exact: true }).click();
     assert.equal(await page.locator(".key-bar").isVisible(), false, "a desktop shows no key bar under the terminal");
     // a phone keyboard's autocorrect would swap a flag or path for a dictionary word before Send
     assert.deepEqual(await line.evaluate((box) => [box.getAttribute("autocorrect"), box.getAttribute("spellcheck"), box.getAttribute("autocapitalize")]), ["off", "false", "off"]);
@@ -242,7 +243,7 @@ export async function checkTerminalInput(browser: Browser, origin: string, pane:
     await line.waitFor();
     assert.equal(await line.inputValue(), "draft 한글 😀");
     await page.goto(`${origin}/?pane=${encodeURIComponent(otherPane)}`);
-    if (!(await line.isVisible())) await page.getByTitle("Live terminal (⌘⇧J)", { exact: true }).click();
+    if (!(await line.isVisible())) await page.locator(".view-switch").getByRole("button", { name: "Terminal", exact: true }).click();
     assert.equal(await line.inputValue(), "");
     await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
     await line.waitFor();
@@ -376,8 +377,8 @@ export async function checkTerminalInput(browser: Browser, origin: string, pane:
     assert.equal(await note.textContent(), "Finish the word, then send.");
     await line.dispatchEvent("compositionstart", { data: "" });
     // Leaving during composition must not leave the composition guard stuck.
-    await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
-    await page.getByTitle("Live terminal (⌘⇧J)", { exact: true }).click();
+    await page.locator(".view-switch").getByRole("button", { name: "Chat", exact: true }).click();
+    await page.locator(".view-switch").getByRole("button", { name: "Terminal", exact: true }).click();
     await remountLine();
     await line.waitFor();
     await page.getByRole("button", { name: "Send to the terminal", exact: true }).click();
@@ -863,11 +864,11 @@ async function checkCanonicalSubmit(browser: Browser): Promise<void> {
         const line = page.getByRole("textbox", { name: "Terminal input line", exact: true });
         await line.waitFor();
         // the input line holds the program's prompt once the pane is drawn: the mode the program asked for came before it
-        await page.locator(".xterm-rows", { hasText: "$" }).waitFor();
+        await page.locator(shownRows(), { hasText: "$" }).waitFor();
         await page.waitForFunction(() => document.querySelector(".terminal-banner") === null);
         // with the browser attached, the program asks for its mode again; its "ready$" comes after that request
         process.kill(recorder, "SIGUSR2");
-        await page.locator(".xterm-rows", { hasText: "ready$" }).waitFor();
+        await page.locator(shownRows(), { hasText: "ready$" }).waitFor();
         if (item.server === "attached") {
           const mode = browserMode();
           if (mode !== item.mode) {

@@ -5,6 +5,7 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 import type { PaneInfo, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
 import { AppLayoutContext, appLayoutOf, type LayoutOffer } from "../lib/machineContext.tsx";
 import { SettingsProvider } from "../lib/settings.ts";
+import { setSidebarPins } from "../lib/sidebarPins.ts";
 import { RowMenu } from "./RowMenu.tsx";
 import { TabStrip } from "./TabStrip.tsx";
 
@@ -44,7 +45,7 @@ describe("the tab strip on a PC the Herdr app lays out", () => {
   let activeTab: { dataset: { tabId: string } };
 
   beforeEach(() => {
-    for (const key of ["window", "document", "navigator", "getComputedStyle", "localStorage", "HTMLElement", "IS_REACT_ACT_ENVIRONMENT"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    for (const key of ["window", "document", "navigator", "getComputedStyle", "localStorage", "HTMLElement", "CSS", "IS_REACT_ACT_ENVIRONMENT"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     stored.clear();
     requested = [];
     activeTab = { dataset: { tabId: "w1:t1" } };
@@ -54,6 +55,7 @@ describe("the tab strip on a PC the Herdr app lays out", () => {
     const define = (key: string, value: unknown) => Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
     define("IS_REACT_ACT_ENVIRONMENT", true);
     define("HTMLElement", class HTMLElement {});
+    define("CSS", { escape: (value: string) => value });
     define("localStorage", storage);
     define("navigator", { languages: ["en-US"], platform: "Linux" });
     define("window", { localStorage: storage, matchMedia: () => media, innerWidth: 1280, innerHeight: 800, addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events), requestAnimationFrame: () => 1, cancelAnimationFrame() {}, setTimeout, clearTimeout });
@@ -123,12 +125,67 @@ describe("the tab strip on a PC the Herdr app lays out", () => {
     });
   });
 
+  it("offers no Close tab for a tab holding a locked pinned agent, and its Delete and middle click close nothing (#2432)", async () => {
+    stored.set("ovis:settings", JSON.stringify({ agentLocks: true, lockedAgents: ["local:w1:t1:p"] }));
+    setSidebarPins(["local:w1:t1:p"]);
+    try {
+      await withFetch(async () => {
+        await draw(TUI);
+        expect(await menuOf()).toEqual(["move-right", "move-workspace", "new-agent-tab", "rename-tab"]);
+        await keyDown("Delete");
+        await act(async () => tab().props.onAuxClick({ button: 1, preventDefault() {} }));
+        expect(requested).toEqual([]);
+      });
+    } finally {
+      setSidebarPins([]);
+    }
+  });
+
+  it("offers no Close tab for a tab whose locked pane the strip leaves out of its list, as a DAG viewer's (#2432)", async () => {
+    // a second pane in the open tab, unselected and drawn like omo-herdr-dag's viewer, which rosterPanes leaves out
+    const viewer = { pane_id: "w1:t1:dag", workspace_id: "w1", tab_id: "w1:t1", terminal_id: "w1:t1:dag:term", revision: 1, focused: false, agent_status: "idle", label: "DAG · s" } as PaneInfo;
+    snapshot.panes.push(viewer);
+    stored.set("ovis:settings", JSON.stringify({ agentLocks: true, lockedAgents: ["local:w1:t1:dag"] }));
+    setSidebarPins(["local:w1:t1:dag"]);
+    try {
+      await withFetch(async () => {
+        await draw(TUI);
+        expect(await menuOf()).not.toContain("close-tab");
+        await keyDown("Delete");
+        expect(requested).toEqual([]);
+      });
+    } finally {
+      snapshot.panes.pop();
+      setSidebarPins([]);
+    }
+  });
+
   it("renames, reorders and moves a core PC's tab to another workspace where Ovis keeps its layout", async () => {
     await withFetch(async () => {
       await draw(OVIS_CORE);
       expect(await menuOf()).toEqual(["move-right", "move-workspace", "new-agent-tab", "rename-tab", "close-tab"]);
       await keyDown("F2");
       expect(renameFields()).toBe(1);
+    });
+  });
+
+  it("keeps a tab's inline rename draft across Escape and blur until it is saved", async () => {
+    await withFetch(async () => {
+      await draw(TUI);
+      const input = () => renderer!.root.findByProps({ className: "input tab-strip-rename" });
+      await act(async () => tab().props.onDoubleClick());
+      expect(renameFields()).toBe(1);
+      await act(async () => input().props.onChange({ target: { value: "Escape draft survives" } }));
+      await act(async () => input().props.onKeyDown({ key: "Escape", stopPropagation() {}, nativeEvent: { isComposing: false, keyCode: 27 } }));
+      expect(renameFields()).toBe(0);
+      expect(requested).toEqual([]);
+
+      await act(async () => tab().props.onDoubleClick());
+      expect(input().props.value).toBe("Escape draft survives");
+
+      await act(async () => input().props.onKeyDown({ key: "Enter", stopPropagation() {}, nativeEvent: { isComposing: false, keyCode: 13 } }));
+      expect(renameFields()).toBe(0);
+      expect(requested).toEqual(["/api/tab/rename"]);
     });
   });
 });

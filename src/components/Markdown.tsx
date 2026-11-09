@@ -3,7 +3,7 @@ import { BookOpen, Check, Copy, ImageOff, Maximize2 } from "lucide-react";
 
 import { foldCode, mathNestsTooDeep, parseInline, parseMarkdown, type InlineNode, type ListBlock, type MarkdownBlock } from "../../shared/markdown.ts";
 import { codeIsFilePath, OpenFileContext, splitFilePaths } from "../lib/filePaths.ts";
-import { FilePathLink } from "./FilePathLink.tsx";
+import { CodeFileName, FilePathLink } from "./FilePathLink.tsx";
 import { fileUriPath } from "../../shared/fileUri.ts";
 import { shouldOpenWebPage, WebPanelContext } from "../lib/webPanel.ts";
 import { MachineContext } from "../lib/machineContext.tsx";
@@ -329,7 +329,9 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
         if (open !== null && file !== null) return <FilePathLink key={key} path={file} code open={open} />;
         // agents often put an address in backticks: it stays code to the eye, and opens
         if (interactive && /^https?:\/\/\S+$/i.test(node.value)) return <a key={key} className="markdown-code-link" href={node.value} target="_blank" rel="noopener noreferrer" onClick={webClick(node.value)}><code>{node.value}</code></a>;
-        return open !== null && codeIsFilePath(node.value) ? <FilePathLink key={key} path={node.value} code open={open} /> : <code key={key}>{node.value}</code>;
+        if (open === null || !codeIsFilePath(node.value)) return <code key={key}>{node.value}</code>;
+        // a bare name may be a unit, a host or a key: it stays a link only while the pane's PC may have it
+        return node.value.includes("/") ? <FilePathLink key={key} path={node.value} code open={open} /> : <CodeFileName key={key} name={node.value} open={open} />;
       }
       case "math": return <MathExpression key={key} value={node.value} dollar={node.dollar} />;
       case "image": {
@@ -417,7 +419,7 @@ function CodeBlock({ language, value }: { language: string; value: string }) {
     <div className="markdown-code" ref={block}>
       <div className="markdown-code-header">
         <span>{language || "text"}</span>
-        <button type="button" className="icon-button markdown-code-copy" onClick={() => void copy()} aria-label={t(copied ? "Code copied" : "Copy code")}>
+        <button type="button" className="icon-button markdown-code-copy" onClick={() => void copy()} aria-label={t(copied ? "Code copied" : "Copy code")} title={t(copied ? "Code copied" : "Copy code")}>
           {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
         </button>
       </div>
@@ -440,8 +442,10 @@ function Blocks({ blocks }: { blocks: MarkdownBlock[] }) {
       case "heading":
         // agent headings are h3 whatever the agent wrote: the app's own h1/h2 (Brand, the dialog
         // titles) stay the outline above them. The level rides on a class, so the stylesheet
-        // keeps drawing each level as it did (ChatView.css `.markdown h1`...`.markdown h6`).
-        return <h3 key={key} className={`markdown-h${block.level}${block.align ? " markdown-center" : ""}`}><Inline nodes={block.content} /></h3>;
+        // keeps drawing each level as it did (ChatView.css `.markdown-h1`...`.markdown-h6`), and on
+        // aria-level, so a screen reader keeps the text's own levels apart below the app's: its # is
+        // level 3, its ## level 4, on to the deepest level there is
+        return <h3 key={key} className={`markdown-h${block.level}${block.align ? " markdown-center" : ""}`} aria-level={Math.min(block.level + 2, 6)}><Inline nodes={block.content} /></h3>;
       case "paragraph":
         return <p key={key} className={block.align ? "markdown-center" : undefined}>{block.lines.map((line, lineIndex) => <span key={lineIndex}><Inline nodes={line} standalone={standaloneImage(line)} />{lineIndex < block.lines.length - 1 && <br />}</span>)}</p>;
       case "list": return <List key={key} block={block} />;

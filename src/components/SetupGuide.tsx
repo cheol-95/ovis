@@ -30,7 +30,8 @@ import { useSettings } from "../lib/settings.ts";
 import { agentRows, checkList, foundAgents, installedHere, phoneBoxMode, phoneBoxOpensFirst, phoneBoxStays, phoneWay, openInFolder, preferredAgent, relayStep, settleDelay, setupView, signedInAgents, turnsUsageOn, type CheckStatus, type GuideEvent, type GuideState, type PcCheck, type PhoneBoxOpening } from "../lib/setupGuideFlow.ts";
 import { inRelayShell, useRelay, type RelayState } from "../lib/useRelay.ts";
 import { useSignedInUsage } from "../lib/useSetupGuide.ts";
-import { userErrorMessage } from "../lib/userError.ts";
+import { userErrorMessage, userFailure } from "../lib/userError.ts";
+import { AccountSection } from "./AccountSection.tsx";
 import { AgentMark } from "./AgentMark.tsx";
 import { AgentTile } from "./AgentTile.tsx";
 import { UsageSignInDialog } from "./UsageSignInDialog.tsx";
@@ -105,7 +106,7 @@ export function SetupGuide(props: SetupGuideProps) {
       }, settleDelay(startedAt, Date.now()));
     }, (error: unknown) => {
       if (ask !== asked.current) return;
-      setCatalogError(userErrorMessage(error).message);
+      setCatalogError(userFailure(error).kind === "unknown" ? t("Couldn't load the installed agents. Try again.") : userErrorMessage(error).message);
       setChecking(false);
     });
   };
@@ -155,14 +156,18 @@ export function SetupGuide(props: SetupGuideProps) {
 
 function Welcome({ dispatch, onClose, hidden }: Pick<SetupGuideProps, "dispatch" | "onClose" | "hidden">) {
   const t = useT();
+  // Not now folds the sign-in away for this welcome; Settings → Devices and PCs keeps it
+  const [later, setLater] = useState(false);
+  // Not now takes its box away: the keyboard's place goes to the first choice, not to the page
+  const firstChoice = useRef<HTMLButtonElement>(null);
   return (
     <div className="setup-guide" role="region" aria-label={t("Setup guide")} hidden={hidden}>
       <div className="setup-guide-inner setup-welcome">
         <img src="/icons/icon-192.png?v=sheep1" alt="" width="72" height="72" className="setup-welcome-mark" />
-        <h2>{t("Welcome to Ovis")}</h2>
+        <h1>{t("Welcome to Ovis")}</h1>
         <p className="setup-lead">{t("Is this your first time using Ovis?")}</p>
         <div className="setup-choices">
-          <button type="button" className="setup-choice" onClick={() => dispatch({ type: "begin" })}>
+          <button ref={firstChoice} type="button" className="setup-choice setup-choice-primary" onClick={() => dispatch({ type: "begin" })}>
             <span className="setup-choice-icon"><Sparkles aria-hidden="true" /></span>
             <span className="setup-choice-text"><strong>{t("I'm new to Ovis")}</strong><span>{t("Ovis finds or installs an AI coding helper and opens your first project.")}</span></span>
             <ChevronRight aria-hidden="true" />
@@ -173,6 +178,11 @@ function Welcome({ dispatch, onClose, hidden }: Pick<SetupGuideProps, "dispatch"
             <ChevronRight aria-hidden="true" />
           </button>
         </div>
+        {/* the account's sign-in, as Settings → Devices and PCs has it; none where this page has no account service */}
+        {!later && <AccountSection welcome={{
+          lead: <p className="setup-muted">{t("Sign in to use this PC from your phone and your other PCs.")}</p>,
+          later: <button type="button" className="setup-link" onClick={() => { setLater(true); firstChoice.current?.focus(); }}>{t("Not now")}</button>,
+        }} />}
         <p className="setup-note"><Info aria-hidden="true" />{t("You can open this again any time from Settings → Agents.")}</p>
       </div>
     </div>
@@ -193,7 +203,7 @@ function Checking({ known, catalog }: { known: readonly KnownAgent[]; catalog: r
   const lines = checkList(known, catalog);
   return (
     <section className="setup-step" aria-labelledby="setup-step-title">
-      <h2 id="setup-step-title" tabIndex={-1}>{t("Checking this PC…")}</h2>
+      <h1 id="setup-step-title" tabIndex={-1}>{t("Checking this PC…")}</h1>
       <p className="setup-lead">{t("Looking for AI coding helpers that are already installed.")}</p>
       {lines.length > 0 && (
         <ul className="setup-check" aria-busy={catalog === null}>
@@ -214,7 +224,7 @@ function CheckFailed({ error, onLookAgain }: { error: string | null; onLookAgain
   const t = useT();
   return (
     <section className="setup-step" aria-labelledby="setup-step-title">
-      <h2 id="setup-step-title" tabIndex={-1}>{t("Couldn't check this PC")}</h2>
+      <h1 id="setup-step-title" tabIndex={-1}>{t("Couldn't check this PC")}</h1>
       {error !== null && <p className="setup-error" role="alert">{error}</p>}
       <div className="setup-actions">
         <button type="button" className="btn btn-primary" onClick={onLookAgain}><RotateCw aria-hidden="true" />{t("Look again")}</button>
@@ -299,7 +309,7 @@ function AgentsScreen({ catalog, ready, machineId, onInstalled, onLookAgain, onO
     } catch (reason: unknown) {
       if (!alive.current) return;
       setOpening(false);
-      setError(userErrorMessage(reason).message);
+      setError(userFailure(reason).kind === "unknown" ? t("Couldn't open the workspace. Try again.") : userErrorMessage(reason).message);
     }
   };
 
@@ -314,13 +324,13 @@ function AgentsScreen({ catalog, ready, machineId, onInstalled, onLookAgain, onO
         <div className="setup-done-head">
           <Check aria-hidden="true" />
           <div>
-            <h2 id="setup-step-title" tabIndex={-1}>{t("You're set up")}</h2>
+            <h1 id="setup-step-title" tabIndex={-1}>{t("You're set up")}</h1>
             <p className="setup-lead">{t("Ovis found these on this PC. Start opens your first project with the one picked.")}</p>
           </div>
         </div>
       ) : (
         <>
-          <h2 id="setup-step-title" tabIndex={-1}>{t("Pick an AI coding helper")}</h2>
+          <h1 id="setup-step-title" tabIndex={-1}>{t("Pick an AI coding helper")}</h1>
           <p className="setup-lead">{t("Nothing is installed until you tap Install.")}</p>
         </>
       )}
@@ -444,7 +454,7 @@ function RelayBox({ relay, auth, closesGate, onPaired, onOther }: { relay: Relay
           <p className="setup-phone-relay-lead">{t("Your phone's camera scans a QR code and reaches this PC from anywhere. End-to-end encrypted, nothing to install.")}</p>
           {closesGate && <p className="setup-muted">{t("Turning on the relay closes the device gate: a new browser then needs a pairing code or the access token.")}</p>}
           <div className="setup-actions">
-            <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void start()}><Smartphone aria-hidden="true" />{t("Turn on the Ovis relay")}</button>
+            <button type="button" className="btn" disabled={busy} onClick={() => void start()}><Smartphone aria-hidden="true" />{t("Turn on the Ovis relay")}</button>
           </div>
         </>
       )}
@@ -560,7 +570,7 @@ function PhoneQr({ auth, onOpenSettings, onPaired }: { auth: HealthAuth | null; 
       if (!live) return;
       before.current = new Set([...first, ...after].map((device) => device.id));
       setCode(fresh);
-    })().catch((error: unknown) => { if (live) { setCode(null); setFailure(error instanceof UnconfirmedPairing ? t("Could not confirm this browser is paired. Check that cookies are enabled, then try again.") : userErrorMessage(error).message); } }).finally(() => { if (live) setRequesting(false); });
+    })().catch((error: unknown) => { if (live) { setCode(null); setFailure(error instanceof UnconfirmedPairing ? t("Could not confirm this browser is paired. Check that cookies are enabled, then try again.") : userFailure(error).kind === "unknown" ? t("Couldn't prepare phone pairing. Try again.") : userErrorMessage(error).message); } }).finally(() => { if (live) setRequesting(false); });
     return () => { live = false; };
   }, [ready, asking]);
   useEffect(() => {

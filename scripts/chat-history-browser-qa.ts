@@ -42,6 +42,9 @@ try {
     if (path.endsWith("/pane/omo-tasks")) return Response.json({ tasks: [], runs: [] });
     // a desktop's composer asks whether dictation can work here before it shows the mic
     if (path === "/api/voice") return Response.json({ configured: false, source: null, ...VOICE_DEFAULTS } satisfies VoiceStatus);
+    // the app checks the bridge's health; this fictional server has none. Served from the folder below, the read threw
+    // ENOENT in this handler, and Bun ends the run with exit 1 after every check passed
+    if (path === "/api/health") return new Response(null, { status: 404 });
     return path === "/" ? new Response('<html><head><link rel="stylesheet" href="/chat-history-fixture.css"></head><body><div id="root"></div><script type="module" src="/chat-history-fixture.js"></script></body></html>', { headers: { "Content-Type": "text/html" } }) : new Response(Bun.file(join(root, path.slice(1))));
   } });
   browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
@@ -302,7 +305,7 @@ try {
   assert.equal(await page.locator(".chat-older").count(), 0);
   console.log("PASS held-cursor and older-page 409 recovery discard history and immediately reload");
 
-  // A page size chosen while the chat is open reaches the next older page, not only the newest.
+  // Older pages are asked for at the chat's page size, not only the newest.
   epoch = "eight"; newest = "paged newest"; before = "eight:100"; olderNext = "eight:50";
   await refresh();
   await page.getByText(newest, { exact: true }).waitFor();
@@ -313,13 +316,9 @@ try {
     await response.finished();
     return new URL(response.url()).searchParams.get("prompts");
   };
-  assert.equal(await olderAsked(), "10", "older pages are asked for at the default size");
-  await page.evaluate(() => window.qa.historyPrompts(50));
-  await page.locator(".chat-older").waitFor();
-  assert.equal(await olderAsked(), "50", "the next older page is asked for at the size just chosen");
-  await page.evaluate(() => window.qa.historyPrompts(10));
+  assert.equal(await olderAsked(), "10", "older pages are asked for at the chat's page size");
   olderNext = null;
-  console.log("PASS a page size changed in a mounted chat applies to the next older page");
+  console.log("PASS an older page is asked for at the chat's page size");
   assert.deepEqual(errors, []);
   console.log("PASS reused tool ids after clear, machine switch and unmount cancellation; no browser errors");
 

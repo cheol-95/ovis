@@ -41,6 +41,14 @@ const openFiles = async (page: import("playwright-core").Page) => {
 // read back first holds still: the follow undid one in looped runs. Steps that check history and
 // presentation, not pointer targeting, wait for the chat and activate the link where it is.
 const transcriptSettled = (page: Page) => page.locator(".chat-frame[data-pane-content]").waitFor({ state: "attached" });
+// A reload opens the chat where the reader left it (chatScrollMemory): one who clicked a link above the
+// end comes back there, and the chat presents nothing away from the end. The reloads before a step that
+// waits for the chat are a following reader's: the end, once the chat remembers it.
+const reloadFollowingEnd = async (page: Page): Promise<void> => {
+  await page.evaluate(() => { for (const node of document.querySelectorAll(".chat-view")) node.scrollTop = node.scrollHeight; });
+  await page.waitForFunction(() => (JSON.parse(sessionStorage.getItem("ovis:chat-positions") ?? "[]") as [string, { atEnd: boolean }][]).every(([, place]) => place.atEnd));
+  await page.reload();
+};
 const activateInTranscript = async (page: Page, link: Locator): Promise<void> => {
   await transcriptSettled(page);
   await link.dispatchEvent("click");
@@ -87,6 +95,18 @@ writeFileSync(transcript, [
 const db = new Database(join(codexHome, "state_5.sqlite"));
 db.exec("CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, archived INTEGER, agent_role TEXT, created_at INTEGER, updated_at INTEGER, source TEXT, first_user_message TEXT)");
 db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, 1, 1, 'cli', ?)").run(thread, transcript, root, "Show me the demo video.");
+// a second folder with a notes.txt of its own: its pane's ./notes.txt is a file of the same path as the first pane's
+const side = join(root, "side");
+mkdirSync(side);
+writeFileSync(join(side, "notes.txt"), "Side pane notes\n");
+const sideThread = "01a0c7a1-56d9-7e20-9f08-f7a2d973bc12";
+const sideTranscript = join(codexHome, "sessions", `rollout-2026-09-28T00-00-01-${sideThread}.jsonl`);
+writeFileSync(sideTranscript, [
+  { type: "session_meta", payload: { id: sideThread, cwd: side } },
+  { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Where are the side notes?" }] } },
+  { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: "Open [side notes](./notes.txt)." }] } },
+].map((row) => JSON.stringify(row)).join("\n"));
+db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, 1, 1, 'cli', ?)").run(sideThread, sideTranscript, side, "Where are the side notes?");
 db.close();
 const standIn = join(root, "codex");
 writeFileSync(standIn, "#!/bin/sh\nsleep 600\n");
@@ -172,6 +192,8 @@ writeFileSync(join(root, "broken.png"), "not PNG bytes");
 let workspace: string | undefined;
 // a second workspace, for the pane moves of the docked block alone
 let otherWorkspace: string | undefined;
+// a third, in a folder of its own, for two files of the same path on two panes
+let sideWorkspace: string | undefined;
 let server: ReturnType<typeof createServer> | undefined;
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 
@@ -191,7 +213,7 @@ try {
     await Bun.sleep(50);
   }
   await herdrRpc("pane.report_agent", { pane_id: pane, source: "manual", agent: "codex", state: "idle", agent_session_path: transcript });
-  server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state"), codexHome });
+  server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state"), codexHome, tailnetPcs: { readStatus: async () => null }, sshCandidates: { sshDir: join(root, "no-ssh"), readStatus: async () => null } });
   const origin = `http://127.0.0.1:${server.port}`;
   browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
@@ -448,8 +470,13 @@ try {
   await page.keyboard.press("ControlOrMeta+Shift+Comma");
   const settingsOverPreview = page.getByRole("dialog", { name: "Settings", exact: true });
   await settingsOverPreview.waitFor();
-  await openSettingsPage(page, "Remote PCs");
-  await settingsOverPreview.getByRole("button", { name: "Add PC", exact: true }).click();
+  await openSettingsPage(page, "Devices and PCs");
+  // Add PC opens from Add a connection's SSH tab, with the address typed there
+  await settingsOverPreview.getByRole("button", { name: "Add a connection", exact: true }).click();
+  const connectDevice = page.getByRole("dialog", { name: "Add a connection", exact: true });
+  await connectDevice.locator('.connect-tabs [data-tab="ssh"]').click();
+  await connectDevice.getByLabel("Or type an SSH address", { exact: true }).fill("qa@pc.invalid");
+  await connectDevice.locator(".connect-ssh-form").getByRole("button", { name: "Add", exact: true }).click();
   const addPc = page.locator("dialog.machine-dialog");
   await addPc.waitFor();
   await settingsOverPreview.waitFor({ state: "hidden" });
@@ -539,7 +566,7 @@ try {
       const { fileOpen: _, ...settings } = JSON.parse(localStorage.getItem("ovis:settings") ?? "{}") as Record<string, unknown>;
       localStorage.setItem("ovis:settings", JSON.stringify(fileOpen === null ? settings : { ...settings, fileOpen }));
     }, fileOpen);
-    await page.reload();
+    await reloadFollowingEnd(page);
   };
   // with Open files at its default, even text opens in the popup; Beside the pane is a choice
   await setFileOpen(null);
@@ -625,7 +652,7 @@ try {
   assert.ok(Math.abs(stored - (before + 100)) <= 2, `dragging the edge 100px widens the panel 100px: ${before} -> ${stored}`);
   await page.waitForFunction((want) => Math.abs((document.querySelector("aside.file-panel")?.getBoundingClientRect().width ?? 0) - want) <= 1, stored);
   // a reload restores the file from its entry, at the stored width
-  await page.reload();
+  await reloadFollowingEnd(page);
   await panel.getByText("File preview history regression", { exact: true }).waitFor();
   assert.ok(Math.abs(await panelWidth() - stored) <= 1, `a reload keeps the dragged width: ${await panelWidth()} vs ${stored}`);
   // a double-click on the edge puts the default width back and forgets the stored one, so the
@@ -835,10 +862,140 @@ try {
   await page.goBack();
   await page.waitForFunction((paneId) => new URLSearchParams(location.search).get("pane") === paneId, pane);
   await videoLink.waitFor();
+
+  // Reopen files on return (#3179): the file's entry keeps it under the move, Back shows it again on
+  // its pane, and a switch back from the sidebar opens it over the move's entry as an entry of its own
+  const setReopen = async (on: boolean) => {
+    await page.evaluate((on) => {
+      const { reopenFileOnReturn: _, ...settings } = JSON.parse(localStorage.getItem("ovis:settings") ?? "{}") as Record<string, unknown>;
+      localStorage.setItem("ovis:settings", JSON.stringify(on ? { ...settings, reopenFileOnReturn: true } : settings));
+    }, on);
+    await reloadFollowingEnd(page);
+    await videoLink.waitFor();
+    if (await showSidebar.count()) await showSidebar.click();
+    await rowOf(otherPane).waitFor();
+  };
+  const onPane = (paneId: string) => page.waitForFunction((paneId) => new URLSearchParams(location.search).get("pane") === paneId, paneId);
+  const fileEntry = () => page.evaluate(() => (history.state?.["ovis:file-preview"] as { paneId?: string } | undefined)?.paneId ?? null);
+  await setReopen(true);
+  // the pane's own entry: the moves below go back to it, so the steps after them start from it again
+  const entryIndex = () => page.evaluate(() => (window as unknown as { navigation: { currentEntry: { index: number } } }).navigation.currentEntry.index);
+  const startIndex = await entryIndex();
+  await notesLink.press("Enter");
+  await panel.getByText("File preview history regression", { exact: true }).waitFor();
+  const keptLength = await page.evaluate(() => history.length);
+  await rowOf(otherPane).click();
+  await onPane(otherPane);
+  await panel.waitFor({ state: "detached", timeout: 5_000 }).catch(() => {});
+  assert.equal(await panel.count(), 0, "with Reopen files on return, the file still closes on a switch to another tab");
+  assert.equal(await page.evaluate(() => history.length), keptLength + 1, "the move is pushed over the file's entry, which keeps the file");
+  assert.equal(await fileEntry(), null, "the other pane's entry holds no file");
+  await page.goBack();
+  await onPane(pane);
+  await panel.getByText("File preview history regression", { exact: true }).waitFor();
+  assert.equal(await fileEntry(), pane, "Back to the first tab shows its file again from its own entry");
+  await rowOf(otherPane).click();
+  await onPane(otherPane);
+  await panel.waitFor({ state: "detached", timeout: 5_000 }).catch(() => {});
+  await rowOf(pane).click();
+  await onPane(pane);
+  await panel.getByText("File preview history regression", { exact: true }).waitFor();
+  assert.equal(await fileEntry(), pane, "a switch back from the sidebar opens the file on an entry of its own");
+  await panel.getByRole("button", { name: "Close file", exact: true }).click();
+  await panel.waitFor({ state: "detached" });
+  assert.equal(await selectedPane(), pane, "closing the reopened file steps back onto the move's entry, on the same pane");
+  assert.equal(await fileEntry(), null, "Close leaves no file entry");
+  await rowOf(otherPane).click();
+  await onPane(otherPane);
+  await rowOf(pane).click();
+  await onPane(pane);
+  await videoLink.waitFor();
+  await panel.waitFor({ state: "attached", timeout: 1_000 }).catch(() => {});
+  assert.equal(await panel.count(), 0, "a file closed on its tab stays closed on the next return");
+  const steps = startIndex - await entryIndex();
+  await page.evaluate((steps) => { history.go(steps); }, steps);
+  await page.waitForFunction((startIndex) => (window as unknown as { navigation: { currentEntry: { index: number } } }).navigation.currentEntry.index === startIndex, startIndex);
+  await onPane(pane);
+  await setReopen(false);
+  assert.equal(await fileEntry(), null, "back on the pane's own entry, which holds no file");
+  console.log("PASS Reopen files on return: Back and a sidebar switch show the file again; one closed on its tab stays closed");
+
+  // two panes with a file of the same path (each pane's ./notes.txt): coming back to one shows its own
+  // file, never the other pane's content kept by a viewer the switch reused (#3185 review)
+  const sideCreated = await workspaceCreate({ cwd: side, label: "ovis-test-file-back-side" });
+  sideWorkspace = sideCreated.workspace.workspace_id;
+  const sidePane = sideCreated.root_pane.pane_id;
+  await herdrRpc("pane.send_text", { pane_id: sidePane, text: `${standIn} resume ${sideThread}\n` });
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const info = await herdrRpc<{ process_info?: { foreground_processes?: { argv?: string[] }[] } }>("pane.process_info", { pane_id: sidePane });
+    if (info.process_info?.foreground_processes?.some((process) => process.argv?.includes(standIn))) break;
+    if (attempt === 99) throw new Error("side test Codex process did not start");
+    await Bun.sleep(50);
+  }
+  await herdrRpc("pane.report_agent", { pane_id: sidePane, source: "manual", agent: "codex", state: "idle", agent_session_path: sideTranscript });
+  await setReopen(true);
+  await rowOf(sidePane).waitFor();
+  const sameStart = await entryIndex();
+  const sideNotes = page.getByRole("button", { name: "side notes", exact: true });
+  await rowOf(sidePane).click();
+  await onPane(sidePane);
+  await activateInTranscript(page, sideNotes);
+  await panel.getByText("Side pane notes", { exact: true }).waitFor();
+  await rowOf(pane).click();
+  await onPane(pane);
+  await activateInTranscript(page, notesLink);
+  await panel.getByText("File preview history regression", { exact: true }).waitFor();
+  // the viewer showing the first pane's file is marked: a viewer the switch reused would keep that
+  // file's loaded content, and show it for the side pane's file until it read its own
+  await panel.evaluate((element) => { (element as HTMLElement & { firstPaneViewer?: boolean }).firstPaneViewer = true; });
+  await rowOf(sidePane).click();
+  await onPane(sidePane);
+  await panel.getByText("Side pane notes", { exact: true }).waitFor();
+  assert.equal(await panel.evaluate((element) => (element as HTMLElement & { firstPaneViewer?: boolean }).firstPaneViewer === true), false, "the side pane's file of the same path opens in a viewer of its own");
+  assert.equal(await panel.getByText("File preview history regression", { exact: true }).count(), 0, "the side pane's file shows none of the first pane's content");
+  await panel.getByRole("button", { name: "Close file", exact: true }).click();
+  await panel.waitFor({ state: "detached" });
+  await page.evaluate((steps) => { history.go(steps); }, sameStart - await entryIndex());
+  await page.waitForFunction((index) => (window as unknown as { navigation: { currentEntry: { index: number } } }).navigation.currentEntry.index === index, sameStart);
+  await onPane(pane);
+  await setReopen(false);
+  await workspaceClose(sideWorkspace);
+  sideWorkspace = undefined;
+  await rowOf(sidePane).waitFor({ state: "detached" });
+  console.log("PASS two panes with a file of the same path: coming back to one shows its own file");
+
+  // a Forward onto a file's entry whose pane has closed since selects no pane of the file's: the file
+  // is left behind at once, not kept over a pane it is not from (#3185 review)
+  const goTo = async (index: number) => {
+    await page.evaluate((steps) => { history.go(steps); }, index - await entryIndex());
+    await page.waitForFunction((index) => (window as unknown as { navigation: { currentEntry: { index: number } } }).navigation.currentEntry.index === index, index);
+  };
+  const paneIndex = await entryIndex();
+  await rowOf(otherPane).click();
+  await onPane(otherPane);
+  await openFiles(page);
+  await filesDialog.getByRole("button", { name: /notes\.txt/ }).click();
+  await filesDialog.waitFor({ state: "detached" });
+  await panel.getByText("File preview history regression", { exact: true }).waitFor();
+  assert.equal(await fileEntry(), otherPane, "the other pane's file is on its own entry");
+  const otherFileIndex = await entryIndex();
+  await page.goBack();
+  await panel.waitFor({ state: "detached" });
+  await goTo(paneIndex);
+  await onPane(pane);
+
   await workspaceClose(otherWorkspace);
   otherWorkspace = undefined;
   await rowOf(otherPane).waitFor({ state: "detached" });
   assert.equal(await selectedPane(), pane, "closing the other workspace leaves the selection on the pane");
+  await goTo(otherFileIndex);
+  await page.waitForFunction(() => history.state?.["ovis:file-preview"] === undefined, undefined, { timeout: 5_000 }).catch(() => {});
+  assert.equal(await fileEntry(), null, "the closed pane's file is released from the entry Forward landed on");
+  assert.equal(await panel.count(), 0, "the closed pane's file is not shown over another pane");
+  // back to the pane's own entry, so the steps after this one start from it again
+  await goTo(paneIndex);
+  await onPane(pane);
+  console.log("PASS Forward onto a closed pane's file entry leaves the file behind");
 
   // The actual App and server, with a readable file in the owned pane's repository.
   for (const width of [1280, 980, 979]) {
@@ -895,7 +1052,7 @@ try {
   await page.getByRole("button", { name: "notes", exact: true }).click();
   const notes = page.getByRole("dialog", { name: "notes.txt", exact: true });
   await notes.getByText("File preview history regression", { exact: true }).waitFor();
-  await page.reload();
+  await reloadFollowingEnd(page);
   await notes.getByText("File preview history regression", { exact: true }).waitFor();
   await page.goBack();
   await notes.waitFor({ state: "hidden" });
@@ -951,13 +1108,13 @@ try {
   });
   const chatText = await textStyle(".chat-transcript .chat-turn-agent .markdown");
   const previewText = await textStyle(".file-viewer-markdown");
-  // --fs-chat (15px), the size of prose read at length, at the chat's scale, 17 / 14
-  assert.ok(Math.abs(Number.parseFloat(chatText.fontSize) - 15 * 17 / 14) < 0.05, `the chat font size is applied in the chat: ${chatText.fontSize}`);
+  // a finger's screen reads the chat's prose one step up, --fs-lg (16px), at the chat's scale, 17 / 14
+  assert.ok(Math.abs(Number.parseFloat(chatText.fontSize) - 16 * 17 / 14) < 0.05, `the chat font size is applied in the chat: ${chatText.fontSize}`);
   assert.match(chatText.fontFamily, /^Georgia,/);
   assert.equal(previewText.fontSize, chatText.fontSize, "the preview's text has the chat's font size");
   assert.equal(previewText.fontFamily, chatText.fontFamily, "the preview's text has the chat's font");
-  // --fs-xl (18px) at the chat's scale, 17 / 14
-  assert.ok(Math.abs(Number.parseFloat(previewText.headingSize ?? "") - 18 * 17 / 14) < 0.05, `its headings scale with it: ${previewText.headingSize}`);
+  // --md-h1-size (30px) at the chat's scale, 17 / 14
+  assert.ok(Math.abs(Number.parseFloat(previewText.headingSize ?? "") - 30 * 17 / 14) < 0.05, `its headings scale with it: ${previewText.headingSize}`);
   assert.equal(await page.locator(".file-viewer-markdown").evaluate((element) => getComputedStyle(element).maxWidth), "820px", "Default is the chat's Default lane");
   // on a wide screen the Default lane follows the pane (71.43% of it, up to 60rem): the preview
   // follows with it, as wide as the chat beside it, not the 820px floor. The file is a panel beside
@@ -1068,7 +1225,7 @@ try {
     const settings = JSON.parse(localStorage.getItem("ovis:settings") ?? "{}") as Record<string, unknown>;
     localStorage.setItem("ovis:settings", JSON.stringify({ ...settings, wrapCode: true }));
   });
-  await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
+  await reloadFollowingEnd(page);
   await page.locator(".conn-live").waitFor();
   // the reloaded chat's follow to its end can take the link from under a pointer
   await activateInTranscript(page, page.getByRole("button", { name: "big code", exact: true }));
@@ -1365,8 +1522,15 @@ try {
       // nor does the document's own tab, for a PC that is not set up here
       const readerPage = await ownerContext.newPage();
       await readerPage.goto(`${origin}/?read=${encodeURIComponent(markdownPath)}&machine=${target}`);
-      await readerPage.locator(".file-reader .file-viewer-note").waitFor();
+      // The settled alert names the offline PC (503 machine_offline), without a generic error above it.
+      await readerPage.locator(".file-reader .file-viewer-note[role=alert]").waitFor();
+      assert.deepEqual(await readerPage.locator(".file-reader .file-viewer-note").allTextContents(), ["That PC is not reachable right now."]);
       assert.equal(fileRequests.some((path) => path.startsWith("/api/fs/")), false, "the reader never reads the local file for another PC");
+      const rawLink = await readerPage.getByRole("link", { name: "Open raw file", exact: true }).getAttribute("href");
+      assert.ok(rawLink, "the offline reader keeps its raw-file recovery route");
+      const rawUrl = new URL(rawLink, origin);
+      assert.equal(rawUrl.pathname, "/api/machines/missing-fixture/fs/file", "recovery stays on the file's PC");
+      assert.equal(rawUrl.searchParams.get("path"), markdownPath, "recovery keeps the requested file");
       await readerPage.close();
     } else {
       await ownerPage.locator(".file-viewer-markdown").getByRole("heading", { name: "Markdown preview", exact: true }).waitFor();
@@ -1549,7 +1713,8 @@ try {
   await page.getByRole("button", { name: "notes", exact: true }).click();
   const refused = page.getByRole("dialog", { name: "notes.txt", exact: true });
   await refused.getByRole("alert").waitFor();
-  assert.equal(await refused.getByRole("alert").innerText(), "The file could not be opened.");
+  // a PC dropped mid-read keeps its machine code (lib/fileFailure.ts): the alert names the PC as away
+  assert.equal(await refused.getByRole("alert").innerText(), "That PC is not reachable right now.");
   assert.equal(await refused.getByText("machine_unavailable").count(), 0);
   assert.equal(await refused.locator(".file-viewer-text").count(), 0);
   console.log("PASS A file whose body is refused shows an error, not the error's JSON");
@@ -1892,6 +2057,7 @@ try {
   reportServer.stop(true);
   server?.stop();
   if (otherWorkspace) await workspaceClose(otherWorkspace);
+  if (sideWorkspace) await workspaceClose(sideWorkspace);
   if (workspace) await workspaceClose(workspace);
   rmSync(root, { recursive: true, force: true });
 }

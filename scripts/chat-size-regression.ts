@@ -9,6 +9,8 @@ import { createServer } from "../server/index.ts";
 import { PtySession } from "../server/pty/session.ts";
 import { herdrRpc, herdrSocketPath, type WorkspaceCreateResult, paneRead, paneSendKeys, paneSendText, tabCreate, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import { chromePath } from "./chrome-path.ts";
+import { shownRow, shownRows } from "./shown-rows.ts";
+import { clickTab } from "./tab-pick.ts";
 
 /** how long a resize that should not happen gets to show up */
 const NO_RESIZE_WAIT_MS = 400;
@@ -163,8 +165,8 @@ export async function checkChatKeepsTerminalSize(browser: Browser, origin: strin
     console.log(`PASS a phone's chat lens leaves the shared grid at the desktop's ${desktopSize}`);
 
     // the phone's terminal lens fits the grid to the phone: the shell sees it change
-    // on a phone the lens switch shows no label: the button is known by its title
-    await phone.locator('button[title^="Live terminal"]').tap();
+    // On a phone the label is hidden, but the lens keeps its accessible name.
+    await phone.locator(".view-switch").getByRole("button", { name: "Terminal", exact: true }).tap();
     await phone.waitForFunction(() => (window as unknown as { frames_: { dir: string; type: string }[] }).frames_.some((f) => f.dir === "out" && f.type === "resize"), undefined, { timeout: 10_000 });
     const deadline = Date.now() + 10_000;
     let phoneSize = desktopSize;
@@ -206,7 +208,7 @@ export async function checkChatKeepsTerminalSize(browser: Browser, origin: strin
       socket.addEventListener("message", receive);
     }, desktopSize.split(" ").map(Number));
     const chatAt = Date.now();
-    await phone.locator('button[title^="Chat transcript"]').tap();
+    await phone.locator(".view-switch").getByRole("button", { name: "Chat", exact: true }).tap();
     const restoredAt = await desktop.evaluate(() => (window as unknown as { gridRestored_: Promise<number> }).gridRestored_);
     assert.ok(restoredAt - chatAt <= 1_000, "phone Chat restores the visible desktop grid within 1 s");
     // pane-geometry announces the resize before the sidecar applies it to herdr's pty.
@@ -216,7 +218,7 @@ export async function checkChatKeepsTerminalSize(browser: Browser, origin: strin
     assert.equal(restoredSize, desktopSize, "the unfocused desktop's grid is restored in the real pty");
     assert.ok(Date.now() - chatAt <= 1_000, "the real pty restores the desktop grid within 1 s");
     console.log(`PASS phone Chat restores the visible unfocused desktop's ${desktopSize}`);
-    await phone.locator('button[title^="Live terminal"]').tap();
+    await phone.locator(".view-switch").getByRole("button", { name: "Terminal", exact: true }).tap();
     let reclaimedSize = "";
     const reclaimDeadline = Date.now() + 10_000;
     while (Date.now() < reclaimDeadline && reclaimedSize !== phoneSize) reclaimedSize = await size();
@@ -225,10 +227,10 @@ export async function checkChatKeepsTerminalSize(browser: Browser, origin: strin
     // the desktop's terminal lens ignored that resize: it drives the grid itself. Entering the chat
     // lens, its hidden screen takes the grid the pty has now, since what the chat reads there (a
     // masked prompt) is drawn for the phone's grid. xterm's DOM renderer keeps one element a row.
-    const hiddenRows = () => desktop.locator(".pane-terminal .xterm-rows > div").count();
+    const hiddenRows = () => desktop.locator(shownRow()).count();
     const phoneRows = Number(phoneSize.split(" ")[0]);
     assert.notEqual(await hiddenRows(), phoneRows, "the desktop's terminal lens kept its own grid");
-    await desktop.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
+    await desktop.locator(".view-switch").getByRole("button", { name: "Chat", exact: true }).click();
     await desktop.locator(".terminal-stack.is-chat").waitFor({ state: "attached" });
     const adopted = Date.now() + 10_000;
     while (await hiddenRows() !== phoneRows && Date.now() < adopted) await Bun.sleep(100);
@@ -693,6 +695,8 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
         }
         page = await openRecording(browser, contexts, origin, scenario === "held" ? heldPane : first,
           { viewport: { width: 1000, height: 700 } }, { language: "en", defaultView: queueScenario ? "chat" : "terminal",
+            // These scenarios exercise the automatic queue, which is off until chosen.
+            autoSendQueued: queueScenario,
             releasePaneAway: scenario === "mount-optin" || (!fresh && !reconnect && scenario !== "switch" && scenario !== "idle-off") },
           fresh, async (recording) => {
             // a tab in use from its first attach, on the page clock from the start: its quiet spell is counted there
@@ -776,7 +780,7 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
             // the command line does not spell the prompt: only the prompt itself puts "Password:" on screen
             await paneSendText(first, "read -s -p \"$(printf 'Pass%s: ' word)\" x");
             await paneSendKeys(first, ["Enter"]);
-            const drawn = (): Promise<boolean> => idlePage.evaluate(() => document.querySelector(".xterm-rows")?.textContent?.includes("Password:") ?? false);
+            const drawn = (): Promise<boolean> => idlePage.evaluate((shown) => document.querySelector(shown)?.textContent?.includes("Password:") ?? false, shownRows());
             const promptDeadline = Date.now() + 10_000;
             // the paused clock lets the watched view parse and draw only as it is advanced (no resume has started yet)
             while (!(await drawn()) && Date.now() < promptDeadline) await page.clock.runFor(100);
@@ -935,7 +939,7 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
           const extra = await tabCreate({ workspaceId: workspaces[0]!, label: "Mirror cache" });
           const before = wire.length;
           // When it becomes cached, presentation effects must not release the mirror.
-          await page.locator(`[role="tab"][data-tab-id="${extra.tab.tab_id}"]`).evaluate((button: HTMLElement) => button.click());
+          await clickTab(page, extra.tab.tab_id, true);
           await page.locator(`.pane-frame.is-hidden[data-layout-pane="${first}"]`).waitFor({ state: "attached" });
           await page.clock.runFor(0);
           await waitWire("in", "input-ready", 2);
@@ -1016,7 +1020,7 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
               assert.ok(page);
               const tab = tabs.get(pane);
               assert.ok(tab);
-              await page.locator(`[role="tab"][data-tab-id="${tab}"]`).evaluate((button: HTMLElement) => button.click());
+              await clickTab(page, tab, true);
               await page.locator(`.pane-frame.is-current[data-layout-pane="${pane}"]`).waitFor();
               await page.clock.runFor(0);
             };
@@ -1071,7 +1075,7 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
             });
             await waitWire("in", "input-ready", 2);
             await page.clock.runFor(50);
-            assert.equal((await page.locator(".xterm-rows").textContent() ?? "").includes("STALE-SUBSCRIPTION"), false,
+            assert.equal((await page.locator(shownRows()).textContent() ?? "").includes("STALE-SUBSCRIPTION"), false,
               "resume resets after pending writes, before the new attachment stream");
             holdOutput = false;
             for (const deliver of heldOutput) deliver();

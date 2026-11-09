@@ -17,7 +17,7 @@ import { VOICE_MAX_SECONDS, type VoiceMode } from "../../shared/voice.ts";
 function errorNote(t: Translate, error: VoiceError | VoiceUnavailable): string | null {
   switch (error) {
     case "insecure": return t("Voice input needs HTTPS");
-    case "permission": return t("Microphone permission was denied");
+    case "permission": return t("Microphone access was denied; allow it in the browser's site settings (the icon beside the address bar), or type your message instead.");
     case "no_mic": return t("No microphone found");
     case "speech_unavailable": return t("Speech recognition is off or unavailable on this device");
     case "not_configured": return t("Add an OpenAI API key in Settings > Voice input");
@@ -144,19 +144,26 @@ export function useDictation(options: DictationOptions): Dictation {
   }, [t]);
 
   // An answer that lands while an IME is composing (a Hangul syllable half typed) would rewrite the
-  // box under the composition and break it: it waits for compositionend, in arrival order.
+  // box under the composition and break it: it waits for compositionend, in arrival order. Only
+  // a composition something was typed into holds it: Android keyboards (HeliBoard, Gboard) also
+  // open one on the word at the caret with nothing typed, until the next key (#2488), and Chrome
+  // raises compositionstart and compositionupdate for that but no input.
+  const open = useRef(false);
   const composing = useRef(false);
   const held = useRef<VoiceText[]>([]);
   const onText = useCallback((result: VoiceText): void => {
-    if (composing.current) held.current.push(result);
+    // behind what is still held, so a polish never lands before the raw text it rewrites
+    if (composing.current || held.current.length > 0) held.current.push(result);
     else apply(result);
   }, [apply]);
 
   useEffect(() => {
     const element = options.box.current;
     if (!element) return;
-    const start = (): void => { composing.current = true; };
+    const start = (): void => { open.current = true; };
+    const typed = (): void => { if (open.current) composing.current = true; };
     const end = (): void => {
+      open.current = false;
       composing.current = false;
       // after the input event that commits the syllable, so read() already holds it
       setTimeout(() => {
@@ -166,9 +173,11 @@ export function useDictation(options: DictationOptions): Dictation {
       }, 0);
     };
     element.addEventListener("compositionstart", start);
+    element.addEventListener("input", typed);
     element.addEventListener("compositionend", end);
     return () => {
       element.removeEventListener("compositionstart", start);
+      element.removeEventListener("input", typed);
       element.removeEventListener("compositionend", end);
     };
   }, [options.box, apply]);
@@ -232,7 +241,7 @@ export function useDictation(options: DictationOptions): Dictation {
 }
 
 /** The mic: press to talk, held (release finishes) or tapped (tap again to finish). */
-export function MicButton({ dictation, className = "" }: { dictation: Dictation; className?: string }) {
+export function MicButton({ dictation, className = "", disabled = false }: { dictation: Dictation; className?: string; disabled?: boolean }) {
   const t = useT();
   const { voice, connected, press } = dictation;
   const recording = voice.state === "starting" || voice.state === "recording";
@@ -259,7 +268,7 @@ export function MicButton({ dictation, className = "" }: { dictation: Dictation;
         aria-label={label}
         aria-pressed={recording}
         title={reason ?? label}
-        disabled={!voice.available || !connected}
+        disabled={disabled || !voice.available || !connected}
         onPointerDown={(event) => {
           if (event.button !== 0) return;
           // focus and the soft keyboard stay where they are

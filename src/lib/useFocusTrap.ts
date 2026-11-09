@@ -7,6 +7,7 @@
  * when it can hold the focus itself (a dialog whose controls are all disabled while it works).
  */
 import { useEffect, useLayoutEffect, useRef, type MutableRefObject, type RefObject } from "react";
+import { typeAheadFocused } from "./typeAhead.ts";
 
 /** Tab stops in DOM order; what a user reaches with Tab inside the surface. */
 const FOCUSABLE = [
@@ -31,16 +32,26 @@ export interface FocusTrapOptions {
   shouldRestore?: () => boolean;
   /** suspend keyboard ownership while another surface covers this one */
   paused?: boolean;
+  /** controls outside the surface that belong to it, before its own stops in the Tab order (a phone drawer's header toggle and +) */
+  leadingStops?: () => readonly HTMLElement[];
+  /** the surface itself (tabIndex -1) gets the focus on open, so no control shows a focus ring a finger did not ask
+   *  for and no text field raises a phone's keyboard; Tab goes on to the first stop (a phone's drawer) */
+  startOnSurface?: boolean;
 }
 
-/** The tab stops a user can actually land on, in order: rendered, and not disabled or skipped. */
-function tabStops(surface: HTMLElement): HTMLElement[] {
-  return [...surface.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((node) => {
-    if (node.hasAttribute("disabled") || node.getAttribute("aria-hidden") === "true") return false;
-    if (node.tabIndex < 0) return false;
-    // hidden ancestors and collapsed sections report no box at all
-    return node.getClientRects().length > 0;
-  });
+/** A stop a user can actually land on: rendered, and not disabled or skipped. */
+function reachable(node: HTMLElement): boolean {
+  if (node.hasAttribute("disabled") || node.getAttribute("aria-hidden") === "true") return false;
+  if (node.tabIndex < 0) return false;
+  // a disconnected PC's cached rows are inert: the browser refuses them the focus, so Tab must not stop there
+  if (node.closest("[inert]") !== null) return false;
+  // hidden ancestors and collapsed sections report no box at all
+  return node.getClientRects().length > 0;
+}
+
+/** The tab stops in order: the ones outside the surface that belong to it, then its own. */
+function tabStops(surface: HTMLElement, options: FocusTrapOptions): HTMLElement[] {
+  return [...(options.leadingStops?.() ?? []), ...surface.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(reachable);
 }
 
 /**
@@ -64,6 +75,16 @@ export function nativeModalOver(surface: HTMLElement | null): boolean {
   return false;
 }
 
+/**
+ * The keyboard is in another `aria-modal` surface than this one. Window and document listeners run in the order
+ * they were added, not the order the dialogs are drawn in, so a dialog beneath leaves this Escape to the one in
+ * front, the one with the focus (#3037).
+ */
+export function focusInOtherModal(surface: HTMLElement | null): boolean {
+  const focused = document.activeElement?.closest("[aria-modal='true']");
+  return focused != null && focused !== surface;
+}
+
 export function useFocusTrap<T extends HTMLElement>(open: boolean, options: FocusTrapOptions = {}): MutableRefObject<T | null> {
   const surface = useRef<T | null>(null);
   // read in the listeners, so a dialog that changes its mind mid-life is not held to its first render
@@ -76,7 +97,14 @@ export function useFocusTrap<T extends HTMLElement>(open: boolean, options: Focu
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     return () => {
       // a covering dialog owns focus; otherwise return it only when this surface closes
-      if (!latest.current.paused && latest.current.shouldRestore?.() !== false && opener?.isConnected && !nativeModalOver(surface.current)) opener.focus({ preventScroll: true });
+      if (latest.current.paused || latest.current.shouldRestore?.() === false || !opener?.isConnected || nativeModalOver(surface.current)) return;
+      opener.focus({ preventScroll: true });
+      // The commit that removes this surface can lift `inert` off the page behind it only after this cleanup ran, so
+      // the opener refused the focus: give it again once that commit is done, unless something else took it meanwhile.
+      if (document.activeElement !== opener) queueMicrotask(() => {
+        const active = document.activeElement;
+        if (opener.isConnected && (active === null || active === document.body)) opener.focus({ preventScroll: true });
+      });
     };
   }, [open]);
 
@@ -87,9 +115,10 @@ export function useFocusTrap<T extends HTMLElement>(open: boolean, options: Focu
       // AutoFocus or a child's layout effect may already have placed focus inside the surface.
       // Otherwise try the preferred control, then a tab stop, then the surface: a connected
       // control can still refuse focus (disabled, hidden or inside a disabled fieldset).
-      const wanted = latest.current.initialFocus?.current;
+      const wanted = latest.current.startOnSurface ? node : latest.current.initialFocus?.current;
       wanted?.focus({ preventScroll: true });
-      if (!node.contains(document.activeElement)) tabStops(node)[0]?.focus({ preventScroll: true });
+      const own = [...node.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(reachable);
+      if (!node.contains(document.activeElement)) own[0]?.focus({ preventScroll: true });
       if (!node.contains(document.activeElement)) node.focus({ preventScroll: true });
     }
   }, [open, options.paused]);
@@ -99,10 +128,14 @@ export function useFocusTrap<T extends HTMLElement>(open: boolean, options: Focu
     const trap = {};
     openTraps.push(trap);
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== "Tab" || openTraps.at(-1) !== trap) return;
+      // keys typed ahead for a tab the dialog is making are that tab's, Tab included (lib/typeAhead.ts)
+      if (event.key !== "Tab" || openTraps.at(-1) !== trap || typeAheadFocused()) return;
       const node = surface.current;
       if (!node || nativeModalOver(node)) return;
-      const stops = tabStops(node);
+      // another dialog or menu that has the focus (a row's action sheet over the drawer) keeps its own Tab
+      const holder = document.activeElement;
+      if (holder instanceof Element && !node.contains(holder) && holder.closest('[role="dialog"], [role="alertdialog"], [role="menu"]') !== null) return;
+      const stops = tabStops(node, latest.current);
       // every control disabled (a deed that cannot be undone): Tab goes nowhere rather than out
       if (stops.length === 0) { event.preventDefault(); return; }
       const active = document.activeElement;
