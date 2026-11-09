@@ -81,3 +81,8 @@ it("takes no prompt still in the composer, nor one too short to tell", () => {
   expect(namedCodexAnswerShown(`› ${asked}\n\n  gpt-5.1-codex default · /project`, message("user", asked))).toBe(false);
   expect(namedCodexAnswerShown("› yes\n• Ran command", message("user", "yes"))).toBe(false);
 });
+
+it("takes a clipped prompt only from the start of the latest one, not a part it quotes", () => {
+  const asked = "Please examine the current project records and identify the exact owner of this restored conversation before changing anything";
+  expect(namedCodexAnswerShown(`› ${asked.slice(16, 106)}…\n• Ran command`, message("user", asked))).toBe(false);
+});

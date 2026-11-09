@@ -1881,7 +1881,7 @@ export function namedCodexAnswerShown(screen: string, rollout: string): boolean 
     if (exactPrompt(whole).length >= 4 && whole !== "Ask Codex to do anything" && !whole.includes("…")
       && exactPrompt(whole) === exactPrompt(latestPrompt)) return true;
     const shown = normalizeDisplay(prompt.replace(/[…].*$/, ""));
-    if (shown.length >= 48 && new Set(shown).size >= 16 && asked.some((text) => text.includes(shown))) return true;
+    if (shown.length >= 48 && new Set(shown).size >= 16 && asked.some((text) => text.startsWith(shown))) return true;
   }
   if (answers.length === 0) return false;
   for (const part of codexScreenParts(screen)) {
@@ -1938,13 +1938,14 @@ async function namedConversation(paneId: string, cwd: string, home: string, titl
     if (meta?.id !== id || typeof meta.cwd !== "string" || !sameDirectory(meta.cwd, cwd)) return null;
     const before = statSync(path);
     const screen = await paneRead({ paneId, source: "recent", lines: 400, stripAnsi: true });
-    if (!namedCodexAnswerShown(screen.text, codexHistoryTail(path, 16 * 1024 * 1024, home))) return null;
+    // the same 1 MiB the screen match reads: this runs on every poll while nothing binds the pane
+    if (!namedCodexAnswerShown(screen.text, codexHistoryTail(path, 1024 * 1024, home))) return null;
     const after = await codexAgentInfo(paneId);
     if (asCodexTitle(after.terminal_title_stripped ?? after.terminal_title ?? "") !== asCodexTitle(title)) return null;
     const current = await openRollouts(paneId, home, after.processRead?.info);
     if (current.codexProcesses.length === 0 || current.processes !== processes || processes === "") return null;
     const shown = await paneRead({ paneId, source: "recent", lines: 400, stripAnsi: true });
-    const reread = codexHistoryTail(path, 16 * 1024 * 1024, home);
+    const reread = codexHistoryTail(path, 1024 * 1024, home);
     const finalMeta = rolloutHeader(path);
     return namedCodexAnswerShown(shown.text, reread) && namedCodexAppendCompatible(before, statSync(path))
       && finalMeta?.id === id && typeof finalMeta.cwd === "string" && sameDirectory(finalMeta.cwd, cwd)

@@ -2681,6 +2681,18 @@ describe("a Codex pane recovered by its saved thread name (#3442)", () => {
     expect(await resolve()).toBe(path);
   });
 
+  it("takes no thread another pane is bound to", async () => {
+    const file = namedThread("Investigate a restored conversation");
+    appendFileSync(file, `${JSON.stringify({ type: "event_msg", payload: { type: "agent_message", message: answer } })}\n`);
+    rmSync(path);
+    title = "Investigate a restored conversation | project";
+    screen = `• ${answer}`;
+    const panes = [fixturePane(root), fixturePane("peer")];
+    expect(await codexTranscriptPath("peer", root, home, panes)).toBe(file);
+    screen = toolScreen;
+    expect(await codexTranscriptPath(root, root, home, panes)).toBeNull();
+  });
+
   it("does not hold the server on a FIFO in place of the name index", async () => {
     namedThread("Investigate a restored conversation");
     const index = join(home, "session_index.jsonl");
