@@ -87,6 +87,14 @@ it("takes no prompt still in the composer, nor one too short to tell", () => {
   expect(namedCodexAnswerShown("› yes\n• Ran command", message("user", "yes"))).toBe(false);
 });
 
+it("takes only the latest sent prompt on screen, not an earlier one a later prompt followed", () => {
+  const asked = "Please examine the current project records and identify the exact owner of this restored conversation before changing anything";
+  const later = "\n\n• Done.\n\n› a different current request\n\n• Ran command\n  └ output\n\n› Ask Codex to do anything";
+  expect(namedCodexAnswerShown(`› test${later}`, message("user", "test"))).toBe(false);
+  expect(namedCodexAnswerShown(`› ${asked.slice(0, 90)}…${later}`, message("user", asked))).toBe(false);
+  expect(namedCodexAnswerShown("› a different current request\n\n• Ran command", message("user", "a different current request"))).toBe(true);
+});
+
 it("takes a clipped prompt only from the start of the latest one, not a part it quotes", () => {
   const asked = "Please examine the current project records and identify the exact owner of this restored conversation before changing anything";
   expect(namedCodexAnswerShown(`› ${asked.slice(16, 106)}…\n• Ran command`, message("user", asked))).toBe(false);

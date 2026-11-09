@@ -2665,6 +2665,37 @@ describe("a Codex pane recovered by its saved thread name (#3442)", () => {
     expect(await codexTranscriptPath(root, folder, home)).toBeNull();
   }, 20_000);
 
+  it("takes no name that may be another folder's, whose unnamed thread a picker may have resumed here", async () => {
+    const file = namedThread("release");
+    /** An unnamed thread of [folder]: its title is that folder's name. */
+    const unnamedIn = (id: string, folder: string) => {
+      const db = new Database(join(home, "state_5.sqlite"));
+      db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, 1, 1, 'cli')").run(id, join(home, "sessions", `rollout-${id}.jsonl`), join(root, folder));
+      db.close();
+    };
+    screen = toolScreen;
+    unnamedIn("01a0c7a1-56d9-7e20-9f08-f7a2d973bc04", "release | api");
+    title = "release | project";
+    expect(await resolve()).toBe(file);
+    title = "release | api";
+    expect(await resolve()).toBeNull();
+    title = "release";
+    expect(await resolve()).toBe(file);
+    unnamedIn("01a0c7a1-56d9-7e20-9f08-f7a2d973bc05", "release");
+    expect(await resolve()).toBeNull();
+  }, 20_000);
+
+  it("takes no thread another pane was started on with `codex resume <id>`", async () => {
+    const file = namedThread("Investigate a restored conversation");
+    const panes = [fixturePane(root), fixturePane("peer", join(root, "elsewhere"))];
+    title = "Investigate a restored conversation | project";
+    screen = toolScreen;
+    foregrounds.set("peer", [{ pid: 2147483646, argv: ["/usr/bin/codex"] }]);
+    expect(await codexTranscriptPath(root, root, home, panes)).toBe(file);
+    foregrounds.set("peer", [{ pid: 2147483646, argv: ["/usr/bin/codex", "resume", named.toUpperCase()] }]);
+    expect(await codexTranscriptPath(root, root, home, panes)).toBeNull();
+  }, 20_000);
+
   it("takes no name a thread of another folder also has, which a picker may have resumed here", async () => {
     namedThread("Investigate a restored conversation");
     appendFileSync(join(home, "session_index.jsonl"), `${JSON.stringify({ id: "01a0c7a1-56d9-7e20-9f08-f7a2d973bc03", thread_name: "Investigate a restored conversation" })}\n`);

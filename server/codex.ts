@@ -1876,7 +1876,8 @@ export function namedCodexAnswerShown(screen: string, rollout: string): boolean 
   }
   // a prompt still in the composer is a draft, not a sent one: only one Codex answered or ran a tool after counts
   const lines = screen.split("\n");
-  const prompts = lines.filter((line, at) => line.startsWith("›") && lines.slice(at + 1).some((next) => next.startsWith("•")));
+  // and only the latest sent one: an earlier prompt that matches is not what this screen is on now
+  const prompts = lines.filter((line, at) => line.startsWith("›") && lines.slice(at + 1).some((next) => next.startsWith("•"))).slice(-1);
   const latestPrompt = user?.parts.flatMap((part) => part.kind === "text" ? [part.text] : []).join("\n") ?? "";
   const exactPrompt = (text: string) => text.normalize("NFKC").replace(/\s+/g, "");
   for (const prompt of prompts) {
@@ -1915,21 +1916,39 @@ export function namedCodexAppendCompatible(before: { dev: number; ino: number; s
   return before.dev === after.dev && before.ino === after.ino && after.size >= before.size;
 }
 
+/**
+ * Whether another pane has this thread: bound to it here, or started on it (`codex resume <id>`, which binds
+ * nothing). Every other pane is asked, in any folder and with any label; one that cannot be asked counts as having it.
+ */
+async function heldByAnotherPane(paneId: string, thread: { id: string; path: string }, panes?: HerdrPane[]): Promise<boolean> {
+  if ([...boundRollouts].some(([pane, bound]) => pane !== paneId && bound.path === thread.path)) return true;
+  try {
+    const others = (panes ?? (await sessionSnapshot()).panes).filter((pane) => pane.pane_id !== paneId);
+    const resumed = await Promise.all(others.map(async (pane) => resumedThread((await codexProcessesOf(pane.pane_id)).list.map((codex) => codex.argv ?? []))));
+    return resumed.some((id) => id?.toLowerCase() === thread.id.toLowerCase());
+  } catch { return true; }
+}
+
 /** Recover an unbound pane using two independent facts, rechecked across the read. Never remembers a guessed binding. */
-async function namedConversation(paneId: string, cwd: string, home: string, title: string, processes: string): Promise<string | null> {
+async function namedConversation(paneId: string, cwd: string, home: string, title: string, processes: string): Promise<{ id: string; path: string } | null> {
   let opened: ReturnType<typeof openCodexStore> | undefined;
   try {
     const indexPath = join(home, "session_index.jsonl");
-    // with no thread name Codex's title shows the project alone: a thread named like the folder is no identity then
-    // (the whole title too: a folder's own name may hold the " | " Codex puts between items)
     const titled = asCodexTitle(title).replace(/^[\u2800-\u28ff]\s+/, "");
-    if ([false, true].some((screen) => [titled, titled.split(" | ")[0]].includes(asCodexTitle(nodePath.basename(cwd), screen)))) return null;
+    /** the title up to each " | ": a folder's own name may hold the separator Codex puts between items */
+    const leads = titled.split(" | ").map((_, at, items) => items.slice(0, at + 1).join(" | "));
+    const folderTitle = (folder: unknown) => typeof folder === "string"
+      && [false, true].some((screen) => leads.includes(asCodexTitle(nodePath.basename(withoutVerbatimPrefix(folder)), screen)));
+    if (folderTitle(cwd)) return null;
     const indexStat = statSync(indexPath);
     // read non-blocking from the descriptor it checks, so a FIFO here cannot hold the server's thread
     const index = indexStat.isFile() ? readRegularText(indexPath, 8 * 1024 * 1024) : null;
     if (index === null) return null;
     const signature = (value: NonNullable<ReturnType<typeof statSync>>) => `${value.dev}:${value.ino}:${value.size}:${value.mtimeMs}:${value.ctimeMs}`;
     opened = openCodexStore(home);
+    // with no thread name Codex's title shows the project alone, and a picker may have resumed an unnamed thread
+    // of any folder here: a title that may be only some thread's folder is no identity
+    if (opened.db.query<{ cwd: unknown }, []>("SELECT DISTINCT cwd FROM threads").all().some((row) => folderTitle(row.cwd))) return null;
     const folder = storedCwdCondition(cwd);
     const eligible = new Set(opened.db.query<{ id: string }, string[]>(`SELECT id FROM threads WHERE ${folder.where} AND archived = 0${interactive(opened.db)}`).all(...folder.params).map((row) => row.id));
     const id = namedCodexThread(title, index, eligible);
@@ -1953,7 +1972,7 @@ async function namedConversation(paneId: string, cwd: string, home: string, titl
     const finalMeta = rolloutHeader(path);
     return namedCodexAnswerShown(shown.text, reread) && namedCodexAppendCompatible(before, statSync(path))
       && finalMeta?.id === id && typeof finalMeta.cwd === "string" && sameDirectory(finalMeta.cwd, cwd)
-      && signature(indexStat) === signature(statSync(indexPath)) ? path : null;
+      && signature(indexStat) === signature(statSync(indexPath)) ? { id, path } : null;
   } catch { return null; }
   finally { opened?.db.close(); }
 }
@@ -3339,7 +3358,7 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   // only for a pane nothing else ties to a thread: never over its binding or resumed thread, nor onto another pane's
   if (matched === null && boundHere === undefined && resumed === null) {
     const named = await namedConversation(paneId, cwd, home, agent.terminal_title_stripped ?? agent.terminal_title ?? "", processes);
-    if (named !== null && ![...boundRollouts].some(([pane, bound]) => pane !== paneId && bound.path === named)) return named;
+    if (named !== null && !await heldByAnotherPane(paneId, named, panes)) return named.path;
   }
   if (matched !== null) {
     boundRollouts.delete(paneId);
