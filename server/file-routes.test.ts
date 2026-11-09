@@ -50,6 +50,20 @@ describe("file routes", () => {
     expect(await error(await fetch(url(`/api/fs/stat?path=${q(join(folder, "missing.txt"))}`)))).toEqual([404, "not_found"]);
   });
 
+  it("renders a visualization only with render=1, under the existing page policy", async () => {
+    const path = join(folder, "visualization.html");
+    writeFileSync(path, '<div class="viz-row">Before / After</div>');
+    const response = await fetch(url(`/api/fs/file?path=${q(path)}&render=1&visualize=1`));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    expect(response.headers.get("content-security-policy")).toContain("sandbox allow-scripts; default-src 'none'");
+    expect(response.headers.get("content-security-policy")).not.toContain("https:");
+    expect(await response.text()).toContain("ovis-visualization-ready");
+    const raw = await fetch(url(`/api/fs/file?path=${q(path)}&visualize=1`));
+    expect(raw.headers.get("content-type")).toContain("text/plain");
+    expect(await raw.text()).not.toContain("ovis-visualization-ready");
+  });
+
   it("finds a relative path in the named pane's folder, and none when herdr cannot say it", async () => {
     const get = spyOn(herdr, "paneGet").mockImplementation(async (paneId) => ({ pane_id: paneId, workspace_id: "w1", tab_id: "w1:t1", cwd: folder, agent_status: "idle" }) as unknown as Awaited<ReturnType<typeof herdr.paneGet>>);
     try {

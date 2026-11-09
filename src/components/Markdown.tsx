@@ -1,3 +1,4 @@
+import { Visualization } from "./Visualization.tsx";
 import { createContext, Fragment, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { BookOpen, Check, Copy, ImageOff, Maximize2 } from "lucide-react";
 
@@ -436,9 +437,15 @@ function CodeBlock({ language, value }: { language: string; value: string }) {
 }
 
 function Blocks({ blocks }: { blocks: MarkdownBlock[] }) {
+  const visualizations = new Map<string, number>();
   return <>{blocks.map((block, index): ReactNode => {
     const key = `${block.type}-${index}`;
     switch (block.type) {
+      case "visualization": {
+        const occurrence = visualizations.get(block.path) ?? 0;
+        visualizations.set(block.path, occurrence + 1);
+        return <Visualization key={`visualization-${block.path}-${occurrence}`} {...block} />;
+      }
       case "heading":
         // agent headings are h3 whatever the agent wrote: the app's own h1/h2 (Brand, the dialog
         // titles) stay the outline above them. The level rides on a class, so the stylesheet

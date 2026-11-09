@@ -2438,6 +2438,14 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   below `420px` it leaves the header and the title's list marks the open tab.
 
 ### Chat turn (`.chat-turn`)
+- A complete Codex `visualize` reference on its own line draws a local HTML preview in the
+  answer, following the Codex app's inline visualization surface. The preview stays within the
+  transcript width (including `mode: wide` on narrow panes); it has no raised card chrome. Its
+  filename/title and existing Open action lead to the file viewer. Invalid/streaming references
+  and code examples remain text. A missing, non-HTML or oversized file shows an explicit Retry
+  action, never automatic polling. The frame reuses Page mode's opaque, no-network sandbox,
+  follows the app's theme and reports bounded height from its own window only. Local controls
+  and in-memory widget state work; host actions and remote CDN resources are not provided.
 - Native conversation rows use LegendList 3.3.5, with the chat view as the single
   scroll owner. The centered lane, exchange spacing and prompt portal stay separate from
   row lifetime. The list anchors prepends by a browser-local slot, never by a timestamp or

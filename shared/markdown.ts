@@ -1,5 +1,6 @@
 import { fileUriPath } from "./fileUri.ts";
 import { charBefore } from "./lookbehind.ts";
+import { visualizationReference, type VisualizationReference } from "./visualization.ts";
 import { parseHtmlBlock, startsHtml } from "./markdownHtml.ts";
 
 export type InlineNode =
@@ -31,6 +32,7 @@ export interface ListBlock {
 }
 
 export type MarkdownBlock =
+  | ({ type: "visualization" } & VisualizationReference)
   /** `dollar`: written between `$$` rather than `\[` and `\]`; `oneLine`: opened and closed on one line */
   | { type: "math"; value: string; dollar?: true; oneLine?: true }
   /** `align`: centered by the HTML a README wrote it in (markdownHtml.ts) */
@@ -367,7 +369,7 @@ function parseTable(lines: string[], start: number, within = 0): { block: Markdo
 
 function startsBlock(lines: string[], index: number, html = false): boolean {
   const line = lines[index] ?? "";
-  return (html && startsHtml(line)) || /^\s*(?:\\\[|\$\$)/.test(line) || /^\s{0,3}```/.test(line) || /^#{1,6}\s+/.test(line) || /^\s*>/.test(line) || /^(?:\s*[-*_]){3,}\s*$/.test(line) || listLine.test(line)
+  return visualizationReference(line) !== null || (html && startsHtml(line)) || /^\s*(?:\\\[|\$\$)/.test(line) || /^\s{0,3}```/.test(line) || /^#{1,6}\s+/.test(line) || /^\s*>/.test(line) || /^(?:\s*[-*_]){3,}\s*$/.test(line) || listLine.test(line)
     || startsTable(lines, index);
 }
 
@@ -493,6 +495,13 @@ export function parseMarkdown(source: string, depth = 0, html = false): Markdown
   while (index < lines.length) {
     const line = lineAt(lines, index);
     if (line.trim() === "") { index += 1; continue; }
+
+    const visualization = visualizationReference(line);
+    if (visualization !== null) {
+      blocks.push({ type: "visualization", ...visualization });
+      index += 1;
+      continue;
+    }
 
     // a fence may be indented (inside a list item, as agents write them): its lines lose that indent
     const fence = /^( {0,3})```\s*([^\s`]*)/.exec(line);

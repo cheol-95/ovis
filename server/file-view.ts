@@ -1,3 +1,4 @@
+import { visualizationPage } from "./visualization.ts";
 import { randomBytes } from "node:crypto";
 import { type BigIntStats, closeSync, constants, existsSync, fstatSync, lstatSync, openSync, read, readdirSync, readFileSync, readlinkSync, readSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -1016,7 +1017,7 @@ export async function fileResponse(info: FileInfo, download: boolean, render = f
       if (watched === undefined) watch?.done();
     }
     headers.set("content-type", type);
-    return new Response(rendered.html, { headers });
+    return new Response(request !== null && new URL(request.url).searchParams.get("visualize") === "1" ? visualizationPage(new TextDecoder().decode(rendered.html)) : rendered.html, { headers });
   }
   // everything before the headers (opening, the range, a small body) is one task, bounded by its
   // deadline and ended by the client going away; only a larger body is streamed after them
