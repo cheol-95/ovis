@@ -11,10 +11,10 @@ import { CONTENT_SECURITY_POLICY } from "../server/static.ts";
 const root = mkdtempSync(join(tmpdir(), "ovis-visualization-qa-"));
 const path = join(root, "before-after.html");
 const directive = `\uE200visualize\uE202${JSON.stringify({ path, mode: "wide", title: "Transmission comparison" })}\uE201`;
-const fragment = `<div id="diagram"><h2>Before / After</h2><p id="scenario" aria-live="polite">Normal transmission</p>
+const fragment = `<!doctype html><html><head><style>body{margin:0;padding:16px;background:#123456;color:white;font:15px system-ui}.viz-controls{display:flex;gap:8px;flex-wrap:wrap}.btn{padding:8px;background:transparent;color:inherit;border:1px solid currentColor}.btn[aria-pressed=true]{background:white;color:#123456}.card{padding:16px;border:1px solid currentColor}</style></head><body><div id="diagram"><h2>Before / After</h2><p id="scenario" aria-live="polite">Normal transmission</p>
 <div class="viz-controls"><button class="btn" data-case="normal" aria-pressed="true">Normal</button><button class="btn" data-case="timeout" aria-pressed="false">Timeout</button><button class="btn" data-case="error" aria-pressed="false">Collector error</button></div>
 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,14em),1fr));gap:1em;margin-top:1em"><div class="card">Before: return without waiting</div><div class="card">After: wait for the flush</div></div></div>
-<script>document.querySelectorAll('[data-case]').forEach(button=>button.onclick=()=>{document.querySelector('#scenario').textContent=button.textContent;document.querySelectorAll('[data-case]').forEach(item=>item.setAttribute('aria-pressed',String(item===button)));window.openai.setWidgetState({modelContent:{scenario:button.dataset.case}});});</script>`;
+<script>document.querySelectorAll('[data-case]').forEach(button=>button.onclick=()=>{document.querySelector('#scenario').textContent=button.textContent;document.querySelectorAll('[data-case]').forEach(item=>item.setAttribute('aria-pressed',String(item===button)));document.body.dataset.scenario=button.dataset.case;});</script></body></html>`;
 writeFileSync(path, fragment);
 let missing = false;
 const stats: URL[] = [];
@@ -58,14 +58,16 @@ try {
   await frame.getByText("Timeout", { exact: true }).first().waitFor();
   assert.equal(await frame.locator("#scenario").textContent(), "Timeout");
   assert.equal(await frame.locator('[data-case="timeout"]').getAttribute("aria-pressed"), "true");
-  assert.ok(reads[0]!.searchParams.get("visualize") === "1");
+  assert.equal(reads[0]!.searchParams.get("render"), "1");
+  assert.equal(reads[0]!.searchParams.has("visualize"), false);
   assert.ok(!await page.locator("body").innerText().then((text) => text.includes("\uE200visualize")));
   assert.equal(await frame.locator("body").evaluate(() => { try { return parent.document.cookie; } catch { return "blocked"; } }), "blocked");
   await page.waitForFunction(() => !document.querySelector('[role="status"]'));
-  const themed = await frame.locator("body").evaluate((body) => getComputedStyle(body).backgroundColor);
-  const expected = await page.locator("html").evaluate((html) => getComputedStyle(html).getPropertyValue("--bg").trim());
-  assert.notEqual(themed, "rgba(0, 0, 0, 0)");
-  assert.ok(expected.length > 0);
+  const ownBackground = await frame.locator("body").evaluate((body) => getComputedStyle(body).backgroundColor);
+  assert.equal(ownBackground, "rgb(18, 52, 86)", "the document keeps its own styles");
+  await page.evaluate(() => document.documentElement.style.setProperty("--bg", "rgb(200, 100, 50)"));
+  assert.equal(await frame.locator("body").evaluate((body) => getComputedStyle(body).backgroundColor), ownBackground);
+  assert.equal(await frame.locator("body").evaluate(() => typeof (window as unknown as { openai?: unknown }).openai), "undefined", "no host API is invented");
   const initialHeight = (await page.locator("iframe").boundingBox())!.height;
   await page.evaluate(() => window.postMessage({ type: "ovis-visualization-size", height: 999999 }, "*"));
   assert.equal((await page.locator("iframe").boundingBox())!.height, initialHeight, "unrelated windows cannot resize the preview");
@@ -92,7 +94,7 @@ try {
   await page.frameLocator("iframe").getByRole("button", { name: "Normal", exact: true }).waitFor();
   assert.equal(stats.length, before + 1);
   assert.deepEqual(errors, []);
-  console.log("PASS inline rendering, local controls/state, sandbox, sizing, PC ownership, 390px reflow, file opener and explicit retry");
+  console.log("PASS original HTML/styles/controls preserved, no theme or host API injection, sandbox, PC ownership, 390px reflow, file opener and explicit retry");
 } finally {
   await browser?.close();
   server.stop(true);
