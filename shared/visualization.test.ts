@@ -32,11 +32,10 @@ describe("Codex visualization references", () => {
   });
   it("draws a reference indented under a list item as its own block, not as the item's text", () => {
     const line = directive({ path: "/repo/diagram.html" });
-    const block = { type: "visualization", path: "/repo/diagram.html", wide: false };
     for (const source of [`1. The flow:\n   ${line}\n2. Next`, `- The flow:\n\n  ${line}\n- Next`, `- The flow:\n${line}\n- Next`]) {
       const blocks = parseMarkdown(source);
       expect(blocks.map((each) => each.type)).toEqual(["list", "visualization", "list"]);
-      expect(blocks[1]).toEqual(block);
+      expect(blocks[1]).toEqual({ type: "visualization", path: "/repo/diagram.html", wide: false });
       expect(JSON.stringify(blocks)).not.toContain("\uE200");
     }
     // an example of a reference in a list item's text is not a reference
