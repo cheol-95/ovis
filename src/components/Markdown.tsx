@@ -482,8 +482,12 @@ function Blocks({ blocks }: { blocks: MarkdownBlock[] }) {
  * Markdown rendered. Its props are primitive values, so `memo` skips a parent's re-render: a long plan in
  * the file viewer is not rendered again every time the app polls.
  */
-export const Markdown = memo(function Markdown({ children, className, html = false, skills = null }: { children: string; className?: string; html?: boolean; skills?: SkillMatcher | null }) {
-  const blocks = useMemo(() => parseMarkdown(children, 0, html), [children, html]);
+export const Markdown = memo(function Markdown({ children, className, html = false, skills = null, visualizations = false }: {
+  children: string; className?: string; html?: boolean; skills?: SkillMatcher | null;
+  /** a chat answer's: a Codex visualization reference is drawn as its preview card; elsewhere the reference stays text */
+  visualizations?: boolean;
+}) {
+  const blocks = useMemo(() => parseMarkdown(children, 0, html, visualizations), [children, html, visualizations]);
   // always a provider, which passes on the names around it when it has none of its own: the pane's skill names
   // load after its text, and a tree that changed shape then would mount every message again, a decoded image
   // dropping back to its loading slot

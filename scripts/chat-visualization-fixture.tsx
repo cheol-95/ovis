@@ -14,7 +14,9 @@ function Fixture() {
   const [opened] = useState<string[]>([]);
   window.visualizationQa = { update: setText, opened };
   return <SettingsProvider><MachineContext.Provider value="fixture-pc"><OpenFileContext.Provider value={(path) => { opened.push(path); }}>
-    <main style={{ maxWidth: 960, margin: "auto", padding: 16 }}><Markdown>{text}</Markdown></main>
+    {/* an answer asks for references to be drawn; every other Markdown (a prompt card, a file's preview) keeps them as text */}
+    <main id="answer" style={{ maxWidth: 960, margin: "auto", padding: 16 }}><Markdown visualizations>{text}</Markdown></main>
+    <aside id="elsewhere" style={{ maxWidth: 960, margin: "auto", padding: 16, overflowWrap: "anywhere" }}><Markdown>{text}</Markdown></aside>
   </OpenFileContext.Provider></MachineContext.Provider></SettingsProvider>;
 }
 createRoot(document.getElementById("root")!).render(<Fixture />);

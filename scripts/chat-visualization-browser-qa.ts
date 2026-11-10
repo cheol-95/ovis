@@ -16,7 +16,8 @@ const fragment = `<!doctype html><html><head><style>body{margin:0;padding:16px;b
 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,14em),1fr));gap:1em;margin-top:1em"><div class="card">Before: return without waiting</div><div class="card">After: wait for the flush</div></div></div>
 <script>document.querySelectorAll('[data-case]').forEach(button=>button.onclick=()=>{document.querySelector('#scenario').textContent=button.textContent;document.querySelectorAll('[data-case]').forEach(item=>item.setAttribute('aria-pressed',String(item===button)));document.body.dataset.scenario=button.dataset.case;});</script></body></html>`;
 writeFileSync(path, fragment);
-let missing = false;
+/** what the fixture PC refuses: the file's lookup, or the frame's own read of the page after a lookup that answered */
+let failing: "stat" | "read" | null = null;
 const stats: URL[] = [];
 const reads: URL[] = [];
 const build = await Bun.build({ entrypoints: ["scripts/chat-visualization-fixture.tsx"], outdir: root, target: "browser", define: { "process.env.NODE_ENV": '"production"' } });
@@ -26,11 +27,12 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) 
   if (url.pathname === "/api/machines/fixture-pc/fs/stat") {
     stats.push(url);
     assert.equal(url.searchParams.get("path"), path);
-    return missing ? Response.json({ error: { code: "not_found", message: "not found" } }, { status: 404 }) : Response.json(fileInfo(path));
+    return failing === "stat" ? Response.json({ error: { code: "internal", message: "read failed" } }, { status: 500 }) : Response.json(fileInfo(path));
   }
   if (url.pathname === "/api/machines/fixture-pc/fs/file") {
     reads.push(url);
     assert.equal(url.searchParams.get("path"), path);
+    if (failing === "read") return Response.json({ error: { code: "internal", message: "read failed" } }, { status: 500 });
     return fileResponse(fileInfo(path)!, false, url.searchParams.get("render") === "1", null, request);
   }
   if (url.pathname === "/") return new Response('<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/chat-visualization-fixture.css"></head><body><div id="root"></div><script type="module" src="/chat-visualization-fixture.js"></script></body></html>', { headers: { "content-security-policy": CONTENT_SECURITY_POLICY, "content-type": "text/html" } });
@@ -56,6 +58,16 @@ try {
   await page.goto(origin);
   await page.waitForFunction(() => !!window.visualizationQa);
   await page.evaluate((text) => window.visualizationQa.update(`Intro\n${text}\nConclusion`), directive);
+  // a reference alone looks nothing up and runs nothing: the answer draws a card that names the file
+  const answer = page.locator("#answer");
+  const preview = answer.getByRole("button", { name: "Show preview", exact: true });
+  await preview.waitFor();
+  assert.equal(await page.locator("iframe").count(), 0, "no frame before the person asks");
+  assert.equal(stats.length + reads.length, 0, "and no lookup or read of the file");
+  // any other Markdown keeps the reference as the text it is
+  assert.equal(await page.locator("#elsewhere .markdown-visualization").count(), 0);
+  assert.ok(await page.locator("#elsewhere").innerText().then((text) => text.includes("visualize") && text.includes("before-after.html")), "the reference stays text outside an answer");
+  await preview.click();
   const frame = page.frameLocator("iframe.markdown-visualization-frame");
   await frame.getByRole("button", { name: "Timeout", exact: true }).click();
   await frame.getByText("Timeout", { exact: true }).first().waitFor();
@@ -63,7 +75,7 @@ try {
   assert.equal(await frame.locator('[data-case="timeout"]').getAttribute("aria-pressed"), "true");
   assert.equal(reads[0]!.searchParams.get("render"), "1");
   assert.equal(reads[0]!.searchParams.has("visualize"), false);
-  assert.ok(!await page.locator("body").innerText().then((text) => text.includes("\uE200visualize")));
+  assert.ok(!await answer.innerText().then((text) => text.includes("\uE200visualize")));
   assert.equal(await frame.locator("body").evaluate(() => { try { return parent.document.cookie; } catch { return "blocked"; } }), "blocked");
   await page.waitForFunction(() => !document.querySelector('[role="status"]'));
   const ownBackground = await frame.locator("body").evaluate((body) => getComputedStyle(body).backgroundColor);
@@ -84,25 +96,40 @@ try {
   await page.screenshot({ path: ".ci/visualization/mobile.png" });
   await page.getByRole("button", { name: "Transmission comparison", exact: true }).click();
   assert.deepEqual(await page.evaluate(() => window.visualizationQa.opened), [path]);
-  missing = true;
+  // a reload asks again, and a lookup the PC fails says so with Retry
+  failing = "stat";
   await page.reload();
   await page.waitForFunction(() => !!window.visualizationQa);
   await page.evaluate((text) => window.visualizationQa.update(text), directive);
+  await preview.click();
   await page.getByRole("alert").waitFor();
+  assert.match(await page.getByRole("alert").innerText(), /The PC could not read the file/);
   const before = stats.length;
   await page.evaluate((text) => window.visualizationQa.update(`Extra prose\n${text}`), directive);
   assert.equal(stats.length, before, "ordinary transcript updates do not loop failed file requests");
-  missing = false;
+  failing = null;
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await page.frameLocator("iframe").getByRole("button", { name: "Normal", exact: true }).waitFor();
   assert.equal(stats.length, before + 1);
+  // the frame's own read refused after a lookup that answered: told with Retry, not left as the refusal in the frame
+  failing = "read";
+  await page.reload();
+  await page.waitForFunction(() => !!window.visualizationQa);
+  await page.evaluate((text) => window.visualizationQa.update(text), directive);
+  await preview.click();
+  await page.getByRole("alert").waitFor();
+  assert.match(await page.getByRole("alert").innerText(), /The PC could not read the file/);
+  assert.equal(await page.locator("iframe").count(), 0, "the refused frame is gone");
+  failing = null;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await page.frameLocator("iframe").getByRole("button", { name: "Normal", exact: true }).waitFor();
   // a reference indented under an ordered list's item is drawn in that item, and the list goes on as one
   await page.evaluate((text) => window.visualizationQa.update(`1. First\n   ${text}\n1. Second`), directive);
-  const items = page.locator("ol > li");
+  const items = answer.locator("ol > li");
   await items.first().frameLocator("iframe.markdown-visualization-frame").getByRole("button", { name: "Normal", exact: true }).waitFor();
   assert.equal(await items.count(), 2, "the visualization does not end its list");
-  assert.equal(await page.locator("ol").count(), 1);
-  assert.ok(!await page.locator("body").innerText().then((text) => text.includes("\uE200visualize")));
+  assert.equal(await answer.locator("ol").count(), 1);
+  assert.ok(!await answer.innerText().then((text) => text.includes("\uE200visualize")));
   // the document's script holds what the Page renderer put into it; it cannot send it to another host by moving its own
   // frame there (the app's frame-src), and the sandbox and the page's policy allow it no other request
   await page.evaluate(() => addEventListener("securitypolicyviolation", (event) => { (window as unknown as { refused?: string[] }).refused = [event.effectiveDirective, event.blockedURI]; }, { once: true }));
@@ -114,7 +141,7 @@ try {
   assert.ok(refused[1]!.startsWith(away), refused[1]);
   assert.deepEqual(leaks, [], "nothing reached the other host");
   assert.deepEqual(errors, []);
-  console.log("PASS original HTML/styles/controls preserved, no theme or host API injection, sandbox, no navigation to another host, PC ownership, 390px reflow, a reference in a list item, file opener and explicit retry");
+  console.log("PASS nothing runs before Show preview, text outside an answer, original HTML/styles/controls preserved, no theme or host API injection, sandbox, no navigation to another host, PC ownership, 390px reflow, a reference in a list item, file opener, and Retry after a failed lookup and a refused page read");
 } finally {
   await browser?.close();
   server.stop(true);
