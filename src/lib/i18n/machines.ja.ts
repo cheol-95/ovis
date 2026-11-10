@@ -106,7 +106,6 @@ export const MACHINES_JA: Record<string, string> = {
   "Reject": "拒否",
   "Trust fingerprint": "フィンガープリントを信頼",
   "Install and connect": "インストールして接続",
-  "Open PC": "PC を開く",
   "Retry connection": "接続を再試行",
   "Settings (⌘⇧,)": "設定 (⌘⇧,)",
   "The computer this app runs on": "このアプリが動作しているコンピューター",
@@ -149,6 +148,6 @@ export const MACHINES_JA: Record<string, string> = {
   "CPU {value}": "CPU {value}",
   "Memory {value}": "メモリ {value}",
   "Disk {value}": "ディスク {value}",
-  "PC load in the sidebar": "サイドバーに PC の負荷を表示",
-  "CPU, memory and the fullest disk under each open PC, on this device only. On by default when two or more PCs are connected.": "開いている各 PC の下に CPU、メモリ、最も使用率の高いディスクを表示します（このデバイスのみ）。2 台以上の PC が接続されているときは既定でオンです。",
+  "PC load in the status bar": "ステータスバーに PC の負荷を表示",
+  "The selected PC's CPU, memory and fullest disk in the status bar, on this device only.": "選択中の PC の CPU、メモリ、最も使用率の高いディスクをステータスバーに表示します。この端末だけに適用されます。",
 };
