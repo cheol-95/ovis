@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { parseMarkdown } from "./markdown.ts";
-import { visualizationReference } from "./visualization.ts";
+import { visualizationName, visualizationReference, visualizationTitle } from "./visualization.ts";
 
 const directive = (data: unknown) => `\uE200visualize\uE202${JSON.stringify(data)}\uE201`;
 /** a chat answer's Markdown: the one place a reference is read as a block */
@@ -68,5 +68,23 @@ describe("Codex visualization references", () => {
     }
     // an example of a reference in a list item's text is not a reference
     expect(answer(`- The flow:\n  it reads ${line}`)).toEqual([{ type: "list", ordered: false, items: [{ content: [...text("The flow:"), ...text(" "), ...text(`it reads ${line}`)] }] }]);
+  });
+  it("names a card by the file's own name, and shows the reference's title only beside it", () => {
+    expect(visualizationName("/repo/out/report.html")).toBe("report.html");
+    expect(visualizationName("C:\\work\\out/diagram.HTM")).toBe("diagram.HTM");
+    // what reorders or hides text is taken out: a right-to-left override, zero-width characters, a byte-order mark
+    expect(visualizationName("/repo/report\u202Efdp.html")).toBe("reportfdp.html");
+    expect(visualizationName("/repo/a\u200Bb\u2066c\uFEFF.html")).toBe("abc.html");
+    // a long name is cut in the middle: its end, the file's type, stays
+    const long = visualizationName(`/repo/${"x".repeat(300)}-final.html`);
+    expect([[...long].length, long.startsWith("xxxx"), long.endsWith("xxxxx-final.html"), long.includes("\u2026")]).toEqual([80, true, true, true]);
+    // the title is the second line: cleaned the same way, clamped, and left out when there is none or it repeats the name
+    expect(visualizationTitle({ path: "/repo/a.html", title: "Before \u202E/ After\t now" })).toBe("Before / After now");
+    expect([...visualizationTitle({ path: "/repo/a.html", title: "t".repeat(200) })!].length).toBe(120);
+    expect(visualizationTitle({ path: "/repo/a.html" })).toBeNull();
+    expect(visualizationTitle({ path: "/repo/a.html", title: "a.html" })).toBeNull();
+    expect(visualizationTitle({ path: "/repo/a.html", title: "\u200B\u202E" })).toBeNull();
+    // the reference itself keeps the path as written: it is what the viewer is asked to open
+    expect(visualizationReference(directive({ path: "/repo/report\u202Efdp.html", title: "x" }))?.path).toBe("/repo/report\u202Efdp.html");
   });
 });

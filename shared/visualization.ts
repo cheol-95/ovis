@@ -6,11 +6,25 @@ export interface VisualizationReference {
 }
 
 /**
- * The largest HTML file drawn as a preview. It is the size up to which the Page renderer puts a page's own
- * files into it (server/file-view.ts EMBED_PAGE_BYTES), so a preview is the page the file viewer shows; a
- * larger file is not loaded by a reference alone, and opens in the file viewer.
+ * What a card shows of a name or a title an agent wrote: no bidi control or other invisible format character
+ * (they reorder or hide what is read), every run of spaces and control characters one space, and at most `limit`
+ * characters, cut in the middle so the end (a file's type) stays.
  */
-export const VISUALIZATION_PAGE_BYTES = 8 * 1024 * 1024;
+function shown(text: string, limit: number): string {
+  const clean = [...text.replace(/\p{Cf}/gu, "").replace(/[\p{Cc}\s]+/gu, " ").trim()];
+  return clean.length <= limit ? clean.join("") : `${clean.slice(0, limit - 17).join("")}\u2026${clean.slice(-16).join("")}`;
+}
+
+/** The file's own name as its card shows it: always the path's last part, never what the reference calls it. */
+export function visualizationName(path: string): string {
+  return shown(path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1), 80);
+}
+
+/** The reference's title as its card's second line; null when it has none, or it only repeats the file's name. */
+export function visualizationTitle(reference: Pick<VisualizationReference, "path" | "title">): string | null {
+  const title = reference.title === undefined ? "" : shown(reference.title, 120);
+  return title === "" || title === visualizationName(reference.path) ? null : title;
+}
 
 export function visualizationReference(line: string): VisualizationReference | null {
   const value = line.trim();

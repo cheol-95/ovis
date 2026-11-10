@@ -2612,31 +2612,22 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   below `420px` it leaves the header and the title's list marks the open tab.
 
 ### Chat turn (`.chat-turn`)
-- A complete Codex `visualize` reference on its own line of a chat answer is drawn as a preview
-  card: the file's name, which opens it in the file viewer, and **Show preview**. Nothing is looked
-  up or run before that press. The preview is the file's original HTML with its own script, drawn
-  by the existing Page renderer in its sandbox, and that sandbox does not confine a script enough
-  to run it on a reference's word alone. Measured in Chrome and WebKit: the page has no origin and
-  reaches no other host by a fetch, a form, a popup or a navigation (its frame can move only to the
-  host name the browser used for the app, on any port, by the app's `frame-src`); but WebRTC with
-  a STUN or TURN server of its choosing does reach other hosts, in WebKit a `preconnect` too, and
-  its script can take the keyboard focus from the app. So it runs where the file viewer runs a
-  page: when the person asks. A preview asked for is shown again without another press while the
-  page stays open; a reload asks again. Every other Markdown (a prompt card, a task result, release
-  notes, the file viewer's Preview of a `.md`) keeps the reference as text.
-  Ovis supplies only a contained viewport and the file-open/retry actions; it injects no theme,
-  styles, controls or host API into the document. Archify and other self-contained HTML keep their
-  own design and behavior. Invalid or streaming references and code examples remain text. Prose
-  updates preserve a loaded frame. A row scrolled far out of view is drawn again when it comes
-  back: the page is read again and what was changed in it is reset (over a relay the page's text
-  is kept, so it is not downloaded twice). Indented under a list item, the card is drawn in that
-  item and the list goes on after it. A path that names a network share is no reference.
-  A file over 8 MiB (the size up to which the Page renderer puts a page's own files into it) is
-  not loaded: its note says so, with no Retry, and its title opens it in the file viewer. A lookup
-  or a read that fails says why in the file viewer's words, also when the frame's own read was
-  refused after the lookup answered; **Retry** is offered only where another try can work (the PC
-  away, a timeout, a failed read), not for a watching device, a browser that is not paired or a
-  path with no file.
+- A complete Codex `visualize` reference on its own line of a chat answer is drawn as a small
+  card: the file's own name, the reference's title under it in `--text-dim`, and one button,
+  **Open preview**. The name is always the path's last part, never the title in its place; bidi
+  controls and other invisible format characters are taken out of both, and a long one is cut in
+  the middle so the file's type stays. The press opens the file in the file viewer, where an HTML
+  file is its Page view: the dialog that already exists, which holds the focus while it is open
+  and runs the page only until it is closed. The card itself looks nothing up and draws no frame.
+  An inline preview was left out on purpose. Measured in Chrome and WebKit, the Page renderer's
+  sandbox keeps a page's script from every other host by a fetch, a form, a popup or a navigation,
+  but not by WebRTC (a STUN or TURN server of its choosing; in WebKit a `preconnect` too), and the
+  script can take the keyboard focus from the app. A frame in the transcript would sit beside the
+  message box for as long as its row is drawn, and would run on a reference's word alone.
+  Every other Markdown (a prompt card, a task result, release notes, the file viewer's Preview of
+  a `.md`) keeps the reference as text. Invalid or streaming references and code examples remain
+  text. Indented under a list item, the card is drawn in that item and the list goes on after it.
+  A path that names a network share is no reference.
 - Native conversation rows use LegendList 3.3.5, with the chat view as the single
   scroll owner. The centered lane, exchange spacing and prompt portal stay separate from
   row lifetime. The list anchors prepends by a browser-local slot, never by a timestamp or
