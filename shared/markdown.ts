@@ -390,8 +390,8 @@ function parseList(lines: string[], start: number): { block: ListBlock; next: nu
   let index = start;
   while (index < lines.length) {
     // between items: blank lines (a loose list, as agents often write one) and an item's own
-    // indented lines, which read on as its text, or make a table in it; anything else ends
-    // the list, and so does an indented fence or visualization reference, which shows as its own block
+    // indented lines, which read on as its text, or make a table or a visualization in it; anything
+    // else ends the list, and so does an indented fence, which shows as its own block
     if (block.items.length > 0 && !listLine.test(lineAt(lines, index))) {
       let ahead = index;
       while (ahead < lines.length && lineAt(lines, ahead).trim() === "") ahead += 1;
@@ -408,7 +408,15 @@ function parseList(lines: string[], start: number): { block: ListBlock; next: nu
         index = table.next;
         continue;
       }
-      if (ahead < lines.length && sibling === null && indent >= baseIndent + 2 && !/^\s*```/.test(line) && visualizationReference(line) === null) {
+      // a visualization reference indented under the item is drawn in it, as a table there is: the
+      // list goes on after it, with its numbering (ended by it, an ordered list would start again at 1)
+      const reference = ahead < lines.length && sibling === null && indent >= baseIndent + 2 ? visualizationReference(line) : null;
+      if (reference !== null) {
+        (block.items.at(-1)!.blocks ??= []).push({ type: "visualization", ...reference });
+        index = ahead + 1;
+        continue;
+      }
+      if (ahead < lines.length && sibling === null && indent >= baseIndent + 2 && !/^\s*```/.test(line)) {
         const item = block.items.at(-1)!;
         const last = item.blocks?.at(-1);
         if (last === undefined) {

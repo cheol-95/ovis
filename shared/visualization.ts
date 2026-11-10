@@ -5,6 +5,13 @@ export interface VisualizationReference {
   wide: boolean;
 }
 
+/**
+ * The largest HTML file drawn as a preview. It is the size up to which the Page renderer puts a page's own
+ * files into it (server/file-view.ts EMBED_PAGE_BYTES), so a preview is the page the file viewer shows; a
+ * larger file is not loaded by a reference alone, and opens in the file viewer.
+ */
+export const VISUALIZATION_PAGE_BYTES = 8 * 1024 * 1024;
+
 export function visualizationReference(line: string): VisualizationReference | null {
   const value = line.trim();
   if (value.length > 16_384 || !value.startsWith("\uE200visualize\uE202") || !value.endsWith("\uE201")) return null;

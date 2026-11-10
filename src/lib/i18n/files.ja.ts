@@ -14,6 +14,7 @@ export const FILES_JA: Record<string, string> = {
   "The PC could not read the file. Reopen it to try again.": "PC がファイルを読み取れませんでした。開き直してください。",
   "The file request timed out. Reopen it to try again.": "ファイルへの要求がタイムアウトしました。開き直してください。",
   "Too large to open on the phone - download on the PC": "スマートフォンで開くには大きすぎます。PCでダウンロードしてください。",
+  "Too large to preview here. Open the file to see it.": "ここでプレビューするには大きすぎます。ファイルを開いて確認してください。",
   "Show source": "ソースを表示",
   "Resize file panel": "ファイルパネルの幅を変更",
   "Show beside the pane": "ペインの横に表示",

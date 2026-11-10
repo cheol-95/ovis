@@ -2600,10 +2600,17 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 ### Chat turn (`.chat-turn`)
 - A complete Codex `visualize` reference on its own line draws its original local HTML in
   the answer, following the Codex app's inline artifact surface. It reuses the existing Page
-  renderer and its opaque, no-network sandbox. Ovis supplies only a contained viewport and the
+  renderer and its sandbox: the document has no origin, can fetch nothing from the web, and
+  cannot move its frame to another host (the app's `frame-src` allows only this PC's own
+  address, any port). Ovis supplies only a contained viewport and the
   existing file-open/retry actions; it injects no theme, styles, controls or host API into the
   document. Archify and other self-contained HTML keep their own design and behavior. Invalid
   or streaming references and code examples remain text. Prose updates preserve a loaded frame.
+  Indented under a list item, the preview is drawn in that item and the list goes on after it.
+  A path that names a network share is no reference. A file over 8 MiB (the size up to which
+  the Page renderer puts a page's own files into it) is not loaded by a reference: its note says
+  so, with no Retry, and its title opens it in the file viewer. Any other failure, a relay read
+  that fails included, offers **Retry**.
 - Native conversation rows use LegendList 3.3.5, with the chat view as the single
   scroll owner. The centered lane, exchange spacing and prompt portal stay separate from
   row lifetime. The list anchors prepends by a browser-local slot, never by a timestamp or
