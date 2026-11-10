@@ -391,7 +391,7 @@ function parseList(lines: string[], start: number): { block: ListBlock; next: nu
   while (index < lines.length) {
     // between items: blank lines (a loose list, as agents often write one) and an item's own
     // indented lines, which read on as its text, or make a table in it; anything else ends
-    // the list, and so does an indented fence, which shows as its own block
+    // the list, and so does an indented fence or visualization reference, which shows as its own block
     if (block.items.length > 0 && !listLine.test(lineAt(lines, index))) {
       let ahead = index;
       while (ahead < lines.length && lineAt(lines, ahead).trim() === "") ahead += 1;
@@ -408,7 +408,7 @@ function parseList(lines: string[], start: number): { block: ListBlock; next: nu
         index = table.next;
         continue;
       }
-      if (ahead < lines.length && sibling === null && indent >= baseIndent + 2 && !/^\s*```/.test(line)) {
+      if (ahead < lines.length && sibling === null && indent >= baseIndent + 2 && !/^\s*```/.test(line) && visualizationReference(line) === null) {
         const item = block.items.at(-1)!;
         const last = item.blocks?.at(-1);
         if (last === undefined) {
