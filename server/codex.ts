@@ -2464,11 +2464,13 @@ export const CODEX_PEER_PANE_LIMIT = 64;
 const PEER_PROCESS_READS = 4;
 
 /**
- * Whether another pane has this thread: bound to it here, or started on it (`codex resume <id>`, which binds
- * nothing). Every other pane is asked, in any folder and with any label, and any of its processes may hold it; one
- * that cannot be asked, or a process whose command line cannot be read, counts as having it.
+ * Whether another pane has this thread: bound to it here, started on it (`codex resume <id>`, which binds
+ * nothing), or a Codex there shows it by the same saved name (`titled`: opened through the picker or `resume
+ * --last`, which leave no id on its command line). Every other pane is asked, in any folder and with any label, and
+ * any of its processes may hold it; one that cannot be asked, a process whose command line cannot be read, or a
+ * Codex whose title herdr does not report, counts as having it.
  */
-async function heldByAnotherPane(paneId: string, thread: { id: string; path: string }, panes?: HerdrPane[]): Promise<boolean> {
+async function heldByAnotherPane(paneId: string, thread: { id: string; path: string; titled: (title: string) => boolean }, panes?: HerdrPane[]): Promise<boolean> {
   if ([...boundRollouts].some(([pane, bound]) => pane !== paneId && bound.path === thread.path)) return true;
   try {
     const others = (panes ?? (await sessionSnapshot()).panes).filter((pane) => pane.pane_id !== paneId);
@@ -2479,8 +2481,14 @@ async function heldByAnotherPane(paneId: string, thread: { id: string; path: str
       while (!held && next < others.length) {
         const pane = others[next++]!;
         try {
-          const { list, unread } = await codexProcessesOf(pane.pane_id);
-          if (unread || resumedThreads(list.map((codex) => codex.argv ?? [])).some((id) => id.toLowerCase() === thread.id.toLowerCase())) held = true;
+          const info = await paneProcessInfo(pane.pane_id);
+          if (info?.foreground_processes == null || commandLinesUnread(info)) { held = true; continue; }
+          const { list } = await codexProcessesOf(pane.pane_id, info);
+          if (resumedThreads(list.map((codex) => codex.argv ?? [])).some((id) => id.toLowerCase() === thread.id.toLowerCase())) { held = true; continue; }
+          if (list.length === 0) continue;
+          const peer = await paneGet(pane.pane_id);
+          const title = peer.terminal_title_stripped ?? peer.terminal_title;
+          if (!title || thread.titled(title)) held = true;
         } catch { held = true; }
       }
     }));
@@ -2488,8 +2496,14 @@ async function heldByAnotherPane(paneId: string, thread: { id: string; path: str
   } catch { return true; }
 }
 
-/** Recover an unbound pane using two independent facts, rechecked across the read. Never remembers a guessed binding. */
-async function namedConversation(paneId: string, cwd: string, home: string, title: string, processes: string): Promise<{ id: string; path: string } | null> {
+/** The pane a saved name may recover, as codexTranscriptPath read it: `title` and `processes` are rechecked after the reads. */
+interface NamedLookup { paneId: string; cwd: string; home: string; title: string; processes: string; panes: HerdrPane[] | undefined }
+
+/**
+ * Recover an unbound pane using two independent facts, rechecked across the read, the other panes asked before
+ * that recheck. Never remembers a guessed binding.
+ */
+async function namedConversation({ paneId, cwd, home, title, processes, panes }: NamedLookup): Promise<string | null> {
   let opened: ReturnType<typeof openCodexStore> | undefined;
   try {
     const indexPath = join(home, "session_index.jsonl");
@@ -2522,6 +2536,8 @@ async function namedConversation(paneId: string, cwd: string, home: string, titl
     const screen = await paneRead({ paneId, source: "recent", lines: 400, stripAnsi: true });
     // the same 1 MiB the screen match reads: this runs on every poll while nothing binds the pane
     if (!namedCodexAnswerShown(screen.text, codexHistoryTail(path, 1024 * 1024, home))) return null;
+    // before the recheck below, so a pane that moved on while the others were asked is caught by it
+    if (await heldByAnotherPane(paneId, { id, path, titled: (shown) => namedCodexThread(shown, index) === id }, panes)) return null;
     const after = await codexAgentInfo(paneId);
     // the spinner moves on between reads while Codex works: the title it is ahead of is what must stay
     if (titleWithoutSpinner(after.terminal_title_stripped ?? after.terminal_title ?? "") !== titled) return null;
@@ -2532,7 +2548,7 @@ async function namedConversation(paneId: string, cwd: string, home: string, titl
     const finalMeta = rolloutHeader(path);
     return namedCodexAnswerShown(shown.text, reread) && namedCodexAppendCompatible(before, statSync(path))
       && finalMeta?.id === id && typeof finalMeta.cwd === "string" && sameDirectory(finalMeta.cwd, cwd)
-      && signature(indexStat) === signature(statSync(indexPath)) ? { id, path } : null;
+      && signature(indexStat) === signature(statSync(indexPath)) ? path : null;
   } catch { return null; }
   finally { opened?.db.close(); }
 }
@@ -3215,24 +3231,18 @@ export async function paneCodexProcess(paneId: string, known?: ProcessInfo | nul
 }
 
 /** `known`: herdr's `pane.process_info` answer the caller's poll already read for this pane (null: no processes). */
-/**
- * `unread`: herdr gave no process list, or a foreground process's command line could not be read, so this list may
- * miss a Codex.
- */
-async function codexProcessesOf(paneId: string, known?: ProcessInfo | null): Promise<{ list: { pid: number; argv?: string[] }[]; key: string; unread?: true }> {
+async function codexProcessesOf(paneId: string, known?: ProcessInfo | null): Promise<{ list: { pid: number; argv?: string[] }[]; key: string }> {
   const processInfo = known !== undefined ? known ?? undefined : await paneProcessInfo(paneId);
-  let unread = processInfo?.foreground_processes == null;
   // herdr's schema allows `argv: null`; this reader has always read argv as absent or a list
   // (the cast is the inline result type herdrRpc was given before the typed seam)
   const list = ((processInfo?.foreground_processes ?? []) as { pid: number; argv?: string[] }[])
     .map((foreground) => {
-      if (foreground.argv?.length) return foreground;
-      if (process.platform !== "linux") { unread = true; return foreground; }
+      if (foreground.argv?.length || process.platform !== "linux") return foreground;
       // herdr can report only pid/name. Read this process, never infer argv from
       // its name; an exited or inaccessible process provides no binding evidence.
       try {
         return { ...foreground, argv: readFileSync(`/proc/${foreground.pid}/cmdline`, "utf8").split("\0") };
-      } catch { unread = true; return foreground; }
+      } catch { return foreground; }
     })
     .filter((foreground) => {
       // herdr's `argv: null`, or one this read could not replace, names no executable
@@ -3260,9 +3270,9 @@ async function codexProcessesOf(paneId: string, known?: ProcessInfo | null): Pro
   if (list.length === 0) {
     const nested = await kiroCodexProcess(processInfo);
     // A PID can be reused between reads: the verified births identify the whole nested chain.
-    if (nested !== null) return { list: [nested], key: `kiro:${nested.identity}`, ...unread ? { unread: true as const } : {} };
+    if (nested !== null) return { list: [nested], key: `kiro:${nested.identity}` };
   }
-  return { list, key: list.map((process) => process.pid).sort((left, right) => left - right).join(","), ...unread ? { unread: true as const } : {} };
+  return { list, key: list.map((process) => process.pid).sort((left, right) => left - right).join(",") };
 }
 
 /** A missing label is expected for Kiro's outer PTY, but only its proven live Codex can use this fallback. */
@@ -3515,6 +3525,15 @@ async function peersFirstExchanges(
   return new Set(owners.keys());
 }
 
+/** Whether a foreground process's command line cannot be read: it may be a Codex of any store, on any thread. */
+function commandLinesUnread(info: ProcessInfo | undefined): boolean {
+  return (info?.foreground_processes ?? []).some(({ pid, argv }) => {
+    if (argv?.length) return false;
+    if (process.platform !== "linux") return true;
+    try { return readFileSync(`/proc/${pid}/cmdline`, "utf8").length === 0; } catch { return true; }
+  });
+}
+
 /**
  * A peer in a proven different native store cannot own this store's threads. Unknown stores
  * still compete, and an explicit lookup home must agree with every Codex process of this pane first.
@@ -3538,23 +3557,17 @@ async function withoutOtherCodexStores(
       const named = await certainProcessCodexHome(pid, argv ?? []);
       return named === null ? null : databaseIdentity(named);
     }));
-  // a foreground process whose command line cannot be read may be a Codex of any store
-  const unread = (info: ProcessInfo | undefined) => (info?.foreground_processes ?? []).some(({ pid, argv }) => {
-    if (argv?.length) return false;
-    if (process.platform !== "linux") return true;
-    try { return readFileSync(`/proc/${pid}/cmdline`, "utf8").length === 0; } catch { return true; }
-  });
   let store: string | null;
   try {
     store = databaseIdentity(home);
-    if (store === null || unread(await paneProcessInfo(paneId))
+    if (store === null || commandLinesUnread(await paneProcessInfo(paneId))
       || (await storesOf(processes)).some((actual) => actual !== store)) return panes;
   } catch { return panes; }
   const kept = await Promise.all(panes.map(async (pane) => {
     if (!rival(pane)) return pane;
     try {
       const info = await paneProcessInfo(pane.pane_id);
-      if (unread(info)) return pane;
+      if (commandLinesUnread(info)) return pane;
       const { list } = await codexProcessesOf(pane.pane_id, info ?? null);
       if (list.length === 0 || remote(list)) return pane;
       // every Codex process of the peer must sit in a known, different store
@@ -4131,8 +4144,8 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   }
   // only for a pane nothing else ties to a thread: never over its binding or resumed thread, nor onto another pane's
   if (matched === null && boundHere === undefined && resumed === null) {
-    const named = await namedConversation(paneId, cwd, home, agent.terminal_title_stripped ?? agent.terminal_title ?? "", processes);
-    if (named !== null && !await heldByAnotherPane(paneId, named, panes)) return named.path;
+    const named = await namedConversation({ paneId, cwd, home, title: agent.terminal_title_stripped ?? agent.terminal_title ?? "", processes, panes });
+    if (named !== null) return named;
   }
   if (matched !== null) {
     boundRollouts.delete(paneId);
