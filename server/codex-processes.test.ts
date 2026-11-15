@@ -4419,6 +4419,7 @@ describe("a Codex pane recovered by its saved thread name (#3442)", () => {
     screen = toolScreen;
     const peers = Array.from({ length: CODEX_PEER_PANE_LIMIT }, (_, at) => fixturePane(`peer-${at}`, join(root, "elsewhere")));
     for (const peer of peers) peerTitles.set(peer.pane_id, elsewhereTitle);
+    peerTitles.set("one-more", elsewhereTitle);
     expect(await codexTranscriptPath(root, root, home, [fixturePane(root), ...peers])).toBe(file);
     expect(await codexTranscriptPath(root, root, home, [fixturePane(root), ...peers, fixturePane("one-more", join(root, "elsewhere"))])).toBeNull();
   }, 20_000);
@@ -4454,6 +4455,8 @@ describe("a Codex pane recovered by its saved thread name (#3442)", () => {
     title = "Investigate a restored conversation | project";
     screen = `• ${answer}`;
     const panes = [fixturePane(root), fixturePane("peer")];
+    // a Codex there that shows another conversation by its title: only its binding holds this one
+    peerTitles.set("peer", elsewhereTitle);
     expect(await codexTranscriptPath("peer", root, home, panes)).toBe(file);
     screen = toolScreen;
     expect(await codexTranscriptPath(root, root, home, panes)).toBeNull();
