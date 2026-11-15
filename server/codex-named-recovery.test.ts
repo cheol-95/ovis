@@ -10,8 +10,8 @@ const message = (role: string, text: string) => JSON.stringify({ type: "response
 const answer = "The restored conversation contains this substantial answer about a precise synchronization boundary and stable terminal identity. This sentence carries enough distinct characters to verify the visible text independently of its saved title.";
 
 it("uses the latest saved name and requires one unique title match", () => {
-  expect(namedCodexThread(`${name} | project`, index(row(first, name)))).toBe(first);
-  expect(namedCodexThread(`⠋ ${name} | project`, index(row(first, name)))).toBe(first);
+  expect(namedCodexThread(`${name} | project`, index(row(first, name)))).toEqual({ id: first, name });
+  expect(namedCodexThread(`⠋ ${name} | project`, index(row(first, name)))).toEqual({ id: first, name });
   expect(namedCodexThread(`${name} | project`, index(row(first, name), row(second, name)))).toBeNull();
   // a namesake in another folder (not eligible here) may be the thread the pane resumed
   expect(namedCodexThread(`${name} | project`, index(row(first, name), row(second, name)), new Set([first]))).toBeNull();
@@ -26,7 +26,7 @@ it("refuses a cut index, malformed identity, short name or merely similar title"
   expect(namedCodexThread(name, index(row("not-a-thread", name)))).toBeNull();
   expect(namedCodexThread(`${name} | project`, index(row(first, name), { id: first, thread_name: null }))).toBeNull();
   // a row of another shape elsewhere does not turn recovery off for every pane
-  expect(namedCodexThread(`${name} | project`, index(row("not-a-thread", "other"), { id: second }, row(first, name)))).toBe(first);
+  expect(namedCodexThread(`${name} | project`, index(row("not-a-thread", "other"), { id: second }, row(first, name)))?.id).toBe(first);
   expect(namedCodexThread("Hi | project", index(row(first, "Hi")))).toBeNull();
   expect(namedCodexThread(`${name} extra | project`, index(row(first, name)))).toBeNull();
 });

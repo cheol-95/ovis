@@ -4291,6 +4291,35 @@ describe("a Codex pane recovered by its saved thread name (#3442)", () => {
     expect(await codexTranscriptPath(root, root, home, panes)).toBeNull();
   }, 20_000);
 
+  /** A saved name 200 characters long: the pane's own title still holds it whole, a busier title is cut inside it. */
+  const longName = `Investigate ${Array.from({ length: 40 }, (_, at) => `r${at}`).join(" ")}`.slice(0, 200);
+  // every form Codex writes a title in that titledCandidate reads: under GNU Screen (STY: "|" for the spinner, "*"
+  // for the dot, "?" for other non-ASCII), behind the dot, with the name after another item, by the thread-id item,
+  // and at the 240-character cap (a space dropped before the last character, the rest cut)
+  for (const [form, name, peerTitle] of [
+    ["under GNU Screen, at work", "Investigate a restored conversation", "| Investigate a restored conversation | elsewhere"],
+    ["under GNU Screen, behind the dot", "Investigate a restored conversation", "* | Investigate a restored conversation | elsewhere"],
+    ["behind the dot", "Investigate a restored conversation", "\u25cf Investigate a restored conversation | elsewhere"],
+    ["behind the dot and the spinner", "Investigate a restored conversation", "\u25cf \u2807 Investigate a restored conversation | elsewhere"],
+    ["after another item", "Investigate a restored conversation", "\u2819 elsewhere | Investigate a restored conversation"],
+    ["by its thread-id item, shortened", "Investigate a restored conversation", `elsewhere | ${named.slice(0, 29)}...`],
+    ["at the cap, a space dropped", "Investigate a restored conversation", `${"w".repeat(240 - " | Investigate a restoredc".length)} | Investigate a restoredc`],
+    ["under GNU Screen, its non-ASCII letters as ?", "\ud655\uc778 Investigate the restored records", "| ?? Investigate the restored records | elsewhere"],
+    ["cut at the cap inside a long name", longName, `\u2819 Working on the migration | ${longName} | elsewhere`.slice(0, 240)],
+  ] as const) {
+    it(`takes no thread another pane's Codex shows by the same name ${form}`, async () => {
+      const file = namedThread(name);
+      const panes = [fixturePane(root), fixturePane("peer", join(root, "elsewhere"))];
+      title = `${name} | project`;
+      screen = toolScreen;
+      foregrounds.set("peer", [{ pid: 2147483646, argv: ["/usr/bin/codex"] }]);
+      peerTitles.set("peer", elsewhereTitle);
+      expect(await codexTranscriptPath(root, root, home, panes)).toBe(file);
+      peerTitles.set("peer", peerTitle);
+      expect(await codexTranscriptPath(root, root, home, panes)).toBeNull();
+    }, 20_000);
+  }
+
   it("takes no thread once the pane moves to another conversation while the other panes are asked", async () => {
     const file = namedThread("Investigate a restored conversation");
     const panes = [fixturePane(root), fixturePane("peer", join(root, "elsewhere"))];

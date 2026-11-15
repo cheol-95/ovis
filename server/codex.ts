@@ -2404,8 +2404,8 @@ function titledCandidate(agent: Pick<AgentInfo, "terminal_title" | "terminal_tit
 /** A title as Codex writes it, without the activity spinner it puts first while a turn runs (and animates). */
 const titleWithoutSpinner = (title: string): string => asCodexTitle(title).replace(/^[\u2800-\u28ff]\s+/, "");
 
-/** A unique current session-index name in the terminal title; names alone never authorize a read. */
-export function namedCodexThread(title: string, index: string, eligible?: ReadonlySet<string>): string | null {
+/** A unique current session-index name in the terminal title, and that name; names alone never authorize a read. */
+export function namedCodexThread(title: string, index: string, eligible?: ReadonlySet<string>): { id: string; name: string } | null {
   const names = new Map<string, string>();
   try {
     for (const line of index.split("\n")) {
@@ -2419,9 +2419,10 @@ export function namedCodexThread(title: string, index: string, eligible?: Readon
     }
   } catch { return null; }
   const shown = titleWithoutSpinner(title);
-  const ids = [...names].filter(([, name]) => name.length >= 4 && (shown === name || shown.startsWith(`${name} | `))).map(([id]) => id);
+  const found = [...names].filter(([, name]) => name.length >= 4 && (shown === name || shown.startsWith(`${name} | `)));
   // unique among every saved name, not only this folder's: a namesake elsewhere may be the thread a picker resumed here
-  return ids.length === 1 && (eligible === undefined || eligible.has(ids[0]!)) ? ids[0]! : null;
+  const [id, name] = found.length === 1 ? found[0]! : [];
+  return id !== undefined && name !== undefined && (eligible === undefined || eligible.has(id)) ? { id, name } : null;
 }
 
 /** A long fragment of the latest prompt or answer. Only with independent unique name identity. */
@@ -2479,6 +2480,28 @@ export function namedCodexAppendCompatible(before: { dev: number; ino: number; s
   return before.dev === after.dev && before.ino === after.ino && after.size >= before.size;
 }
 
+/** The most characters Codex writes into a terminal title (at the cap it drops a space before the last one). */
+const CODEX_TITLE_CAP = 240;
+
+/**
+ * Whether another pane's title may show this thread, read as loosely as titledCandidate reads one: in either form
+ * Codex writes it (asCodexTitle, plain or under GNU Screen), behind its dot and spinner, as any of its items, without
+ * its spaces, cut at its cap, or by its thread-id item. Only a refusal rests on it.
+ */
+function titleMayShow(title: string, thread: { id: string; name: string }): boolean {
+  const shown = titledThread(title);
+  if (shown !== null && thread.id.toLowerCase().startsWith(shown)) return true;
+  return [false, true].some((screen) => {
+    const written = asCodexTitle(title, screen);
+    const text = written.replaceAll(" ", "");
+    const name = asCodexTitle(thread.name, screen).replaceAll(" ", "");
+    if (text.includes(name)) return true;
+    // cut at the cap: the title ends inside the name
+    return [...written].length >= CODEX_TITLE_CAP - 1
+      && Array.from({ length: Math.min(text.length, name.length) - 3 }, (_, at) => text.slice(-(at + 4))).some((tail) => name.startsWith(tail));
+  });
+}
+
 /** More other panes than this, and a saved name recovers no thread: each would cost a process read. */
 export const CODEX_PEER_PANE_LIMIT = 64;
 /** Process reads in flight at once while other panes are asked. */
@@ -2486,12 +2509,12 @@ const PEER_PROCESS_READS = 4;
 
 /**
  * Whether another pane has this thread: bound to it here, started on it (`codex resume <id>`, which binds
- * nothing), or a Codex there shows it by the same saved name (`titled`: opened through the picker or `resume
- * --last`, which leave no id on its command line). Every other pane is asked, in any folder and with any label, and
- * any of its processes may hold it; one that cannot be asked, a process whose command line cannot be read, or a
- * Codex whose title herdr does not report, counts as having it.
+ * nothing), or a Codex there may show it by its saved name or id (titleMayShow: opened through the picker or
+ * `resume --last`, which leave no id on its command line). Every other pane is asked, in any folder and with any
+ * label, and any of its processes may hold it; one that cannot be asked, a process whose command line cannot be
+ * read, or a Codex whose title herdr does not report, counts as having it.
  */
-async function heldByAnotherPane(paneId: string, thread: { id: string; path: string; titled: (title: string) => boolean }, panes?: HerdrPane[]): Promise<boolean> {
+async function heldByAnotherPane(paneId: string, thread: { id: string; path: string; name: string }, panes?: HerdrPane[]): Promise<boolean> {
   if ([...boundRollouts].some(([pane, bound]) => pane !== paneId && bound.path === thread.path)) return true;
   try {
     const others = (panes ?? (await sessionSnapshot()).panes).filter((pane) => pane.pane_id !== paneId);
@@ -2509,7 +2532,7 @@ async function heldByAnotherPane(paneId: string, thread: { id: string; path: str
           if (list.length === 0) continue;
           const peer = await paneGet(pane.pane_id);
           const title = peer.terminal_title_stripped ?? peer.terminal_title;
-          if (!title || thread.titled(title)) held = true;
+          if (!title || titleMayShow(title, thread)) held = true;
         } catch { held = true; }
       }
     }));
@@ -2545,8 +2568,9 @@ async function namedConversation({ paneId, cwd, home, title, processes, panes }:
     if (opened.db.query<{ cwd: unknown }, []>("SELECT DISTINCT cwd FROM threads").all().some((row) => folderTitle(row.cwd))) return null;
     const folder = storedCwdCondition(cwd);
     const eligible = new Set(opened.db.query<{ id: string }, string[]>(`SELECT id FROM threads WHERE ${folder.where} AND archived = 0${interactive(opened.db)}`).all(...folder.params).map((row) => row.id));
-    const id = namedCodexThread(title, index, eligible);
-    if (id === null) return null;
+    const named = namedCodexThread(title, index, eligible);
+    if (named === null) return null;
+    const { id } = named;
     const row = opened.db.query<{ rollout_path: string }, [string]>("SELECT rollout_path FROM threads WHERE id = ? AND archived = 0").get(id);
     opened.settled();
     const path = row && codexRolloutPath(row.rollout_path, home);
@@ -2558,7 +2582,7 @@ async function namedConversation({ paneId, cwd, home, title, processes, panes }:
     // the same 1 MiB the screen match reads: this runs on every poll while nothing binds the pane
     if (!namedCodexAnswerShown(screen.text, codexHistoryTail(path, 1024 * 1024, home))) return null;
     // before the recheck below, so a pane that moved on while the others were asked is caught by it
-    if (await heldByAnotherPane(paneId, { id, path, titled: (shown) => namedCodexThread(shown, index) === id }, panes)) return null;
+    if (await heldByAnotherPane(paneId, { ...named, path }, panes)) return null;
     const after = await codexAgentInfo(paneId);
     // the spinner moves on between reads while Codex works: the title it is ahead of is what must stay
     if (titleWithoutSpinner(after.terminal_title_stripped ?? after.terminal_title ?? "") !== titled) return null;
