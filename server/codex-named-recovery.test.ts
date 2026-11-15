@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { namedCodexAnswerShown, namedCodexAppendCompatible, namedCodexThread } from "./codex.ts";
+import { namedCodexAnswerShown, namedCodexThread } from "./codex.ts";
 
 const first = "00000000-0000-4000-8000-000000000001";
 const second = "00000000-0000-4000-8000-000000000002";
@@ -70,15 +70,6 @@ it("rejects short prefixes, clipping, changed punctuation and old prompts", () =
   }
   expect(namedCodexAnswerShown(`› ${asked}\n• Ran command`, message("user", asked) + "\n" + message("assistant", "Done") + "\n" + message("user", "다른 요청"))).toBe(false);
   expect(namedCodexAnswerShown(`• Ran command\n  └ ${asked}`, message("user", asked))).toBe(false);
-});
-
-it("allows an append but refuses replacement and truncation during a named read", () => {
-  const before = { dev: 1, ino: 2, size: 100 };
-  expect(namedCodexAppendCompatible(before, { ...before, size: 150 })).toBe(true);
-  expect(namedCodexAppendCompatible(before, { ...before, size: 100 })).toBe(true);
-  expect(namedCodexAppendCompatible(before, { ...before, size: 90 })).toBe(false);
-  expect(namedCodexAppendCompatible(before, { ...before, ino: 3 })).toBe(false);
-  expect(namedCodexAppendCompatible(before, { ...before, dev: 2 })).toBe(false);
 });
 
 it("takes no prompt still in the composer, nor one too short to tell", () => {

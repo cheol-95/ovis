@@ -2475,11 +2475,6 @@ export function namedCodexAnswerShown(screen: string, rollout: string): boolean 
   return false;
 }
 
-/** Appending is normal during tool work; replacement or truncation invalidates the read. */
-export function namedCodexAppendCompatible(before: { dev: number; ino: number; size: number }, after: { dev: number; ino: number; size: number }): boolean {
-  return before.dev === after.dev && before.ino === after.ino && after.size >= before.size;
-}
-
 /** The most characters Codex writes into a terminal title (at the cap it drops a space before the last one). */
 const CODEX_TITLE_CAP = 240;
 
@@ -2571,9 +2566,13 @@ async function namedConversation({ paneId, cwd, home, title, processes, panes }:
     const named = namedCodexThread(title, index, eligible);
     if (named === null) return null;
     const { id } = named;
-    const row = opened.db.query<{ rollout_path: string }, [string]>("SELECT rollout_path FROM threads WHERE id = ? AND archived = 0").get(id);
+    /** the rollout the store's row for the thread names now (a backtrack moves it to a new one) */
+    const rolloutOf = (db: Database) => {
+      const row = db.query<{ rollout_path: string }, [string]>("SELECT rollout_path FROM threads WHERE id = ? AND archived = 0").get(id);
+      return row && codexRolloutPath(row.rollout_path, home);
+    };
+    const path = rolloutOf(opened.db);
     opened.settled();
-    const path = row && codexRolloutPath(row.rollout_path, home);
     if (!path) return null;
     const meta = rolloutHeader(path);
     if (meta?.id !== id || typeof meta.cwd !== "string" || !sameDirectory(meta.cwd, cwd)) return null;
@@ -2591,8 +2590,17 @@ async function namedConversation({ paneId, cwd, home, title, processes, panes }:
     const shown = await paneRead({ paneId, source: "recent", lines: 400, stripAnsi: true });
     const reread = codexHistoryTail(path, 1024 * 1024, home);
     const finalMeta = rolloutHeader(path);
-    return namedCodexAnswerShown(shown.text, reread) && namedCodexAppendCompatible(before, statSync(path))
-      && finalMeta?.id === id && typeof finalMeta.cwd === "string" && sameDirectory(finalMeta.cwd, cwd)
+    const now = statSync(path);
+    // the store as it is now, not the read above: its row must still name the rollout read
+    const store = openCodexStore(home);
+    let stored: string | null | undefined;
+    try {
+      stored = rolloutOf(store.db);
+      store.settled();
+    } finally { store.db.close(); }
+    // appending is normal during tool work; a replaced or cut file is another read
+    return namedCodexAnswerShown(shown.text, reread) && now.dev === before.dev && now.ino === before.ino && now.size >= before.size
+      && stored === path && finalMeta?.id === id && typeof finalMeta.cwd === "string" && sameDirectory(finalMeta.cwd, cwd)
       && signature(indexStat) === signature(statSync(indexPath)) ? path : null;
   } catch { return null; }
   finally { opened?.db.close(); }

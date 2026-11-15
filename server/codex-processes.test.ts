@@ -4337,6 +4337,52 @@ describe("a Codex pane recovered by its saved thread name (#3442)", () => {
     expect(await codexTranscriptPath(root, root, home, panes)).toBeNull();
   }, 20_000);
 
+  it("takes no rollout the thread's row no longer names once the other panes are asked (a backtrack)", async () => {
+    const file = namedThread("Investigate a restored conversation");
+    const panes = [fixturePane(root), fixturePane("peer", join(root, "elsewhere"))];
+    title = "Investigate a restored conversation | project";
+    screen = toolScreen;
+    foregrounds.set("peer", [{ pid: 2147483646, argv: ["/usr/bin/codex"] }]);
+    peerTitles.set("peer", elsewhereTitle);
+    expect(await codexTranscriptPath(root, root, home, panes)).toBe(file);
+    // Codex backtracks the thread while the peer is read: its row moves to a new rollout, the old one stays on disk
+    const moved = join(home, "sessions", `rollout-${named}-backtracked.jsonl`);
+    onRequest = (method, pane) => {
+      if (method !== "pane.process_info" || pane !== "peer" || fs.existsSync(moved)) return;
+      fs.copyFileSync(file, moved);
+      const db = new Database(join(home, "state_5.sqlite"));
+      db.query("UPDATE threads SET rollout_path = ? WHERE id = ?").run(moved, named);
+      db.close();
+    };
+    expect(await codexTranscriptPath(root, root, home, panes)).toBeNull();
+  }, 20_000);
+
+  for (const change of ["replaced by a copy", "cut back"] as const) {
+    it(`takes no rollout ${change} while the other panes are asked`, async () => {
+      const file = namedThread("Investigate a restored conversation");
+      const read = fs.readFileSync(file, "utf8");
+      appendFileSync(file, `${JSON.stringify({ type: "event_msg", payload: { type: "token_count", info: "later" } })}\n`);
+      const panes = [fixturePane(root), fixturePane("peer", join(root, "elsewhere"))];
+      title = "Investigate a restored conversation | project";
+      screen = toolScreen;
+      foregrounds.set("peer", [{ pid: 2147483646, argv: ["/usr/bin/codex"] }]);
+      peerTitles.set("peer", elsewhereTitle);
+      expect(await codexTranscriptPath(root, root, home, panes)).toBe(file);
+      // the same prompt still recorded either way: only the file's identity or its size tells
+      let done = false;
+      onRequest = (method, pane) => {
+        if (method !== "pane.process_info" || pane !== "peer" || done) return;
+        done = true;
+        if (change === "cut back") writeFileSync(file, read);
+        else {
+          fs.copyFileSync(file, `${file}.new`);
+          fs.renameSync(`${file}.new`, file);
+        }
+      };
+      expect(await codexTranscriptPath(root, root, home, panes)).toBeNull();
+    }, 20_000);
+  }
+
   it("takes no thread named like the folder, which a title without a thread name shows", async () => {
     namedThread(asCodexTitle(basename(root)));
     title = basename(root);
