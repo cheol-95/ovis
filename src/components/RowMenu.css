@@ -77,11 +77,37 @@
 
 .row-sheet-item.is-disabled:active { background: transparent; }
 
-/* a picker's item that is what is open now: named in the strong colour, with its mark unfaded */
+/* a picker's item that is what is open now (the open tab, the selected pane): filled as the
+   sidebar fills its selected workspace and agent, and named in the strong colour at the selected
+   weight, which is what still tells it from a hovered row (the same fill) and marks it in a palette
+   whose fill barely shows; an item with a button at its end (a tab list's Close) is filled across the whole line */
 .row-menu .menu-item[aria-current="true"],
 .row-sheet-item[aria-current="true"] {
+  background: var(--bg-hover);
   color: var(--text-strong);
-  font-weight: var(--fw-semibold);
+  font-weight: var(--fw-selected);
+}
+
+.row-sheet-line.is-current {
+  border-radius: var(--radius-md);
+  background: var(--bg-hover);
+}
+
+/* forced colors repaint the fill as Canvas: a leading Highlight bar instead, as the sidebar's rows */
+@media (forced-colors: active) {
+  .row-menu .menu-item[aria-current="true"],
+  .row-sheet-item[aria-current="true"] {
+    /* drawn in the menu's own padding, so the row's icon and label stay in line with the others */
+    margin-inline-start: calc(-2 * var(--hairline));
+    border-inline-start: calc(2 * var(--hairline)) solid Highlight;
+  }
+
+  /* the sheet's list scrolls, and a scroll box clips what is pulled past its edge: it gets the bar's
+     room from the sheet's own padding, so its rows stay where they are */
+  .row-sheet-items {
+    margin-inline: calc(-2 * var(--hairline));
+    padding-inline: calc(2 * var(--hairline));
+  }
 }
 
 /* what the menu is about, above its items: a line of its own, ruled off from them */
@@ -89,6 +115,18 @@
   padding: var(--space-2);
   margin-bottom: var(--space-1);
   border-bottom: var(--hairline) solid var(--border);
+}
+
+/* what the row waits for, under the header: a row with no room for it leaves it out whole, and a touch screen too
+   wide for the sheet has no tooltip to say it, so the popover says it, wrapped and whole, as the sheet does */
+.row-menu-alert {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--status-blocked);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-tight);
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .row-menu-divider {
@@ -200,6 +238,23 @@
   -webkit-touch-callout: default;
 }
 
+/* what the row waits for, in the agent's own words: the first thing under its name and place, in the waiting
+   state's colour, since a one-line row has no room to say it. It wraps and can be copied, as the name can. The
+   words are the agent's, of any length: past a fifth of the screen they scroll here instead of pushing the name
+   and the actions out of the sheet, and a fifth, not the detail's third, since both can be at their limit at once */
+.row-sheet-alert {
+  max-height: 20vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-top: var(--space-1);
+  color: var(--status-blocked);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
 /* what the row cut, said whole: it wraps, even inside a long word. Plugin tokens can be dozens of
    long values, so it scrolls past a third of the screen instead of pushing the actions out */
 .row-sheet-detail {
@@ -245,6 +300,13 @@
   width: var(--icon-size);
   height: var(--icon-size);
   color: var(--text-dim);
+}
+
+/* the app's own mark in an item's icon place (OvisMark.tsx: Back to Ovis), in the icon's box */
+.row-sheet-item .ovis-mark {
+  flex: 0 0 auto;
+  width: var(--icon-size);
+  height: var(--icon-size);
 }
 
 /* an item with a button of its own at its end (a tab list's Close): the item takes the row */

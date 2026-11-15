@@ -179,7 +179,9 @@ export const ADMISSION_MS = 10 * 60_000;
  * A member's answer to a device asking through PC X. A request to join the account is approved,
  * and the device added everywhere, only when the account service itself (not X) saw a device of
  * this account ring at X with that key in the last 10 minutes: a PC that shows another key than
- * the one that rang is refused, and declined on X. A request for X alone is just answered on X.
+ * the one that rang is refused, and declined on X. Another PC of the account vouched for (`vouched`)
+ * is checked the same way and then only answered on X: nothing is signed for it. Any other request
+ * for X alone is just answered on X.
  */
 export async function approveJoin(options: {
   request: RemotePairingRequest; digits: string; through: string; service: AccountService;
@@ -190,7 +192,7 @@ export async function approveJoin(options: {
   shown?: Admission | null;
 }): Promise<void> {
   const { request } = options;
-  if (request.intent !== "account") { await options.decide("approve", options.digits); return; }
+  if (request.intent !== "account" && request.vouched !== true) { await options.decide("approve", options.digits); return; }
   const vouched = vouchedAdmission(await options.service.recentAdmissions(), options.through, request.key, (options.now ?? Date.now)());
   if (vouched === undefined) {
     await options.decide("decline");
@@ -200,7 +202,8 @@ export async function approveJoin(options: {
   // answered, and the card shows the new details before anyone approves them
   if (options.shown !== undefined && (options.shown === null || !sameAdmission(options.shown, vouched))) throw new AdmissionChangedError();
   await options.decide("approve", options.digits);
-  await options.admit(vouched);
+  // a PC vouched for joins X alone: no add, no introduction
+  if (request.intent === "account") await options.admit(vouched);
 }
 
 /**
@@ -343,7 +346,8 @@ export const PEER_STATUS_MS = 8_000;
 /** Keys one enrollment holds at most (server/account/holds.ts ACCOUNT_HELD_MAX). */
 const HELD_MAX = 4096;
 
-function within<T>(ms: number, promise: Promise<T>): Promise<T> {
+/** `promise`, or a refusal once it has not settled within `ms`: what it then answers is dropped. */
+export function within<T>(ms: number, promise: Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   // fixed wait: a deadline for a PC that does not answer, not a pause
   const deadline = new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("The PC did not answer in time")), ms); });

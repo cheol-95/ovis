@@ -1,4 +1,5 @@
 import { existsSync, rmSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename } from "node:path";
 import { createConnection } from "node:net";
 import type { Socket } from "bun";
@@ -112,10 +113,39 @@ export interface AdapterOptions {
   platform?: NodeJS.Platform;
   /** this PC's process table, read afresh within `timeoutMs` each time; a test stands in for it */
   processTable?: (timeoutMs: number) => Promise<ProcessRow[]>;
+  /** what every shell the adapter starts runs in, over the core's own and under a call's `env` (terminal-env.ts) */
+  terminalEnv?: () => Promise<Record<string, string>>;
 }
 
 /** The sessions a terminal named that it keeps as candidates, the newest last. */
 const NAMED_SESSIONS = 32;
+/**
+ * A terminal's named OpenCode sessions, space separated, kept on it through a restart of Ovis (docs/herdr-core-layout.md):
+ * all of its candidates, about 1 KB at most, since the pane may still show any of them, not only the newest.
+ */
+export const OPENCODE_SESSIONS_LABEL = "ovis.opencode";
+
+/**
+ * Writes a terminal's named OpenCode sessions to its label when they change from what it holds, one
+ * terminal's writes in order. A write that fails is tried again on the next change. Once stopped, a
+ * write still queued is dropped rather than open a new line to hc after the server closed it.
+ */
+export function sessionLabeler(hc: Pick<HcConnection, "call">): { label: (address: string, kept: string, named: readonly string[]) => void; forget: (address: string) => void; stop: () => void } {
+  const written = new Map<string, string>();
+  const queue = new Map<string, Promise<void>>();
+  let stopped = false;
+  const label = (address: string, kept: string, named: readonly string[]) => {
+    const value = named.join(" ");
+    if (stopped || value === (written.get(address) ?? kept)) return;
+    written.set(address, value);
+    const run = (queue.get(address) ?? Promise.resolve())
+      .then(async () => { if (!stopped) await hc.call("terminal.label", { terminal: address, labels: { [OPENCODE_SESSIONS_LABEL]: value } }); })
+      .then(() => {}, () => { if (written.get(address) === value) written.delete(address); });
+    queue.set(address, run);
+    void run.then(() => { if (queue.get(address) === run) queue.delete(address); });
+  };
+  return { label, forget: (address) => written.delete(address), stop: () => { stopped = true; } };
+}
 
 export async function startHerdrCoreAdapter(hc: HcConnection, socketPath: string, observeSeen?: SeenObserver, options: AdapterOptions = {}): Promise<HerdrCoreAdapter> {
   if (existsSync(socketPath)) {
@@ -138,24 +168,39 @@ export async function startHerdrCoreAdapter(hc: HcConnection, socketPath: string
     return firstTurns.get(terminal.address)!;
   };
   // the OpenCode sessions each terminal named while they were pending (snapshot.ts `opencodeRecords`),
-  // in every snapshot and status event, so a turn that ended between two snapshots is still one
+  // in every snapshot and status event, so a turn that ended between two snapshots is still one. A
+  // terminal first seen running OpenCode starts from the sessions its `ovis.opencode` label kept, so
+  // one that rests through a restart of Ovis still shows its session; an empty entry is a terminal
+  // seen without OpenCode, whose label is cleared and never read again.
   const sessions = new Map<string, string[]>();
-  const noteSession = (address: string, status: HcStatus | null | undefined, records: unknown): readonly string[] => {
-    if (agentOfStatus(status) !== "opencode") { sessions.delete(address); return []; }
+  const sessionLabels = sessionLabeler(hc);
+  const noteSession = (address: string, status: HcStatus | null | undefined, records: unknown, labels: Readonly<Record<string, string>> | undefined): readonly string[] => {
+    const kept = labels?.[OPENCODE_SESSIONS_LABEL] ?? "";
+    if (agentOfStatus(status) !== "opencode") {
+      sessions.set(address, []);
+      sessionLabels.label(address, kept, []);
+      return [];
+    }
     const pending = opencodeRecords(records);
-    const named = [...(sessions.get(address) ?? []).filter((id) => !pending.includes(id)), ...pending].slice(-NAMED_SESSIONS);
+    const before = sessions.get(address) ?? kept.split(" ").filter((id) => id !== "");
+    const named = [...before.filter((id) => !pending.includes(id)), ...pending].slice(-NAMED_SESSIONS);
     sessions.set(address, named);
+    sessionLabels.label(address, kept, named);
     return named;
   };
   // the sessions a terminal named and those whose title it shows, decided in agent-identity.ts `paneSession`
   const sessionOf: SessionOf = (terminal) => {
-    const named = noteSession(terminal.address, terminal.status, terminal.records);
+    const named = noteSession(terminal.address, terminal.status, terminal.records, terminal.labels);
     const titled = named.length === 0 || !terminal.title || !options.opencodeTitled ? [] : options.opencodeTitled(terminal.title);
     return paneSession(agentOfStatus(terminal.status), { named, titled });
   };
   const forgetTurns = (live: ReadonlySet<string>) => {
     for (const address of firstTurns.keys()) if (!live.has(address)) firstTurns.delete(address);
-    for (const address of sessions.keys()) if (!live.has(address)) sessions.delete(address);
+    for (const address of sessions.keys()) {
+      if (live.has(address)) continue;
+      sessions.delete(address);
+      sessionLabels.forget(address);
+    }
   };
   const answers = createAnswers(hc, firstTurn, forgetTurns, options, sessionOf);
   const listener = Bun.listen<ConnectionState>({
@@ -198,6 +243,7 @@ export async function startHerdrCoreAdapter(hc: HcConnection, socketPath: string
   return {
     socketPath,
     stop: () => {
+      sessionLabels.stop();
       listener.stop(true);
       rmSync(socketPath, { force: true });
     },
@@ -404,6 +450,8 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
   const processTable = options.processTable ?? windowsProcessTable;
   /** A Windows pane's programs are read off this PC's process table, which says nothing of another machine's. */
   const programsUnseen = platform === "win32" && options.otherMachine === true;
+  /** Where a shell starts in place of `folder`: hc refuses a folder since removed (a deleted worktree) with `spawn_failed`, so this PC's home instead; another machine's folders are not on this disk, so they go as they are. */
+  const startFolder = (folder: string | undefined): string | undefined => !folder || options.otherMachine || existsSync(folder) ? folder : homedir();
 
   const terminal = async (address: string, missing = "pane_not_found"): Promise<HcTerminal> => {
     const found = await hc.call("terminal.get", { terminal: address }).catch((error: unknown) => {
@@ -614,7 +662,9 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
    * answers a new one: the workspace, tab and pane it shows as in the snapshot right after.
    */
   const startShell = async (params: Record<string, unknown>, labels: Record<string, string>) => {
-    const env = isRecord(params["env"]) ? Object.fromEntries(Object.entries(params["env"]).filter((entry): entry is [string, string] => typeof entry[1] === "string")) : undefined;
+    const asked = isRecord(params["env"]) ? Object.fromEntries(Object.entries(params["env"]).filter((entry): entry is [string, string] => typeof entry[1] === "string")) : undefined;
+    const given = { ...await options.terminalEnv?.(), ...asked };
+    const env = Object.keys(given).length > 0 ? given : undefined;
     // a terminal a client starts has had nothing finish yet (herdr-app docs/labels.md)
     const record = await hc.call("terminal.run", { keep: true, labels: { [SEEN_LABEL]: "0", ...labels }, ...(typeof params["cwd"] === "string" ? { cwd: params["cwd"] } : {}), ...(env ? { env } : {}) });
     const shown = await snapshot();
@@ -964,7 +1014,7 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
       const workspaceName = shown.workspaces.find((candidate) => candidate.workspace_id === pane.workspace_id)?.label;
       const names = { ...(workspaceName ? { [WORKSPACE_NAME_LABEL]: workspaceName } : {}), ...(labels[TAB_NAME_LABEL] ? { [TAB_NAME_LABEL]: labels[TAB_NAME_LABEL] } : {}), ...(labels[WORKTREE_LABEL] ? { [WORKTREE_LABEL]: labels[WORKTREE_LABEL] } : {}) };
       // a move from herdr (runtime-move-run.ts) names the folder the new side had there
-      const cwd = typeof params["cwd"] === "string" && params["cwd"] !== "" ? params["cwd"] : pane.cwd;
+      const cwd = typeof params["cwd"] === "string" && params["cwd"] !== "" ? params["cwd"] : startFolder(pane.cwd ?? undefined);
       const { root_pane } = await startShell({ ...(cwd ? { cwd } : {}) }, { [SPACE_LABEL]: pane.workspace_id, [TAB_LABEL]: pane.tab_id, ...names, ...moveLabel(params) });
       try {
         await editLayout((layout) => {
@@ -1261,7 +1311,7 @@ function labelsOf(labels: unknown): Record<string, string> {
  * the status collector reopens it and reads what it missed from a fresh snapshot.
  */
 /** What an event says of a terminal's OpenCode session (startHerdrCoreAdapter `noteSession`), so a turn too short for any read is still remembered. */
-type SessionNote = (address: string, status: HcStatus | null | undefined, records: unknown) => unknown;
+type SessionNote = (address: string, status: HcStatus | null | undefined, records: unknown, labels: Readonly<Record<string, string>> | undefined) => unknown;
 
 async function subscribe(hc: HcConnection, socket: Socket<ConnectionState>, request: Request, firstTurn: FirstTurn, host: CoreHost, observeSeen?: SeenObserver, noteSession?: SessionNote): Promise<void> {
   const subscriptions = Array.isArray(request.params["subscriptions"]) ? request.params["subscriptions"].filter(isRecord) : [];
@@ -1311,7 +1361,7 @@ async function subscribe(hc: HcConnection, socket: Socket<ConnectionState>, requ
     const turn = typeof record["turn"] === "number" ? record["turn"] : 0;
     const labels = labelsOf(record["labels"]);
     const first = firstTurn({ address: record["address"], turn });
-    noteSession?.(record["address"], status, record["records"]);
+    noteSession?.(record["address"], status, record["records"], labels);
     known.set(record["address"], { status, front: foregroundOf(record["foreground"]), cwd: typeof record["cwd"] === "string" ? record["cwd"] : undefined, argv: Array.isArray(record["argv"]) && record["argv"].every((word) => typeof word === "string") ? record["argv"] : undefined, pid: typeof record["pid"] === "number" ? record["pid"] : null, title: typeof record["title"] === "string" ? record["title"] : null, turn, first, labels, shown: shownStatusOf(status, turn, labels, first) });
     observeSeen?.(record["address"], turn, labels);
   };
@@ -1345,7 +1395,7 @@ async function subscribe(hc: HcConnection, socket: Socket<ConnectionState>, requ
         reported.set(paneId, facts);
         if (facts !== before) lifecycle("pane.updated", "pane_updated", paneId);
         const status = statusOf(report);
-        noteSession?.(paneId, status, event.data?.["records"]);
+        noteSession?.(paneId, status, event.data?.["records"], known.get(paneId)?.labels);
         const entry = known.get(paneId);
         if (!entry) {
           if (statusPanes.has(paneId)) tell(paneId, status, agentStatusOf(status));

@@ -26,7 +26,7 @@ export interface AccountSession {
   readonly refresh_token: string;
   /** when the access token runs out, in ms since the epoch */
   readonly expires_at: number;
-  /** random, and kept by every refresh: a sign-out or a leave ends only the sign-in it was started for (one saved by an older build has none) */
+  /** which sign-in this is, kept by every refresh: random for one made by this build (sessionOf), a digest of the saved refresh token for one saved before sign-ins had an id (service.ts, session) */
   readonly sign_in_id?: string;
 }
 
@@ -102,9 +102,11 @@ export interface AccountStore {
   updateMany<N extends Exclude<Name, "key">>(names: readonly N[], change: (current: Many<N>) => Many<N>): Promise<void>;
   /**
    * Forgets the key, the sign-in and every record but `leaving`, in one transaction: a new key is made
-   * on next use, which no PC knows. A sign-in `keep` accepts stays (one made after a leave began).
+   * on next use, which no PC knows. A sign-in `keep` accepts stays (one made after a leave began). With `only`,
+   * nothing is cleared unless it accepts the sign-in stored then (read in the same transaction); the records
+   * `spare` names stay as `leaving` does.
    */
-  clear(keep?: (session: AccountSession) => boolean): Promise<void>;
+  clear(keep?: (session: AccountSession) => boolean, options?: { readonly only?: (session: AccountSession | undefined) => boolean; readonly spare?: readonly Exclude<Name, "key" | "session">[] }): Promise<void>;
 }
 
 async function newKey(): Promise<AccountKey> {
@@ -134,11 +136,12 @@ export function memoryAccountStore(): AccountStore {
         if (next[name] === undefined) records.delete(name); else records.set(name, next[name]);
       }
     },
-    async clear(keep) {
-      const leaving = records.get("leaving");
+    async clear(keep, options) {
       const session = records.get("session") as AccountSession | undefined;
+      if (options?.only !== undefined && !options.only(session)) return;
+      const kept = (["leaving", ...options?.spare ?? []] as const).map((name) => [name, records.get(name)] as const);
       records.clear();
-      if (leaving !== undefined) records.set("leaving", leaving);
+      for (const [name, value] of kept) if (value !== undefined) records.set(name, value);
       if (session !== undefined && keep?.(session) === true) records.set("session", session);
     },
   };
@@ -239,14 +242,15 @@ export const indexedAccountStore: AccountStore = {
       return () => undefined;
     });
   },
-  clear(keep) {
+  clear(keep, options) {
     return transact("readwrite", (store) => {
-      const leaving: IDBRequest<Records["leaving"] | undefined> = store.get("leaving");
+      const kept = (["leaving", ...options?.spare ?? []] as const).map((name) => [name, store.get(name)] as const);
       const session: IDBRequest<AccountSession | undefined> = store.get("session");
-      // requests run in order: both reads are done when the second answers
+      // requests run in order: every read is done when the last answers
       session.onsuccess = () => {
+        if (options?.only !== undefined && !options.only(session.result)) return;
         store.clear();
-        if (leaving.result !== undefined) store.put(leaving.result, "leaving");
+        for (const [name, read] of kept) if (read.result !== undefined) store.put(read.result, name);
         if (session.result !== undefined && keep?.(session.result) === true) store.put(session.result, "session");
       };
       return () => undefined;

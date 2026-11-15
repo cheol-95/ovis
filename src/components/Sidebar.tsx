@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type AnimationEvent, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
-import { ChevronDown, ChevronRight, Ellipsis, Folder, FolderOpen, GitBranch, History, Layers, ListChecks, Pencil, Pin, PinOff, Plus, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
+import { Bot, ChevronDown, ChevronRight, Ellipsis, Folder, FolderOpen, GitBranch, History, Layers, ListChecks, Pencil, Pin, PinOff, Plus, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
 
 import "./Sidebar.css";
 
@@ -19,7 +19,6 @@ import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
 import { WorktreeDialog, type WorktreeDialogMode } from "./WorktreeDialog.tsx";
 import { focusWorkspaceListToggle } from "../lib/focus.ts";
 import { folderName, shortPathTitle, stripPaneChrome, tabTitle, taskRowLines } from "../lib/paneName.ts";
-import { ApiError } from "../lib/api.ts";
 import { useT } from "../lib/i18n.ts";
 import { contextLeftPercent, formatTokens } from "../lib/compose.ts";
 import { userErrorMessage } from "../lib/userError.ts";
@@ -33,6 +32,7 @@ import { SHEET_QUERY } from "../lib/sheets.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { useWorktreeBranches } from "../lib/useWorktreeBranches.ts";
 import { useSessionHistoryOffered } from "../lib/useSessionHistoryOffered.ts";
+import { useRepositoryWorkspaces } from "../lib/repositoryWorkspaces.ts";
 import { watchTouchReorder } from "../lib/touchReorder.ts";
 import { isBackgroundWorkspace, placeBlock, splitBackgroundGroups, workspaceMoves, worktreeGroups as groupWorktrees } from "../lib/workspaceOrder.ts";
 import { worktreeLabel } from "../lib/worktreeName.ts";
@@ -107,8 +107,12 @@ function alignBreath(event: AnimationEvent<HTMLSpanElement>) {
   for (const animation of event.currentTarget.getAnimations()) animation.startTime = 0;
 }
 
-/** `detail`: what the agent itself said of the state (a blocked agent's reason), after the state's words */
-export function StatusBadge({ status, compact = false, detail = null }: { status?: AgentStatus; compact?: boolean; detail?: string | null }) {
+/**
+ * `detail`: what the agent itself said of the state (a blocked agent's reason), after the state's words. `label`: the
+ * state in the caller's own words, which are then the badge's everywhere: its name, its tooltip and its text (the
+ * inbox mode names a state as its chip and its filters do, lib/inboxRow.ts).
+ */
+export function StatusBadge({ status, compact = false, detail = null, label: said }: { status?: AgentStatus; compact?: boolean; detail?: string | null; label?: string }) {
   const t = useT();
   const { settings } = useSettings();
   const value = knownStatus(status);
@@ -116,7 +120,7 @@ export function StatusBadge({ status, compact = false, detail = null }: { status
   // the description names the state in words a reader knows (G-020): "waiting" is said whole, and a state nobody
   // reported (an agent that said nothing yet, a PC that is away) is said to be unknown, not read as a dash
   const stateWords = value === "waiting" ? t("Agent waiting on background work") : value === "unknown" ? t("Agent state unknown") : t("Agent {status}", { status: label });
-  const description = detail ? `${stateWords} — ${detail}` : stateWords;
+  const description = said ?? (detail ? `${stateWords} — ${detail}` : stateWords);
   // classic (the default): a compact cell draws only the states that ask for a look: a red question
   // mark while the agent waits for an answer, a green dot once it has finished and was not looked
   // at, a working-coloured dot that breathes while it runs, a working-coloured ring held still while
@@ -135,7 +139,7 @@ export function StatusBadge({ status, compact = false, detail = null }: { status
       {compact && indicators !== "classic" && <span className="sidebar-status-glyph" aria-hidden="true" onAnimationStart={value === "working" ? alignBreath : undefined}>{indicatorGlyph(value, indicators)}</span>}
       {compact && indicators === "classic" && value === "blocked" && <span className="sidebar-status-mark" aria-hidden="true">?</span>}
       {compact && indicators === "classic" && dot && <span className="sidebar-status-dot" aria-hidden="true" onAnimationStart={value === "working" ? alignBreath : undefined} />}
-      <span className={compact ? "visually-hidden" : undefined}>{label}</span>
+      <span className={compact ? "visually-hidden" : undefined}>{said ?? label}</span>
     </span>
   );
 }
@@ -300,38 +304,9 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
   // the roster's wait is a live region in the list from its first render, clipped while empty (never
   // display: none); its words land a frame after it (lib/useAnnouncedText.ts)
   const loadingWords = useAnnouncedText(snapshot ? null : t("Loading workspaces…"));
-  // herdr marks only a workspace it opened as a worktree. One made on a repository's folder has no
-  // `worktree`, and it is where the first worktree starts: each is asked once whether git answers
-  // for it. A refusal (4xx) is an answer and is kept; a failure to ask is not, so that workspace
-  // keeps what was known of it and is asked again when the set changes or the PC comes back.
-  const unmarked = (snapshot?.workspaces ?? []).filter((workspace) => !workspace.worktree).map((workspace) => workspace.workspace_id).join("\n");
-  const [repositoryWorkspaces, setRepositoryWorkspaces] = useState<ReadonlySet<string>>(() => new Set());
-  const repositoryAnswers = useRef(new Map<string, boolean>());
-  useEffect(() => {
-    const known = repositoryAnswers.current;
-    // a watching device is refused the listing (#2250), and a PC the Herdr app lays out offers no worktree: nothing to ask
-    if (!online || unmarked === "" || watching || !worktreesOffered) { known.clear(); setRepositoryWorkspaces(new Set()); return; }
-    const ids = unmarked.split("\n");
-    for (const id of [...known.keys()]) if (!ids.includes(id)) known.delete(id);
-    let live = true;
-    const publish = () => { if (live) setRepositoryWorkspaces(new Set(ids.filter((id) => known.get(id) === true))); };
-    publish();
-    void Promise.all(ids.filter((id) => !known.has(id)).map((id) => listWorktrees(id).then(
-      () => { if (live) known.set(id, true); },
-      (error: unknown) => { if (live && error instanceof ApiError && error.status < 500) known.set(id, false); },
-    ))).then(publish);
-    return () => { live = false; };
-  }, [listWorktrees, unmarked, online, watching, worktreesOffered]);
-  // a repository's folder that stops being a checkout is refused on a later poll: that refusal is an answer too (#2726)
-  const notCheckout = useCallback((id: string) => {
-    repositoryAnswers.current.set(id, false);
-    setRepositoryWorkspaces((current) => {
-      if (!current.has(id)) return current;
-      const next = new Set(current);
-      next.delete(id);
-      return next;
-    });
-  }, []);
+  // the unmarked workspaces git answers for: a repository's folder, where the first worktree starts
+  // (lib/repositoryWorkspaces.ts, shared with the palette)
+  const { repositoryWorkspaces, notCheckout } = useRepositoryWorkspaces({ machineId, snapshot, online, watching, offered: worktreesOffered, listWorktrees });
   const { branches, rememberOpened } = useWorktreeBranches(snapshot, online, true, repositoryWorkspaces, watching, notCheckout);
   // the sidebar's filter (lib/sidebarFilter.ts): which rows stay, which are context; it learns the branch
   // each row says from here, since the inventory is this roster's. What it last said outlives a fold of the
@@ -615,6 +590,9 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
       pinned
         ? { id: "unpin-workspace", label: t("Unpin workspace"), icon: PinOff, run: () => togglePin(state) }
         : { id: "pin-workspace", label: t("Pin workspace"), icon: Pin, run: () => togglePin(state) },
+      // the tab row's own New tab with agent…, aimed at this workspace without opening it first (#3772); a tab is a drive
+      // action, so a watching device is not offered it, and a PC that is not connected has no roster to make it in
+      ...(online && !watching ? [{ id: "new-tab", label: t("New tab with agent…"), icon: Bot, run: () => actions.openNewTab({ machineId, workspaceId: workspace.workspace_id }) }] : []),
       ...(!renameOffered || !renamesWorkspace(workspace.workspace_id) ? [] : [{ id: "rename-workspace", label: t("Rename workspace"), icon: Pencil, run: () => beginWorkspaceRename(workspace) }]),
       // the folder's earlier sessions, listed for the agent of the pane the row opens
       ...(historyOffered && !watching ? [{ id: "session-history", label: t("Earlier sessions…"), icon: History, run: () => actions.openSessionHistory({ machineId, workspaceId: workspace.workspace_id, agent: (panes.length > 0 ? currentPane(workspace, panes) : null)?.agent ?? null }) }] : []),

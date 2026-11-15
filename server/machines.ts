@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync
 import { createServer as tcpServer } from "node:net";
 import { hostname } from "node:os";
 import { basename, join, posix } from "node:path";
+import { version } from "../package.json";
 import { BRIDGE_PROTOCOL, LOCAL_MACHINE, OWN_UPDATE_OFFER, REMOTE_BUNDLE_VERSION, type BridgeIdentity, type HerdrIdentity, type RemoteOvis, type Machine, type MachineAction, type MachineEvent, type MachineSettings, type PcInstallJob, type PcInstallRequest, type PcUpdateAll, type PcUpdateOffer, type SetupAction, type SetupJob, type SetupProgress, type SetupRequest, type SshTarget } from "../shared/machines.ts";
 import type { ServerMessage, SessionSnapshot, HerdrPane } from "../shared/protocol.ts";
 import type { PushService } from "./push.ts";
@@ -38,11 +39,30 @@ import { warmSshAddresses } from "./ssh-address.ts";
 import { readMoveOffer } from "./remote-move.ts";
 
 import type { RelaySocket } from "../shared/relay-channel.ts";
-import { newRouteProbes, openRelayPcTunnel, RelayPcKey, RelayPcRefused, relayPcLabel, removeRelayPcKey, type RelayPcTunnel, type RouteProbes } from "./relay-pc.ts";
+import { newRouteProbes, openRelayPcTunnel, RelayPcKey, RelayPcOutdated, RelayPcRefused, relayPcLabel, removeRelayPcKey, vouchedSupport, type RelayPcTunnel, type RouteProbes, type VouchedSupport } from "./relay-pc.ts";
+import { importPublicKey } from "../shared/relay-e2ee.ts";
+import { deriveServerId } from "../shared/relay-server-proof.ts";
+import { validateOffer } from "../shared/relay-offer.ts";
 import type { HcMachine, MachineBridge } from "./herdr-core/machine-bridge.ts";
 
 /** a PC keeps the six-digit code in its offer for 10 minutes at most (server/devices.ts) */
 const RELAY_FOUND_MS = 10 * 60_000;
+/** the account service keeps an admission for 10 minutes: a key made for another PC of the account waits no longer */
+const ACCOUNT_PC_MS = 10 * 60_000;
+/** how long a PC of the account may take to answer the relay when asked whether it would pair (the list's check) */
+const ACCOUNT_PC_ANSWER_MS = 10_000;
+
+/** Why another PC of the account was not added (docs/account.md, "Adding a PC of your account"); `message` is shown. */
+export type AccountPcFailure = "invalid" | "added" | "self" | "outdated" | "offline" | "gone" | "busy" | "refused" | "declined" | "cancelled";
+
+/** A key this PC made for another PC of the account (startAccountPc), in memory only, and its comparison while one runs. */
+type HeldAccountPc = { offer: RelayOffer; key: RelayPcKey; id: string; name: string; at: number; running?: { comparison: AbortController; done: Promise<void> } };
+export class AccountPcError extends Error {
+  constructor(readonly failure: AccountPcFailure, message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "AccountPcError";
+  }
+}
 
 type StoredMachine = { id: string; name: string; enabled: boolean; snapshot?: SessionSnapshot | null }
   & ({ kind?: "ssh"; target: SshTarget; server_id?: string } | { kind: "relay"; relay: NonNullable<Machine["relay"]> });
@@ -129,6 +149,10 @@ interface JobState {
   installationApproved?: boolean;
   /** started by the server for a PC whose bridge is out of date: key-only SSH, approval already given */
   auto: boolean;
+  /** the connect an install ends with: it has no dialog to show a choice in */
+  fromInstall?: boolean;
+  /** the socket chosen in this setup is the default session's own (prepare): the PC is saved without it (setup) */
+  defaultSocket?: boolean;
   public: SetupJob;
   abort: AbortController;
   pending?: { resolve(value: string): void; reject(error: Error): void };
@@ -162,7 +186,7 @@ const DEFAULT_SESSION_ONLY = "Installing from here sets Ovis up for herdr's defa
 const UNREAD_RELEASE = "That PC's Ovis did not tell which release it would install, so it was not updated from here. Reconnect it, then try again.";
 const NEWER_THAN_APP = "That release is newer than this app, which would then refuse to connect to that PC: update this app first, then this PC.";
 /** this app's own release (package.json), the newest an SSH PC's own Ovis may be updated to from here */
-const APP_VERSION = (JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as { version: string }).version;
+const APP_VERSION = version;
 const UNKNOWN_RELEASE = "That PC offers a release that does not tell its version, so this app cannot check that it would still connect to that PC: update it on that PC.";
 /** a release (`0.5.1`) or a beta of one (`0.6.0-beta.2`, older than `0.6.0`), as numbers to compare in order */
 const releaseRank = (version: string): number[] | null => {
@@ -432,6 +456,14 @@ export class MachineManager {
    * asking window gets: each offer holds that PC's one-time code, so another client naming the PC's public ID takes none.
    */
   private foundByCode = new Map<string, { offer: RelayOffer; at: number }>();
+  /**
+   * Keys made for other PCs of the account (startAccountPc), one per PC by its `server_id`, held in memory until that PC
+   * admits it (pairAccountPc) or ACCOUNT_PC_MS passes since it was made: a key that is not admitted is never written. An
+   * Add after a cancelled or refused comparison asks with the same key, whose admission that PC may have read already.
+   */
+  private accountPcs = new Map<string, HeldAccountPc>();
+  /** the random tickets only the asking window gets, each good for one comparison of the key it names */
+  private accountPcTickets = new Map<string, HeldAccountPc>();
   /** this server's own relay ID, where it has one: the local PC's `server_id` */
   private serverId?: () => string | undefined;
   /** other PCs of this PC's Tailscale login, added through the relay with one tap (server/tailnet-pcs.ts) */
@@ -1259,6 +1291,7 @@ export class MachineManager {
     const resumeRetry = existing?.machine.state === "reconnecting";
     const job: JobState = { update: request.update_remote === true, auto, public: { id, machine_id: machineId, target, phase: "connecting", step: "Connecting with SSH keys and ssh-agent…", challenge: null, installations: [], error: null, ssh_output: null, progress: null }, abort: new AbortController(), timer: setTimeout(() => this.cancelJob(id, true), 600_000), stageStartedAt: Date.now(), finished: Promise.resolve() };
     if (options.expectedRevision) job.expectedRevision = options.expectedRevision;
+    if (options.fromInstall) job.fromInstall = true;
     if (job.update && existing) { job.runtime = existing; existing.machine.update_error = null; }
     if (job.update && existing && !auto) existing.updateCancelled = false;
     job.timer.unref();
@@ -1302,7 +1335,12 @@ export class MachineManager {
         runtime.move = undefined;
         const left = { target: runtime.machine.target, error: runtime.machine.error, herdr: runtime.machine.herdr, snapshot: runtime.machine.snapshot, ownOvisAt: runtime.ownOvisAt, finishes: runtime.finishes.copy() };
         try {
-          runtime.machine.target = target;
+          // The default session chosen by its socket is saved as herdr to start there when absent, never as that socket:
+          // a PC pinned to the socket would stop at "no longer running" after its reboot, and one saved with no choice
+          // at all would be asked again whenever another session started there before the default one
+          let saved = target;
+          if (job.defaultSocket) { saved = { ...target, start_new_herdr: true }; delete saved.herdr_socket; }
+          runtime.machine.target = saved;
           if (move) {
             // what went wrong at the address it left is not this one's: a read there clears it as any read does
             runtime.machine.error = null;
@@ -1313,8 +1351,9 @@ export class MachineManager {
             if (move.snapshot) this.publish(runtime, move.snapshot, false, move.snapshotServer); else runtime.machine.snapshot = null;
           }
           if (runtime.machine.herdr_profile_id) {
-            this.profileState.allowConnection(runtime.machine.herdr_profile_id, target);
-            if (job.installationApproved) this.profileState.approve(runtime.machine.herdr_profile_id, target);
+            // what the PC is saved with, not what this setup asked for: the catalog's next refresh reads the choice back
+            this.profileState.allowConnection(runtime.machine.herdr_profile_id, saved);
+            if (job.installationApproved) this.profileState.approve(runtime.machine.herdr_profile_id, saved);
           }
           if (switchingSession) this.machines.set(machineId, runtime);
           this.persist();
@@ -1492,10 +1531,13 @@ export class MachineManager {
       if (runtime.generation === generation && !moving) runtime.machine.remote_ovis = left;
     };
     const { host, inspection } = await detectHost(ssh, session, target.herdr_socket);
+    if (job) job.defaultSocket = !session && !!target.herdr_socket && inspection.expectedSocket === inspection.defaultSocket;
     // the account's herdr sessions by the confined rule (server/herdr-discovery.ts), for when no Ovis there lists them
+    // listedHere: that PC could list them: only this app's runtime there applies the rule (without one, none are listed)
+    let listedHere = false;
     const localSessions = async () => {
       let sessions: FoundHerdrSession[] = [];
-      try { sessions = await host.discoverSessions?.(ssh, inspection) ?? []; }
+      try { sessions = await host.discoverSessions?.(ssh, inspection) ?? []; listedHere = !!host.discoverSessions && inspection.bundleReady; }
       catch (error) {
         // the SSH connection itself failed: said as that, never as a PC with no sessions
         if (!(error instanceof Error) || !ssh.connected()) throw error;
@@ -1524,26 +1566,32 @@ export class MachineManager {
     const candidates = inspection.descriptors.filter((d) => d?.managed_remote === false && typeof d.socket_path === "string" && d.socket_path !== expectedSocket);
     // what already serves the expected socket (a live bridge registered for it, or herdr answering there) is connected as
     // before: a saved PC that reconnects to it is never stopped by a choice nobody asked for. Asked only when there is a
-    // choice to offer, the live registration first: the socket's probe (a command on that PC) only when none is live
-    const servedAlready = async () => {
-      for (const d of inspection.descriptors) if (d.socket_path === expectedSocket && Number.isSafeInteger(d.pid) && d.pid > 0 && await host.alive(ssh, d.pid)) return true;
+    // choice to offer, the live registration first: the socket's probe (a command on that PC) only when none is live.
+    // Says what serves it: this app's bridge, herdr answering by the rule, or no more than herdr's own socket being there
+    const servedAlready = async (): Promise<false | "bridge" | "herdr" | "socket"> => {
+      for (const d of inspection.descriptors) if (d.socket_path === expectedSocket && Number.isSafeInteger(d.pid) && d.pid > 0 && await host.alive(ssh, d.pid)) return "bridge";
       const status = await host.chosenSocketStatus?.(ssh, inspection, expectedSocket);
-      if (status !== null && status !== undefined) return status === "usable";
+      if (status !== null && status !== undefined) return status === "usable" && "herdr";
       // the bundle there is too old (or missing) to apply the rule: a socket of this account's at herdr's own path is
       // taken as served, so the PC connects as before this choice existed (its bridge, once started, checks herdr itself)
-      return (await ssh.run(`s=${shellQuote(expectedSocket)}; test ! -L "$s" && test -S "$s" && test "$(stat -c %u "$s" 2>/dev/null || stat -f %u "$s")" = "$(id -u)" && echo served || true`)).trim() === "served";
+      return (await ssh.run(`s=${shellQuote(expectedSocket)}; test ! -L "$s" && test -S "$s" && test "$(stat -c %u "$s" 2>/dev/null || stat -f %u "$s")" = "$(id -u)" && echo served || true`)).trim() === "served" && "socket";
     };
     // The core adapter is not a TUI socket. Discover the account's own registered Ovis and prove
     // its loopback endpoint before offering it; an explicit selection is checked anew on each try.
     // Unasked, it is offered only in a setup the user started: a reconnect (or an update that asks nobody) of a PC saved
     // without an Ovis chosen connects as before, whatever runs beside it (its herdr may answer with no bridge in front yet)
     const asked = !!job && !job.auto;
-    if (host.kind === "posix" && !target.herdr_socket && !target.start_new_herdr && (target.own_ovis || asked && candidates.length > 0 && !await servedAlready())) {
+    // A PC being added has no connection to keep: its setup offers the PC's own Ovis beside a herdr that already runs
+    // there too, so a PC that runs both is not taken for a herdr PC without a word. A saved PC connects as before
+    // An install's own connect is not asked either: its job has no card to show the choice on
+    const adding = asked && !job.fromInstall && !this.machines.has(runtime.machine.id);
+    if (host.kind === "posix" && !target.herdr_socket && !target.start_new_herdr && (target.own_ovis || asked && candidates.length > 0 && (adding || !await servedAlready()))) {
       const found: FoundOvis[] = [];
       const sessions = new Map<string, FoundHerdrSession>();
       // answered: one of them proved itself through the tunnel; unlisted: one did not list the account's herdr sessions
-      // (an older server, or one not answering), so they are found on the PC itself before the choice is offered
-      let answered = false, unlisted = false;
+      // (an older server, or one not answering), so they are found on the PC itself before the choice is offered;
+      // named: one did list them in its answer (none running is a list too)
+      let answered = false, unlisted = false, named = false;
       if (target.own_ovis) {
         const chosen = inspection.descriptors.find((d) => d?.managed_remote === false && d.socket_path === target.own_ovis);
         if (!chosen || !Number.isSafeInteger(chosen.pid) || chosen.pid <= 0 || !await host.alive(ssh, chosen.pid)) throw await ownOvisGone();
@@ -1563,7 +1611,7 @@ export class MachineManager {
           answered = true;
           const listed = proved.identity.found_herdr_sessions;
           if (listed === undefined) unlisted = true;
-          else if (listed.length) for (const row of parseFoundHerdrSessions(listed)) sessions.set(row.socket_path, row);
+          else { if (listed.length) for (const row of parseFoundHerdrSessions(listed)) sessions.set(row.socket_path, row); named = true; }
         } catch (error) {
           if (runtime.generation !== generation || this.stopped || job?.abort.signal.aborted) throw error;
           // A stale or inaccessible registration grants no connection and no permission to start anything. A live one of
@@ -1584,7 +1632,28 @@ export class MachineManager {
         if (!answered) throw !job || job.auto ? new Error(OWN_OVIS_UNANSWERED) : await offer(OWN_OVIS_UNANSWERED);
         expectedSocket = target.own_ovis;
       } else if (found.length) {
-        throw await offer(answered ? "Choose this PC's Ovis server or a running herdr session." : OWN_OVIS_UNANSWERED);
+        const choice = answered ? "Choose this PC's Ovis server or a running herdr session." : OWN_OVIS_UNANSWERED;
+        // beside a herdr that already runs there, the choice is offered only with that herdr among its sessions: without
+        // it the card could not choose what the PC would connect to unasked, so it connects to it as before
+        const served = adding && await servedAlready();
+        if (!served) throw await offer(choice);
+        if (unlisted) { for (const row of await localSessions()) sessions.set(row.socket_path, row); unlisted = false; }
+        // Where no runtime of this app is there to check it, herdr's own socket being there is all that says herdr runs.
+        // (Behind a bridge of this app the PC connects as before: chosen where nothing can check it, a socket never
+        // reuses its bridge.)
+        if (served === "socket" && !sessions.has(expectedSocket)) {
+          // an Ovis that names the account's sessions applied the rule itself: the socket, not one of them, is what a
+          // stopped herdr left, and the PC is asked as one where no herdr runs
+          if (named) throw await offer(choice);
+          // Nothing could list them (the Ovis that answered is an older one, which names none): the socket is offered as
+          // the session it is, so that PC's Ovis is not passed over without a word. Chosen, it is a chosen socket like any
+          // other: the bridge started for it checks it and starts no herdr in its place. Not beside an Ovis that does not
+          // answer: that PC connects as before. Nor for a session named in the dialog: only the default session's socket
+          // is saved as herdr to start (job.defaultSocket), so the named one's row would save the PC with that socket, and
+          // after that PC restarts its bridge would say the session no longer runs instead of starting it by its name
+          if (!session && answered && !listedHere) sessions.set(expectedSocket, { socket_path: expectedSocket, label: "Default session" });
+        }
+        if (sessions.has(expectedSocket)) throw await offer(choice);
       }
     }
     // what the PC's own Ovis said is read anew on every try: it may have been updated or replaced since
@@ -2591,6 +2660,132 @@ export class MachineManager {
   }
 
   /**
+   * Another PC of the account as the page read it from the account's directory: an entry nobody vouches for, so its
+   * `server_id` must be the one its key gives (docs/account.md, rule 7) and its relay a wss: origin.
+   */
+  private accountPcOffer(pc: unknown): { offer: RelayOffer; name: string } {
+    const fields = typeof pc === "object" && pc !== null && !Array.isArray(pc) ? pc as Record<string, unknown> : {};
+    let offer: RelayOffer;
+    try { offer = validateOffer({ v: 1, server_id: fields.server_id, server_public_key: fields.server_public_key, relay: fields.relay }); }
+    catch { throw new AccountPcError("invalid", "That PC's entry in the account is not one this PC can use."); }
+    let derived: string | null = null;
+    try { derived = deriveServerId(importPublicKey(offer.server_public_key)); } catch { derived = null; }
+    if (derived !== offer.server_id) throw new AccountPcError("invalid", "That PC's ID is not the one its key gives. Nothing was added.");
+    const name = typeof fields.name === "string" && fields.name.trim() !== "" ? fields.name.trim().slice(0, 64) : "PC";
+    return { offer: { ...offer, name }, name };
+  }
+
+  /** Add a connection → Ovis relay: whether each listed PC of the account would pair with this one, nothing sent to pair. */
+  async checkAccountPcs(pcs: unknown): Promise<{ server_id: string; state: VouchedSupport }[]> {
+    if (this.stopped) throw new Error("Server stopping");
+    if (!Array.isArray(pcs) || pcs.length > 32) throw new AccountPcError("invalid", "Expected the account's PCs");
+    const offers = pcs.map((pc) => this.accountPcOffer(pc).offer);
+    return Promise.all(offers.map(async (offer) => ({ server_id: offer.server_id,
+      state: await vouchedSupport(offer, { ...(this.relaySocket ? { socket: this.relaySocket } : {}), pcAnswerMs: ACCOUNT_PC_ANSWER_MS }) })));
+  }
+
+  /**
+   * Add a connection → Ovis relay → Add, first step: makes the key this PC would hold for that PC, in memory only, once
+   * that PC said it takes such a pairing, and answers its public half for the page to name in its account admission.
+   * An older PC is refused here, before anything is posted or sent to pair.
+   */
+  async startAccountPc(pc: unknown): Promise<{ ticket: string; key: string; label: string }> {
+    if (this.stopped) throw new Error("Server stopping");
+    const { offer, name } = this.accountPcOffer(pc);
+    if (offer.server_id === this.serverId?.()) throw new AccountPcError("self", "That is this PC.");
+    if (this.relayServerIds().has(offer.server_id)) throw new AccountPcError("added", "That PC is already added.");
+    const support = await vouchedSupport(offer, this.relaySocket ? { socket: this.relaySocket } : {});
+    if (support === "outdated") throw new AccountPcError("outdated", "Update Ovis on that PC first.");
+    if (support === "offline") throw new AccountPcError("offline", "That PC is not on the relay now.");
+    if (this.stopped) throw new Error("Server stopping");
+    const now = this.now();
+    for (const [serverId, held] of this.accountPcs) if (now - held.at > ACCOUNT_PC_MS && !held.running) this.accountPcs.delete(serverId);
+    for (const [ticket, held] of this.accountPcTickets) if (this.accountPcs.get(held.offer.server_id) !== held) this.accountPcTickets.delete(ticket);
+    let held = this.accountPcs.get(offer.server_id);
+    if (held === undefined) {
+      // a few PCs at once at most; the oldest gives way
+      if (this.accountPcs.size >= 8) this.accountPcs.delete(this.accountPcs.keys().next().value!);
+      const id = randomUUID();
+      // written only once that PC admits it (RelayPcKey), and only while its comparison runs or the PC it added is this
+      // PC's (a later sign-in on a better route writes it again)
+      const key = await RelayPcKey.create(this.relayKeyPath(id), offer, () => !this.stopped && (this.pairing.has(id) || this.machines.has(id)));
+      if (this.stopped) throw new Error("Server stopping");
+      held = this.accountPcs.get(offer.server_id) ?? { offer, key, id, name, at: now };
+      this.accountPcs.set(offer.server_id, held);
+    }
+    const ticket = randomBytes(32).toString("base64url");
+    if (this.accountPcTickets.size >= 32) this.accountPcTickets.delete(this.accountPcTickets.keys().next().value!);
+    this.accountPcTickets.set(ticket, held);
+    const [device] = await held.key.list();
+    return { ticket, key: device!.public_spki, label: device!.label };
+  }
+  /** the held keys (by id) whose comparison runs now (pairAccountPc): only those may be written */
+  private readonly pairing = new Set<string>();
+
+  /**
+   * Add a connection → Ovis relay → Add, once the page posted its admission: compares digits with that PC through
+   * the relay, as another PC of the account vouched for (PAIR_INTENT_VOUCHED), `onDigits` told them for the page to
+   * show, and adds it as addRelay does once a member of the account approved it there. `signal` ends the comparison,
+   * and nothing is written: no key, no PC (the key stays in memory for the next Add of that PC). One comparison per
+   * ticket, and one at a time per key.
+   */
+  async pairAccountPc(ticket: unknown, onDigits: (digits: string) => void, signal: AbortSignal): Promise<Machine> {
+    if (this.stopped) throw new Error("Server stopping");
+    const held = typeof ticket === "string" ? this.accountPcTickets.get(ticket) : undefined;
+    if (held !== undefined) this.accountPcTickets.delete(ticket as string);
+    if (held === undefined || this.accountPcs.get(held.offer.server_id) !== held || this.now() - held.at > ACCOUNT_PC_MS) throw new AccountPcError("gone", "That request ran out. Press Add again.");
+    const { offer, key, id, name } = held;
+    const serverId = offer.server_id;
+    // one comparison per key at a time: another window's that runs on is not asked twice; one cancelled is let end first
+    if (held.running !== undefined) {
+      if (!held.running.comparison.signal.aborted) throw new AccountPcError("busy", "That PC is being added in another window.");
+      await held.running.done;
+      if (held.running !== undefined) throw new AccountPcError("busy", "That PC is being added in another window.");
+    }
+    if (this.stopped) throw new Error("Server stopping");
+    if (this.relayServerIds().has(serverId)) throw new AccountPcError("added", "That PC is already added.");
+    const keyPath = this.relayKeyPath(id);
+    const runtime = this.runtime({
+      id, name, kind: "relay", relay: { server_id: serverId, relay: offer.relay },
+      enabled: true, state: "connecting", error: null, snapshot: null,
+    });
+    // the comparison's own end: the request's, until that PC admits this one (never after: it would end the tunnel)
+    const comparison = new AbortController();
+    const cancel = (): void => comparison.abort();
+    signal.addEventListener("abort", cancel, { once: true });
+    if (signal.aborted) cancel();
+    let shown = false;
+    let tunnel: RelayPcTunnel;
+    let ended = (): void => {};
+    held.running = { comparison, done: new Promise<void>((resolve) => { ended = resolve; }) };
+    this.pairing.add(id);
+    try {
+      tunnel = await openRelayPcTunnel(offer, key, { ...this.tunnelOptions(runtime, runtime.generation), pairing: {
+        compare: async (digits) => { shown = true; onDigits(digits); }, signal: comparison.signal,
+      } });
+    } catch (error) {
+      removeRelayPcKey(keyPath);
+      // a key that PC admitted is not asked with again
+      if (key.paired && this.accountPcs.get(serverId) === held) this.accountPcs.delete(serverId);
+      if (comparison.signal.aborted) throw new AccountPcError("cancelled", "Cancelled. Nothing was added.", { cause: error });
+      if (error instanceof RelayPcOutdated) throw new AccountPcError("outdated", error.message, { cause: error });
+      // the PC refused before any digits (no admission it could see, no member to approve) or after them (declined, a
+      // wrong pick, no answer in time): which, this PC cannot tell beyond whether the digits were shown
+      if (shown) throw new AccountPcError("declined", "That PC was not approved. Nothing was added.", { cause: error });
+      if (error instanceof RelayPcRefused) throw new AccountPcError("refused", "That PC did not take the request. Check that it is in your account, then try again.", { cause: error });
+      throw new AccountPcError("offline", `That PC could not be reached through the relay: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    } finally {
+      this.pairing.delete(id);
+      signal.removeEventListener("abort", cancel);
+      held.running = undefined;
+      ended();
+    }
+    // the key is the added PC's now (or removed with it, should adding it fail): the next Add of that PC makes another
+    if (this.accountPcs.get(serverId) === held) this.accountPcs.delete(serverId);
+    return this.adoptRelayPc(runtime, tunnel, keyPath);
+  }
+
+  /**
    * Settings → Remote PCs → Add a PC through the relay: pairs with the PC whose pairing link (its Settings → Phone &
    * devices → Copy link) this is, as a phone would, and adds it once that PC admitted this one. The link's code is
    * spent here; later connections sign in with the key this pairing made.
@@ -2623,6 +2818,14 @@ export class MachineManager {
       removeRelayPcKey(keyPath);
       throw new Error(error instanceof RelayPcRefused ? error.message : `That PC could not be reached through the relay: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
+    return this.adoptRelayPc(runtime, tunnel, keyPath);
+  }
+
+  /** A relay PC that just admitted this one: added and saved, its connection observed, as any relay PC after a restart. */
+  private async adoptRelayPc(runtime: Runtime, tunnel: RelayPcTunnel, keyPath: string): Promise<Machine> {
+    const { id, relay } = runtime.machine;
+    const serverId = relay!.server_id;
+    const generation = runtime.generation;
     if (this.stopped || [...this.machines.values()].some(({ machine }) => machine.relay?.server_id === serverId)) {
       tunnel.close();
       removeRelayPcKey(keyPath);

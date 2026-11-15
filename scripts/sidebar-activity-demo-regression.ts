@@ -9,6 +9,7 @@ import { chromePath } from "./chrome-path.ts";
 import { contextMenuKey } from "./context-menu-key.ts";
 import type { Machine } from "../shared/machines.ts";
 import type { AgentStatus, ConversationResponse, ServerMessage } from "../shared/protocol.ts";
+import { openLens } from "./header-lens.ts";
 
 declare global {
   interface Window {
@@ -371,7 +372,7 @@ try {
             return window.sidebarFixture.finish(id, "done", 103);
           }, panes.omp);
           await agent(page, INFRA).locator(".agent-select").click();
-          await page.locator(".view-switch").getByRole("button", { name: "Terminal", exact: true }).click();
+          await openLens(page, "terminal");
           await waitStatus(page, INFRA, "idle");
           await page.locator(".pane-frame.is-current .terminal-stack[data-pane-content]").waitFor();
           assert.equal(await page.locator(".pane-frame.is-current .terminal-stack").evaluate((node, previous) => node === previous, retained), true,
@@ -423,7 +424,7 @@ try {
           }, panes.omp);
           await waitStatus(page, INFRA, "done");
           await agent(page, INFRA).locator(".agent-select").click();
-          await page.locator(".view-switch").getByRole("button", { name: "Terminal", exact: true }).click();
+          await openLens(page, "terminal");
           const content = page.locator(".pane-frame.is-current .terminal-stack[data-pane-content]");
           await page.locator(".pane-frame.is-current .terminal-stack:not(.is-chat)").waitFor();
           await outputParsed(page, "previous answer\r\n");
@@ -445,7 +446,7 @@ try {
             window.sidebarFixture.block(id, "loading");
           }, panes.omp);
           await agent(page, INFRA).locator(".agent-select").click();
-          await page.locator(".view-switch").getByRole("button", { name: "Terminal", exact: true }).click();
+          await openLens(page, "terminal");
           const content = page.locator(".pane-frame.is-current .terminal-stack[data-pane-content]");
           await page.locator(".pane-frame.is-current .terminal-stack:not(.is-chat)").waitFor();
           await outputParsed(page, "previous answer\r\n");
@@ -470,7 +471,7 @@ try {
             window.sidebarFixture.block(id, "loading");
           }, panes.omp);
           await agent(page, INFRA).locator(".agent-select").click();
-          await page.locator(".view-switch").getByRole("button", { name: "Terminal", exact: true }).click();
+          await openLens(page, "terminal");
           const content = page.locator(".pane-frame.is-current .terminal-stack[data-pane-content]");
           await page.locator(".pane-frame.is-current .terminal-stack:not(.is-chat)").waitFor();
           await page.waitForFunction((id) => (window.sidebarFixture.attaches[id] ?? 0) > 0, panes.omp);
@@ -771,12 +772,12 @@ try {
           await page.getByRole("button", { name: "Jump to latest", exact: true }).waitFor();
           if (arrival === "restore") {
             const height = await log.evaluate((node) => node.scrollHeight * 3 + 2000);
-            await page.locator(".view-switch").getByRole("button", { name: "Terminal", exact: true }).click();
+            await openLens(page, "terminal");
             await page.setViewportSize({ width: 390, height });
             await page.evaluate(() => document.addEventListener("scroll", (event) => {
               if (event.target instanceof Element && event.target.matches('[role="log"]')) event.stopImmediatePropagation();
             }, true));
-            await page.locator(".view-switch").getByRole("button", { name: "Chat", exact: true }).click();
+            await openLens(page, "chat");
             await page.locator(".chat-turn").first().waitFor();
             await page.evaluate((id) => window.sidebarFixture.finish(id, "done", 101), panes.omp);
             await statusIs("idle");
@@ -976,7 +977,7 @@ try {
         await workspace.click({ button: "right", position: { x: 32, y: bounds.height / 2 } });
         const menu = page.getByRole("menu", { name: "checkout-api", exact: true });
         await menu.waitFor();
-        assert.deepEqual(await menu.getByRole("menuitem").allTextContents(), ["Pin workspace", "Rename workspace", "Earlier sessions…", "Close group", "New worktree", "Open worktree…", "Collapse"], "right-click on a repository uses its group scope");
+        assert.deepEqual(await menu.getByRole("menuitem").allTextContents(), ["Pin workspace", "New tab with agent…", "Rename workspace", "Earlier sessions…", "Close group", "New worktree", "Open worktree…", "Collapse"], "right-click on a repository uses its group scope");
         const opened = (await menu.boundingBox())!;
         assert.ok(Math.abs(opened.x - bounds.x - 32) <= 1 && Math.abs(opened.y - bounds.y - bounds.height / 2) <= 1, "the menu opens at the pointer");
         assert.equal(await page.evaluate(() => sessionStorage.getItem("ovis:selection")), selected, "right-click leaves the selected pane alone");
@@ -985,7 +986,7 @@ try {
         await workspace.focus();
         await contextMenuKey(page);
         await menu.waitFor();
-        assert.deepEqual(await menu.getByRole("menuitem").allTextContents(), ["Pin workspace", "Rename workspace", "Earlier sessions…", "Close group", "New worktree", "Open worktree…", "Collapse"], "the context-menu key and right-click have identical items");
+        assert.deepEqual(await menu.getByRole("menuitem").allTextContents(), ["Pin workspace", "New tab with agent…", "Rename workspace", "Earlier sessions…", "Close group", "New worktree", "Open worktree…", "Collapse"], "the context-menu key and right-click have identical items");
         await page.keyboard.press("Escape");
         const pins = () => page.evaluate(() => JSON.parse(localStorage.getItem("ovis:sidebar-agent-pins") ?? "[]") as string[]);
         // a pinned workspace leaves its place for a card at the top of its PC's list, and returns unpinned

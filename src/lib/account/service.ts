@@ -4,6 +4,9 @@
  * edge; a token is never logged or put in an error's text.
  */
 import { accountLabel, accountOsOf, type AccountAsker, type AccountOs } from "../../../shared/account-asker.ts";
+import type { AccountLimits } from "../../../shared/protocol.ts";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { newRecordId, type AccountRecord } from "../../../shared/account-records.ts";
 import { isWssOrigin } from "../../../shared/relay-offer.ts";
 import { GLOBAL_APP } from "../../../shared/relay-regions.ts";
@@ -169,6 +172,27 @@ export async function failure(response: Response): Promise<AccountServiceError> 
   return new AccountServiceError(response.status, code, `The account service answered ${response.status} (${code})`);
 }
 
+export function parseAccountLimits(value: unknown): AccountLimits | null {
+  if (!isRecord(value)) return null;
+  const { plan, pcs_max, pcs_used, data_cap_bytes, data_used_bytes, data_metering, until } = value;
+  if (typeof plan !== "string" || plan.trim() === "") return null;
+  if (typeof pcs_max !== "number" || !Number.isSafeInteger(pcs_max) || pcs_max < 0) return null;
+  if (pcs_used !== undefined && pcs_used !== null && (typeof pcs_used !== "number" || !Number.isSafeInteger(pcs_used) || pcs_used < 0)) return null;
+  if (data_cap_bytes !== undefined && data_cap_bytes !== null && (typeof data_cap_bytes !== "number" || !Number.isSafeInteger(data_cap_bytes) || data_cap_bytes < 0)) return null;
+  if (data_used_bytes !== undefined && data_used_bytes !== null && (typeof data_used_bytes !== "number" || !Number.isSafeInteger(data_used_bytes) || data_used_bytes < 0)) return null;
+  if (until !== undefined && until !== null && (typeof until !== "number" || !Number.isFinite(until))) return null;
+  const metered = data_metering === undefined || data_metering === "on";
+  return {
+    // a long name is shortened, never a reason to drop the limits
+    plan: plan.trim().length > 32 ? `${plan.trim().slice(0, 31)}…` : plan.trim(),
+    pcs_max,
+    ...(typeof pcs_used === "number" ? { pcs_used } : {}),
+    ...(typeof data_cap_bytes === "number" ? { data_cap_bytes } : {}),
+    ...(metered && typeof data_used_bytes === "number" ? { data_used_bytes } : {}),
+    ...(until !== undefined ? { until: until ?? null } : {}),
+  };
+}
+
 function parsePc(value: unknown): DirectoryPc | null {
   if (!isRecord(value) || typeof value.server_id !== "string" || !SERVER_ID.test(value.server_id)) return null;
   if (typeof value.label !== "string" || typeof value.added_at !== "string") return null;
@@ -187,6 +211,11 @@ export function sessionOf(body: unknown, service: string, now: number): AccountS
     throw new AccountServiceError(502, "invalid_answer", "The account service sent an incomplete sign-in");
   }
   return { service, account, provider: provider as AccountProvider, access_token, refresh_token, expires_at: now + expires_in * 1000, sign_in_id: newRecordId() };
+}
+
+/** The id of a sign-in saved without one: a digest of the refresh token it was saved with, the same in every tab. */
+function legacySignInId(refreshToken: string): string {
+  return `saved-${bytesToHex(sha256(utf8ToBytes(refreshToken)).subarray(0, 16))}`;
 }
 
 /** Whether `a` is `b`'s sign-in, or one of its refreshes. */
@@ -234,8 +263,29 @@ export class AccountService {
     this.lock = options.lock ?? accountLock;
   }
 
+  /**
+   * The stored sign-in. One saved before sign-ins had an id (`sign_in_id`) gets one here, in the store: without it
+   * its first refresh, which changes the refresh token, would make every copy read before it another sign-in
+   * (sameSignIn), and a call bound to such a copy (forSignIn) would then refuse its own sign-in.
+   *
+   * The id is worked out from the session itself, so tabs of this build give one sign-in the same id, and it is
+   * given in the same update of the store that reads the session: a copy from here always carries the id the
+   * store holds, whichever tab named it. A sign-in made meanwhile has an id of its own (sessionOf).
+   */
   async session(): Promise<AccountSession | undefined> {
-    return this.options.store.get("session");
+    // read and named in one update of the store, with no read before it: no other tab's write (a refresh, another
+    // sign-in, a sign-out) falls between this tab seeing the session and naming it
+    let seen: AccountSession | undefined;
+    try {
+      await this.options.store.update("session", (current) => {
+        seen = current === undefined || current.sign_in_id !== undefined ? current : { ...current, sign_in_id: legacySignInId(current.refresh_token) };
+        return seen;
+      });
+    } catch {
+      // a store that takes no write (storage full) is still read, as before sign-ins were named
+      return this.options.store.get("session");
+    }
+    return seen;
   }
 
   /**
@@ -290,6 +340,12 @@ export class AccountService {
         : { country: null, city: null };
       return [{ key: entry.key, label, server_id: entry.server_id, at: entry.at, os: accountOsOf(entry.os), ...place }];
     });
+  }
+
+  /** The account's plan and limits (`GET /v1/account/limits`); null when the service does not report them. */
+  async limits(): Promise<AccountLimits | null> {
+    const body = await this.call("GET", "/v1/account/limits");
+    return parseAccountLimits(body);
   }
 
   /** The account's sign-in methods, one per provider. */
@@ -355,6 +411,17 @@ export class AccountService {
    */
   async removeIdentity(provider: AccountProvider): Promise<void> {
     await this.call("DELETE", `/v1/identities/${provider}`);
+  }
+
+  /**
+   * Deletes the signed-in account and everything the service keeps under it, for good. Like a change
+   * to the sign-in methods it wants a sign-in made in the last ten minutes (403 `reauth_required`), and
+   * the service refuses it while a subscription still renews (409 `subscription_active`). What this device
+   * keeps of the deleted sign-in is forgotten by its caller (deleteAccount.ts), with `forSignIn` so that a
+   * sign-in made meanwhile is never the one deleted.
+   */
+  async deleteAccount(): Promise<void> {
+    await this.call("DELETE", "/v1/account");
   }
 
   /** Leaves a signed record in the mailbox of each listed PC of the account (at most 32 at a time). */

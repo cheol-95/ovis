@@ -34,7 +34,7 @@ export interface FilesDialogProps {
   panelStart?: ReactNode;
   /** docked, with a file or web page in its place: kept, folder and tab, for when that closes */
   covered?: boolean;
-  /** the PC's name, which the Pull request tab says for a remote PC */
+  /** the PC's name where it says which PC (another PC, or this one among several): Pull request names it */
   machineName?: string;
 }
 
@@ -54,8 +54,9 @@ export function FilesDialog({ start, paneId, viewing, onOpenFile, onOpenDiff, on
   const [prVisited, setPrVisited] = useState(false);
   const [docsVisited, setDocsVisited] = useState(false);
   useSheetSwipe(surface, docked ? null : onClose);
-  // a file opened from the list is drawn over it with an entry of its own: Back closes the file first
-  usePhoneSheetBack(onClose, !viewing && !docked);
+  // a file opened from the list is drawn over it with an entry of its own: Back closes the file first,
+  // and the list, in front again with that Back, takes the entry it left
+  usePhoneSheetBack(onClose, !viewing && !docked, false, true);
   // the listener stays put across renders: an earlier listener of the same key that re-renders the app (the split
   // guide Escape puts away) would otherwise swap it out mid-dispatch, and a listener removed then never runs (#2631)
   const onKey = useEffectEvent((event: KeyboardEvent): void => {

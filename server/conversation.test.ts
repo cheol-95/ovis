@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import * as darwinProcess from "./darwin-process.ts";
 import { Database } from "bun:sqlite";
 import { appendFileSync, copyFileSync, linkSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
@@ -27,9 +27,11 @@ import * as devinSession from "./devin-session.ts";
 import * as omo from "./omo.ts";
 import * as gjcRuntime from "./gjc-runtime.ts";
 import * as runtime from "./herdr-core/runtime.ts";
+import * as served from "./runtime/capabilities.ts";
+import { HERDR_CORE } from "./runtime/capabilities.ts";
 import { claudeProjectDir } from "./claude-store.ts";
 import { launchedAgents } from "./launched-agents.ts";
-import { agyTranscriptPage, claudePanePid, claudePaneSession, ConversationReadPending, ConversationUnavailable, devinSessionForPane, forgetPaneTranscriptState, forgetTranscriptState, gjcTranscriptPath, HistoryChanged, isDevinProcess, isOmoProcess, ompSessionStore, paneConversation, paneProcessRoots, paneTranscript, parseClaudeTranscript, unwrapPastes, toolOutput, transcriptImage, transcriptImageAsync, transcriptPage, transcriptToolOutput, TRANSCRIPT_WINDOW_BYTES } from "./conversation.ts";
+import { agyTranscriptPage, claudePanePid, claudePaneSession, ConversationReadPending, ConversationUnavailable, devinSessionForPane, forgetPaneTranscriptState, forgetTranscriptState, gjcTranscriptPath, HistoryChanged, isDevinProcess, isOmoProcess, ompSessionStore, paneConversation, paneProcessRoots, paneTranscript, parseClaudeTranscript, stoppedAgentJob, unwrapPastes, toolOutput, transcriptImage, transcriptImageAsync, transcriptPage, transcriptToolOutput, TRANSCRIPT_WINDOW_BYTES } from "./conversation.ts";
 
 it("labels only Claude's explicit end_turn text as final-answer evidence", () => {
   const entry = (stop_reason: string | null) => JSON.stringify({ type: "assistant", message: { role: "assistant", stop_reason, content: [{ type: "text", text: "Answer" }] } });
@@ -72,6 +74,86 @@ it("says the transcript file's size on the newest page only, and again once it g
     expect(newest.cursor).not.toBeNull();
     expect(transcriptPage("claude-transcript", file, { before: newest.cursor! }).transcript_bytes).toBeUndefined();
   } finally { forgetTranscriptState(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+describe("an agent the shell stopped as a job", () => {
+  // Given /proc as Linux lays it out: each of the shell's threads lists its children, each child its state and argv.
+  const proc = mkdtempSync(join(tmpdir(), "stopped-job-proc-"));
+  const child = (pid: number, comm: string, state: string, argv: string[], parent = 41000) => {
+    mkdirSync(join(proc, String(pid)), { recursive: true });
+    writeFileSync(join(proc, String(pid), "stat"), `${pid} (${comm}) ${state} ${parent} ${pid} 41000 34816 41000 4194304`);
+    writeFileSync(join(proc, String(pid), "cmdline"), argv.map((word) => `${word}\0`).join(""));
+  };
+  const shell = (pid: number, threads: Record<string, number[]>) => {
+    for (const [thread, children] of Object.entries(threads)) {
+      mkdirSync(join(proc, String(pid), "task", thread), { recursive: true });
+      writeFileSync(join(proc, String(pid), "task", thread, "children"), children.map((id) => `${id} `).join(""));
+    }
+  };
+  child(41001, "opencode", "T", ["/usr/bin/opencode"]);
+  child(41002, "opencode", "S", ["/usr/bin/opencode"]);
+  child(41003, "vim", "T", ["vim", "notes.md"]);
+  child(41004, "node", "T", ["node", "/home/u/.npm/bin/opencode"]);
+  child(41005, "x) T (y", "S", ["/usr/bin/x"]);
+  child(41006, "opencode", "T", ["/bin/sh", "/home/u/bin/opencode"]);
+  shell(41000, { "41000": [41001] });
+  shell(42000, { "42000": [41002, 41003, 41005] });
+  shell(43000, { "43000": [], "43001": [41004] });
+  shell(45000, { "45000": [41006] });
+  // a wrapper the shell started, which runs the agent as its own child: the job's whole group is stopped
+  child(46001, "sh", "T", ["sh", "-c", "opencode; echo done"]);
+  child(46002, "opencode", "T", ["/usr/bin/opencode"]);
+  shell(46000, { "46000": [46001] });
+  shell(46001, { "46001": [46002] });
+  // npx: node runs npm's launcher, whose child runs OpenCode's package, whose child is the native binary
+  child(47001, "npm exec opencode", "T", ["node", "/usr/lib/node_modules/npm/bin/npx-cli.js", "opencode"]);
+  child(47002, "node", "T", ["node", "/home/u/.npm/_npx/1/node_modules/.bin/opencode"]);
+  child(47003, "opencode", "T", ["/home/u/.npm/_npx/1/node_modules/opencode-linux-x64/bin/opencode"]);
+  shell(47000, { "47000": [47001] });
+  shell(47001, { "47001": [47002] });
+  shell(47002, { "47002": [47003] });
+  // children lists that loop back to the shell (read while pids were reused): the walk still ends
+  child(48001, "sh", "T", ["sh"]);
+  shell(48000, { "48000": [48001] });
+  shell(48001, { "48001": [48000, 48001] });
+  // a shell with more processes than the walk reads, the stopped OpenCode under a launcher listed last
+  const crowd = Array.from({ length: 300 }, (_, index) => 49100 + index);
+  for (const pid of crowd) child(pid, "sleep", "S", ["sleep", "600"], 49000);
+  child(49001, "sh", "T", ["sh", "-c", "opencode"], 49000);
+  child(49002, "opencode", "T", ["/usr/bin/opencode"], 49001);
+  shell(49000, { "49000": [...crowd, 49001] });
+  shell(49001, { "49001": [49002] });
+  afterAll(() => rmSync(proc, { recursive: true, force: true }));
+
+  it.each([
+    { shell: 41000, found: true, case: "its stopped child is the agent" },
+    { shell: 42000, found: false, case: "the agent runs, and only another program or a lookalike name is stopped" },
+    { shell: 43000, found: true, case: "another thread started it, under an interpreter" },
+    { shell: 44000, found: false, case: "the shell is gone" },
+    { shell: 45000, found: true, case: "a script named after it runs under a shell" },
+    { shell: 46000, found: true, case: "a wrapper shell runs it as its child" },
+    { shell: 47000, found: true, case: "npx runs it a few processes down" },
+    { shell: 48000, found: false, case: "the children lists loop back to the shell" },
+  ])("finds the agent as a stopped job of the shell when $case", async ({ shell: pid, found }) => {
+    // When / Then
+    expect(await stoppedAgentJob(pid, "opencode", { proc })).toBe(found);
+  });
+
+  it.each([
+    { pid: 41001, found: true, case: "the stopped OpenCode is that process" },
+    { pid: 41009, found: false, case: "the stopped OpenCode is another one than that process" },
+  ])("counts only the pane's own OpenCode process once it is known, when $case", async ({ pid, found }) => {
+    // When / Then
+    expect(await stoppedAgentJob(41000, "opencode", { proc, pid })).toBe(found);
+  });
+
+  it.each([
+    { shell: 49000, found: true, case: "it is below that shell, past more processes than the walk reads" },
+    { shell: 41000, found: false, case: "it is below another shell" },
+  ])("follows the pane's own OpenCode up to the shell when $case", async ({ shell, found }) => {
+    // When / Then
+    expect(await stoppedAgentJob(shell, "opencode", { proc, pid: 49002 })).toBe(found);
+  });
 });
 
 describe("omo skill roots", () => {
@@ -3553,6 +3635,36 @@ describe("a page read that settles its transcript's revision off the event loop"
     expect(await output).toBeNull();
   });
 
+  it("answers no tool output for an OmO pane another read saw bound to another session while it was resolved for the last time", async () => {
+    const omoPane = { pane_id: "omo-last", agent: "pi", agent_status: "idle", cwd: root } as HerdrPane;
+    const other = join(root, "other.jsonl");
+    writeFileSync(path, JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "call_1", content: [{ type: "text", text: "old session" }] } }) + "\n");
+    writeFileSync(other, JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "call_2", content: [{ type: "text", text: "new session" }] } }) + "\n");
+    const session = spyOn(omo, "omoSessionForPane").mockResolvedValue({ path, pending: null });
+    restores.push(
+      spyOn(herdr, "sessionSnapshot").mockResolvedValue({ panes: [omoPane], agents: [omoPane] } as unknown as SessionSnapshot),
+      spyOn(herdr, "herdrRpc").mockResolvedValue({ process_info: { foreground_processes: [{ argv: ["node", "/home/u/.nvm/versions/node/v24.18.0/bin/omo"] }] } } as never),
+      session,
+    );
+    expect(await toolOutput(omoPane.pane_id, "call_1")).toBe("old session");
+    // the lookup's last resolution, begun before OmO started another session in the pane, is held: it
+    // will name the session the output was read from
+    const last = Promise.withResolvers<{ path: string; pending: null }>();
+    let resolving!: () => void;
+    const began = new Promise<void>((resolve) => { resolving = resolve; });
+    session.mockResolvedValueOnce({ path, pending: null }).mockImplementationOnce(() => { resolving(); return last.promise; });
+    const output = toolOutput(omoPane.pane_id, "call_1");
+    await began;
+    // meanwhile another read finds the pane on the new session
+    session.mockResolvedValue({ path: other, pending: null });
+    expect((await paneTranscript(omoPane.pane_id)).path).toBe(other);
+    last.resolve({ path, pending: null });
+    expect(await output).toBeNull();
+    // and with nothing seen in between, the same resolution answers
+    session.mockResolvedValue({ path, pending: null });
+    expect(await toolOutput(omoPane.pane_id, "call_1")).toBe("old session");
+  });
+
   it("answers no tool output, not an error, for an OmO transcript replaced by rename while it settled", async () => {
     const omoPane = { pane_id: "omo-replaced", agent: "pi", agent_status: "idle", cwd: root } as HerdrPane;
     writeFileSync(path, JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "call_1", content: [{ type: "text", text: "old file" }] } }) + "\n");
@@ -3750,10 +3862,15 @@ describe("Agy native ledger through shared paging", () => {
     add(8, "GENERIC", "late result");
     add(9, "EPHEMERAL_MESSAGE", "late context");
     expect((await page()).activity).toBe("idle");
-    add(10, "USER_INPUT", "next turn");
+    add(10, "SYSTEM_MESSAGE", "<SYSTEM_MESSAGE>background task finished</SYSTEM_MESSAGE>");
+    // the notice alone starts nothing: the finished reply is not drawn as running, also when no planner step follows it
+    expect((await page()).activity).toBe("idle");
+    add(11, "PLANNER_RESPONSE", "Woke up and finished", { tool_calls: [] });
+    expect((await page()).activity).toBe("idle");
+    add(12, "USER_INPUT", "next turn");
     expect((await page()).activity).toBe("working");
     // Rewind the new prompt; completion of the retained turn still clears activity.
-    db.exec("DELETE FROM steps WHERE idx >= 10");
+    db.exec("DELETE FROM steps WHERE idx >= 12");
     expect((await page()).activity).toBe("idle");
     forgetTranscriptState();
     expect((await page()).activity).toBe("idle");
@@ -3965,6 +4082,151 @@ describe("Agy native ledger through shared paging", () => {
         name: "ConversationUnavailable", message: "transcript_missing",
       });
     } finally { store.mockRestore(); rpc.mockRestore(); }
+  });
+  it("keeps the unwritten greeting while Agy works on its first turn before flushing the JSONL ledger", async () => {
+    const session = "00000000-0000-4000-8000-000000000001";
+    rmSync(path);
+    const pane = { pane_id: "agy-first-turn", cwd: root, agent: "agy", agent_status: "working" } as HerdrPane;
+    const snapshot = spyOn(herdr, "sessionSnapshot").mockImplementation(async () => ({ panes: [pane], agents: [] }) as unknown as SessionSnapshot);
+    const store = spyOn(agyStore, "resolveAgyStore").mockResolvedValue({ root, session, path, pid: 2, started: "test" });
+    const rpc = spyOn(herdr, "herdrRpc").mockResolvedValue({ process_info: { foreground_processes: [] } } as never);
+    try {
+      // 0 steps in DB, JSONL not created yet while working
+      expect(await paneConversation(pane.pane_id)).toMatchObject({ source: "agy-transcript", turns: [], history_id: `unwritten:${session}` });
+      // step 0 inserted into DB milliseconds before JSONL is created while working
+      db.query("INSERT INTO steps VALUES (0)").run();
+      expect(await paneConversation(pane.pane_id)).toMatchObject({ source: "agy-transcript", turns: [], history_id: `unwritten:${session}` });
+      // once JSONL is flushed and read, a later disappearance of the file fails closed instead of returning unwritten
+      writeFileSync(path, row(0, "USER_INPUT", "first prompt"));
+      const written = await paneConversation(pane.pane_id);
+      expect(written.turns).toHaveLength(1);
+      rmSync(path);
+      expect(await paneConversation(pane.pane_id).catch((error: unknown) => error)).toMatchObject({ name: "ConversationUnavailable", message: "transcript_missing" });
+      // a cold read with more than 1 step in the DB and no JSONL file also fails closed
+      forgetTranscriptState();
+      db.query("INSERT INTO steps VALUES (1)").run();
+      expect(await paneConversation(pane.pane_id).catch((error: unknown) => error)).toMatchObject({ name: "ConversationUnavailable", message: "transcript_missing" });
+      // a resumed conversation whose only cataloged step is a later one is not a first turn
+      forgetTranscriptState();
+      db.exec("DELETE FROM steps");
+      db.query("INSERT INTO steps VALUES (500)").run();
+      expect(await paneConversation(pane.pane_id).catch((error: unknown) => error)).toMatchObject({ name: "ConversationUnavailable", message: "transcript_missing" });
+    } finally { snapshot.mockRestore(); store.mockRestore(); rpc.mockRestore(); }
+  });
+  it("retries a transient mid-turn catalog race and answers 503 ConversationReadPending instead of dropping chat", async () => {
+    const session = "00000000-0000-4000-8000-000000000001";
+    add(0, "USER_INPUT", "one");
+    add(1, "PLANNER_RESPONSE", "answer");
+    const pane = { pane_id: "agy-race", cwd: root, agent: "agy", agent_status: "working" } as HerdrPane;
+    const snapshot = spyOn(herdr, "sessionSnapshot").mockImplementation(async () => ({ panes: [pane], agents: [] }) as unknown as SessionSnapshot);
+    const store = spyOn(agyStore, "resolveAgyStore").mockResolvedValue({ root, session, path, pid: 2, started: "test" });
+    const rpc = spyOn(herdr, "herdrRpc").mockResolvedValue({ process_info: { foreground_processes: [] } } as never);
+    let spy: ReturnType<typeof spyOn> | undefined;
+    try {
+      const initial = await paneConversation(pane.pane_id);
+      expect(initial.turns).toHaveLength(2);
+      // A single transient catalog failure recovers immediately via the retry in paneConversation.
+      let calls = 0;
+      spy = spyOn(filePool, "fileTask").mockImplementation(async (task) => {
+        if (task.op !== "agy-catalog") throw new Error(`unexpected ${task.op}`);
+        if (++calls === 1) throw new Error("transient WAL copy race");
+        return [...agyCatalog(task.path)] as never;
+      });
+      const recovered = await paneConversation(pane.pane_id, undefined, { history_id: initial.history_id });
+      expect(recovered.turns).toHaveLength(2);
+      spy.mockRestore();
+      // A persistent mid-turn write race returns ConversationReadPending (503) when history_id matches,
+      // and HistoryChanged (409) when history_id belongs to another conversation.
+      spy = spyOn(filePool, "fileTask").mockRejectedValue(new Error("ongoing WAL write"));
+      const catalog = join(root, "conversations", `${session}.db`);
+      utimesSync(catalog, new Date(), new Date());
+      await expect(paneConversation(pane.pane_id, undefined, { history_id: initial.history_id })).rejects.toBeInstanceOf(ConversationReadPending);
+      await expect(paneConversation(pane.pane_id, undefined, { history_id: "other-dev-ino-agy-0" })).rejects.toBeInstanceOf(HistoryChanged);
+      await expect(paneConversation(pane.pane_id, undefined, { from: "other-dev-ino-agy-0:0" })).rejects.toBeInstanceOf(HistoryChanged);
+      // a catalog that keeps failing while nothing writes it is not a race: the chat falls back
+      utimesSync(catalog, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+      expect(await paneConversation(pane.pane_id, undefined, { history_id: initial.history_id }).catch((error: unknown) => error)).toMatchObject({ name: "ConversationUnavailable", message: "transcript_missing" });
+      // nor is one stamped ahead of the clock
+      utimesSync(catalog, new Date(Date.now() + 86_400_000), new Date(Date.now() + 86_400_000));
+      expect(await paneConversation(pane.pane_id, undefined, { history_id: initial.history_id }).catch((error: unknown) => error)).toMatchObject({ name: "ConversationUnavailable", message: "transcript_missing" });
+      spy.mockRestore();
+      spy = undefined;
+      rmSync(catalog);
+      expect(await paneConversation(pane.pane_id, undefined, { history_id: initial.history_id }).catch((error: unknown) => error)).toMatchObject({ name: "ConversationUnavailable", message: "transcript_missing" });
+    } finally { spy?.mockRestore(); snapshot.mockRestore(); store.mockRestore(); rpc.mockRestore(); }
+  });
+  it("never retries a failed catalog race into a ledger renamed over the one it authorized", async () => {
+    const session = "00000000-0000-4000-8000-000000000001";
+    add(0, "USER_INPUT", "one");
+    add(1, "PLANNER_RESPONSE", "answer");
+    const pane = { pane_id: "agy-replaced", cwd: root, agent: "agy", agent_status: "working" } as HerdrPane;
+    const snapshot = spyOn(herdr, "sessionSnapshot").mockImplementation(async () => ({ panes: [pane], agents: [] }) as unknown as SessionSnapshot);
+    const store = spyOn(agyStore, "resolveAgyStore").mockResolvedValue({ root, session, path, pid: 2, started: "test" });
+    const rpc = spyOn(herdr, "herdrRpc").mockResolvedValue({ process_info: { foreground_processes: [] } } as never);
+    let spy: ReturnType<typeof spyOn> | undefined;
+    try {
+      const initial = await paneConversation(pane.pane_id);
+      expect(initial.turns).toHaveLength(2);
+      // the first read's catalog fails, as in a write race, while another ledger is renamed over the authorized one
+      const other = `${path}.other`;
+      let calls = 0;
+      spy = spyOn(filePool, "fileTask").mockImplementation(async (task) => {
+        if (task.op !== "agy-catalog") throw new Error(`unexpected ${task.op}`);
+        if (++calls === 1) { renameSync(other, path); throw new Error("transient WAL copy race"); }
+        return [...agyCatalog(task.path)] as never;
+      });
+      utimesSync(join(root, "conversations", `${session}.db`), new Date(), new Date());
+      writeFileSync(other, row(0, "USER_INPUT", "OTHER SESSION SECRET") + row(1, "PLANNER_RESPONSE", "OTHER SESSION SECRET"));
+      // the retry reads no other file: the history the request named is no longer at the path
+      const held = await paneConversation(pane.pane_id, undefined, { history_id: initial.history_id }).catch((error: unknown) => error);
+      expect(JSON.stringify(held)).not.toContain("OTHER SESSION SECRET");
+      expect(held).toBeInstanceOf(HistoryChanged);
+      // and a refresh that names no history is pending, for the next read to authorize afresh
+      calls = 0;
+      writeFileSync(other, row(0, "USER_INPUT", "THIRD SESSION SECRET") + row(1, "PLANNER_RESPONSE", "THIRD SESSION SECRET"));
+      const fresh = await paneConversation(pane.pane_id).catch((error: unknown) => error);
+      expect(JSON.stringify(fresh)).not.toContain("THIRD SESSION SECRET");
+      expect(fresh).toBeInstanceOf(ConversationReadPending);
+    } finally { spy?.mockRestore(); snapshot.mockRestore(); store.mockRestore(); rpc.mockRestore(); }
+  });
+  it.skipIf(process.platform === "win32")("greets an Agy started in the terminal on its unused start screen", async () => {
+    const screen = [
+      "❯ agy",
+      "",
+      "       ▄▀▀▄         Antigravity CLI 1.4.4",
+      "      ▀▀▀▀▀▀        user@example.test (Demo plan    )",
+      "     ▀▀▀▀▀▀▀▀       Gemini 3.8 Flash (High)",
+      "    ▄▀▀     ▀▀▄      /tmp/project",
+      "   ▄▀▀       ▀▀▄",
+      "",
+      " ────────────────────────────────────────",
+      " >",
+      " ────────────────────────────────────────",
+      " ? for shortcuts   Gemini 3.8 Flash · high",
+    ].join("\n");
+    const pane = { pane_id: "agy-greet", cwd: root, foreground_cwd: root, agent: "agy", agent_status: "idle" } as HerdrPane;
+    let currentScreen = screen;
+    let argv = ["agy"];
+    let scrolledUp = 0;
+    const snapshot = spyOn(herdr, "sessionSnapshot").mockImplementation(async () => ({ panes: [pane], agents: [] }) as unknown as SessionSnapshot);
+    const rpc = spyOn(herdr, "herdrRpc").mockImplementation(async (method: string) => (method === "pane.get"
+      ? { pane: { ...pane, scroll: { offset_from_bottom: scrolledUp, max_offset_from_bottom: 10, viewport_rows: 40 } } }
+      : { process_info: { foreground_processes: [{ pid: process.pid, name: "agy", argv }] } }) as never);
+    const read = spyOn(herdr, "paneRead").mockImplementation(async () => ({ text: currentScreen }) as never);
+    try {
+      const greeting = await paneConversation(pane.pane_id);
+      expect(greeting).toMatchObject({ source: "agy-transcript", turns: [], cursor: null });
+      expect(greeting.history_id).toStartWith(`unwritten:agy:${pane.pane_id}:${process.pid}:`);
+      // Resumed or prompt-flag invocations, scrolled viewports, or screens with a turn fall back to scrollback.
+      argv = ["agy", "--continue"];
+      await expect(paneConversation(pane.pane_id)).rejects.toBeInstanceOf(ConversationUnavailable);
+      argv = ["agy"];
+      scrolledUp = 2;
+      await expect(paneConversation(pane.pane_id)).rejects.toBeInstanceOf(ConversationUnavailable);
+      scrolledUp = 0;
+      currentScreen = screen.replace(" >", " > hello\n\n ✦ Hi there\n\n ────────────────────────────────────────\n >");
+      await expect(paneConversation(pane.pane_id)).rejects.toBeInstanceOf(ConversationUnavailable);
+    } finally { snapshot.mockRestore(); rpc.mockRestore(); read.mockRestore(); }
   });
 });
 
@@ -4393,7 +4655,7 @@ describe.skipIf(process.platform !== "linux")("a Claude herdr-core does not name
     const job = await claudeStandIns(1);
     const store = claudeHome(job.pids[0]!, job.start(job.pids[0]!));
     const rpc = spyOn(herdr, "herdrRpc").mockImplementation((async (method: string) => method === "agent.get" ? { agent: {} } : launcher(job.leader)) as unknown as typeof herdr.herdrRpc);
-    const serving = spyOn(runtime, "servingCore").mockReturnValue(true);
+    const serving = spyOn(served, "capabilities").mockReturnValue(HERDR_CORE);
     try {
       const found = await claudePaneSession({ pane_id: "t1", cwd: store.cwd, foreground_cwd: store.cwd } as HerdrPane);
       expect([found?.path, found?.pid]).toEqual([store.transcript, job.pids[0]]);
@@ -4404,7 +4666,7 @@ describe.skipIf(process.platform !== "linux")("a Claude herdr-core does not name
     const job = await claudeStandIns(2);
     const store = claudeHome(job.pids[0]!, job.start(job.pids[0]!));
     const rpc = spyOn(herdr, "herdrRpc").mockImplementation((async (method: string) => method === "agent.get" ? { agent: {} } : launcher(job.leader)) as unknown as typeof herdr.herdrRpc);
-    const serving = spyOn(runtime, "servingCore").mockReturnValue(true);
+    const serving = spyOn(served, "capabilities").mockReturnValue(HERDR_CORE);
     try {
       expect(await claudePaneSession({ pane_id: "t1", cwd: store.cwd, foreground_cwd: store.cwd } as HerdrPane)).toBeNull();
     } finally { serving.mockRestore(); rpc.mockRestore(); job.stop(); store.restore(); }
@@ -4415,10 +4677,13 @@ describe.skipIf(process.platform !== "linux")("a Claude herdr-core does not name
 
   /**
    * A tab running `hc attach <word>` (t3), its hc client a real process with `clientEnv`; herdr-core's
-   * answers for it and for the terminal hc resolves the word to.
+   * answers for it and for the terminal hc resolves the word to. The client has printed a line before
+   * this answers: /proc shows a process just spawned with its parent's environment until its exec, and
+   * with none for a moment after it (#3514).
    */
-  function viewer(word: string, resolved: string, claudePid: number, clientEnv: Record<string, string> = OWN) {
-    const client = Bun.spawn(["sleep", "30"], { env: { PATH: process.env["PATH"] ?? "", ...clientEnv } });
+  async function viewer(word: string, resolved: string, claudePid: number, clientEnv: Record<string, string> = OWN) {
+    const client = Bun.spawn(["bash", "-c", "echo; read -r line"], { env: { PATH: process.env["PATH"] ?? "", ...clientEnv }, stdin: "pipe", stdout: "pipe", stderr: "ignore" });
+    if ((await client.stdout.getReader().read()).done) throw new Error("the hc client stand-in ended early");
     const rpc = (async (method: string, params: { pane_id?: string }) => {
       if (method === "agent.get") return { agent: {} };
       if (params.pane_id === "t3") return { process_info: { pane_id: "t3", shell_pid: 1, foreground_processes: [{ pid: client.pid, name: "hc", argv: ["/usr/local/bin/hc", "attach", word] }] } };
@@ -4431,9 +4696,9 @@ describe.skipIf(process.platform !== "linux")("a Claude herdr-core does not name
   async function viewed(word: string, resolved: string, clientEnv?: Record<string, string>) {
     const job = await claudeStandIns(1);
     const store = claudeHome(job.pids[0]!, job.start(job.pids[0]!));
-    const tab = viewer(word, resolved, job.pids[0]!, clientEnv);
+    const tab = await viewer(word, resolved, job.pids[0]!, clientEnv).catch((error: unknown) => { job.stop(); store.restore(); throw error; });
     const rpc = spyOn(herdr, "herdrRpc").mockImplementation(tab.rpc);
-    const serving = spyOn(runtime, "servingCore").mockReturnValue(true);
+    const serving = spyOn(served, "capabilities").mockReturnValue(HERDR_CORE);
     const core = spyOn(runtime, "coreSocketPath").mockReturnValue("/run/user/1000/herdr-core/default.sock");
     try {
       const found = await claudePaneSession({ pane_id: "t3", cwd: store.cwd, foreground_cwd: store.cwd } as HerdrPane);

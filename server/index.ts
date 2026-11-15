@@ -9,7 +9,8 @@ import { RelayReceiptIds } from "./machine-relay.ts";
 import { randomBytes, randomUUID } from "node:crypto";
 import { OrderSequence } from "./order-sequence.ts";
 import { readHerdrProfiles, type HerdrMachineProfile } from "./herdr-profiles.ts";
-import { accessSync, constants, readFileSync, rmSync, statSync } from "node:fs";
+import { accessSync, constants, rmSync, statSync } from "node:fs";
+import { version } from "../package.json";
 import { dirname, join } from "node:path";
 import type { PendingMessage, SessionSnapshot } from "../shared/protocol.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
@@ -28,7 +29,8 @@ import { AGENT_CATALOG, catalogPlatform } from "../shared/agent-catalog.ts";
 import { AgentInstaller } from "./agent-catalog-install.ts";
 import { type BackgroundAgentDeps } from "./background-agent.ts";
 import { herdrSocketPath, ping } from "./herdr/client.ts";
-import { coreConnection, coreSeenMarker, hcBin, hcMachine, NoHerdrCoreError, runtime, servingCore, setRuntime, startRuntime } from "./herdr-core/runtime.ts";
+import { coreConnection, coreSeenMarker, hcBin, hcMachine, NoAltRuntimeError, NoHerdrCoreError, runtime, setRuntime, startRuntime } from "./herdr-core/runtime.ts";
+import { capabilities } from "./runtime/capabilities.ts";
 import { chooseRuntime, runtimeService, type RuntimeChoice, type RuntimeService } from "./herdr-core/runtime-choice.ts";
 import { moveService, type HcInstaller } from "./runtime-move-service.ts";
 import { moveLockPath } from "./runtime-move-lock.ts";
@@ -297,7 +299,7 @@ export function createServer(
   // Settings -> Experimental -> OMP on macOS herdr-core: chat from the session it holds open
   readOmpHeldFilesSetting(() => preferences.get().settings.ompHeldFiles === true);
   // on herdr-core an agent pinned here is pinned in the Herdr app and its other clients too
-  const stopPinBridge = servingCore() ? bridgePins(coreConnection(), preferences, LOCAL_MACHINE, stateDir) : null;
+  const stopPinBridge = capabilities().pins ? bridgePins(coreConnection(), preferences, LOCAL_MACHINE, stateDir) : null;
   // Chat's own rewind (#1500, never released) kept its rewinds here; nothing reads them since #1577
   try {
     rmSync(join(stateDir, "claude-rewinds.json"), { force: true });
@@ -353,7 +355,8 @@ export function createServer(
   const namedOwner = options.tailscaleOwner !== undefined ? options.tailscaleOwner : process.env["OVIS_TAILSCALE_OWNER"]?.trim() || undefined;
   const tailnet = options.tailnet ?? new TailnetIdentitySource();
   const identityOf = async (grantPath: boolean, host: string | null, loginPath = false) => {
-    if (namedOwner !== undefined) return { ...(grantPath ? await tailnet.freshIdentity(host) : { soleLogin: null, dnsName: null, tailnetIp: null }), owner: namedOwner, tagged: false };
+    // a login is let in only at this PC's tailnet name or address (access.ts), so a named owner still reads them
+    if (namedOwner !== undefined) return { ...(grantPath ? await tailnet.freshIdentity(host) : loginPath ? await tailnet.loginIdentity() : { soleLogin: null, dnsName: null, tailnetIp: null }), owner: namedOwner, tagged: false };
     return grantPath ? tailnet.freshIdentity(host) : loginPath ? tailnet.loginIdentity() : tailnet.identity();
   };
   const serveOnly = options.tailscaleServeOnly ?? process.env["OVIS_TAILSCALE_SERVE_ONLY"] === "1";
@@ -372,8 +375,8 @@ export function createServer(
     if (path === null) return null;
     try { return { path, mark: String(statSync(path).mtimeMs) }; } catch { return null; }
   };
-  const herdrKinds = new InstalledLookup({ onPath: (binary) => agentDetector.onPath(binary), inInstallFolder: installFolder, refresh: () => agentDetector.refreshPath() });
-  const shellKinds = new InstalledLookup({ onPath: (kind) => shellAgents.executable(kind), inInstallFolder: installFolder, refresh: () => shellAgents.refresh() });
+  const herdrKinds = new InstalledLookup({ onPath: (binary) => agentDetector.onPath(binary), inInstallFolder: installFolder, refresh: (interactive) => agentDetector.refreshPath(interactive) });
+  const shellKinds = new InstalledLookup({ onPath: (kind) => shellAgents.executable(kind), inInstallFolder: installFolder, refresh: (interactive) => shellAgents.refresh(interactive) });
   const agentOffered = async (kind: string): Promise<boolean> => {
     const entry = AGENT_CATALOG.find((candidate) => candidate.id === kind);
     // a program it needs to run (DeepSeek Harness's dsh behind dsh-tui) missing: not offered, as the catalog says
@@ -403,7 +406,7 @@ export function createServer(
   // on herdr-core a finish read here is read in the Herdr app and its other clients too: only the
   // pane's finish now, so a read told late never marks a turn that ended since as seen. A pane brought
   // into view writes it again (shared/seen.ts SeenPresentation); one left on screen does not
-  const seenMarker = servingCore() ? coreSeenMarker() : null;
+  const seenMarker = capabilities().seen === "label" ? coreSeenMarker() : null;
   const markSeen = (finish: SeenFinish, again: boolean) => {
     if (!seenMarker || finish.pc !== LOCAL_MACHINE || machines?.finishEnded(finish.pc, finish.epoch) !== false) return;
     const pane = machines.list().find((machine) => machine.id === LOCAL_MACHINE)?.snapshot?.panes.find((candidate) => candidate.pane_id === finish.pane);
@@ -599,7 +602,7 @@ export function createServer(
   };
 }
 
-if (import.meta.main) {
+export async function serve(): Promise<void> {
   moveLegacyStateDir();
   // SSH connection folders an earlier server left in /tmp; here, not in createServer, so tests never touch them
   void sweepSshDirs();
@@ -616,7 +619,7 @@ if (import.meta.main) {
   const startEnv = { ...process.env };
   let herdrCore: Awaited<ReturnType<typeof startRuntime>>;
   let choice: RuntimeChoice;
-  let fallback: "no_herdr_core" | undefined;
+  let fallback: "no_herdr_core" | "no_alt_runtime" | undefined;
   try {
     choice = await chooseRuntime({ stateDir, port: Number(startEnv["PORT"] || DEFAULT_PORT), env: startEnv });
     setRuntime(choice.runtime);
@@ -624,13 +627,15 @@ if (import.meta.main) {
     try {
       herdrCore = await startRuntime(stateDir);
     } catch (err) {
-      // a choice saved from Settings whose core is gone falls back to herdr, where Settings can switch again;
-      // OVIS_RUNTIME says what to serve, and its failure stays an error
-      // only a missing hc: any other failure (a state folder, another Ovis) is the launcher's to roll back
-      if (choice.source !== "saved" || choice.runtime !== "herdr-core" || !(err instanceof NoHerdrCoreError)) throw err;
-      console.error(`The herdr-core chosen in Settings cannot start (${err instanceof Error ? err.message : String(err)}); serving herdr.`);
+      // a choice saved from Settings whose core is gone, or an alt-runtime this Ovis cannot start, falls back to
+      // herdr, where Settings can switch again; OVIS_RUNTIME says what to serve, and its failure stays an error
+      // only a missing runtime: any other failure (a state folder, another Ovis) is the launcher's to roll back
+      const missing = choice.runtime === "herdr-core" && err instanceof NoHerdrCoreError ? "no_herdr_core"
+        : choice.runtime === "alt-runtime" && err instanceof NoAltRuntimeError ? "no_alt_runtime" : null;
+      if (choice.source !== "saved" || missing === null) throw err;
+      console.error(`The ${choice.runtime} chosen in Settings cannot start (${err instanceof Error ? err.message : String(err)}); serving herdr.`);
       choice = { ...choice, runtime: "herdr" };
-      fallback = "no_herdr_core";
+      fallback = missing;
       setRuntime("herdr");
       herdrCore = null;
     }
@@ -639,7 +644,6 @@ if (import.meta.main) {
     process.exit(1);
   }
   const updates = connectUpdater();
-  const version = (JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as { version: string }).version;
   const telemetry = new Telemetry({ stateDir, version, env: process.env, fetch, previousVersion: () => updates.installed().previous_version, runtime: herdrCore === null ? "herdr" : "herdr-core" });
   const portal = new PortalService({ stateDir });
   // the direct carrier on this PC's private and Tailscale addresses, which the phone apps' OvisDirect plugin opens (docs/relay.md)
@@ -733,3 +737,5 @@ if (import.meta.main) {
     }
   }
 }
+
+if (import.meta.main) await serve();
