@@ -26,6 +26,8 @@ let foreground: { pid: number; name?: string; argv?: string[] }[];
 /** A pane's own foreground, where it is not [foreground]. */
 /** Each pane's foreground processes (null: herdr gives that pane no process_info). */
 let foregrounds: Map<string, { pid: number; name?: string; argv?: string[] }[] | null>;
+/** Run as herdr is asked each request, before it answers: a pane that changes while it is read. */
+let onRequest: ((method: string, paneId: string | undefined) => void) | undefined;
 let listener: ReturnType<typeof Bun.listen>;
 let socketBefore: string | undefined;
 /** The terminal title herdr reports for the pane (Codex's [tui].terminal_title), null for none. */
@@ -69,6 +71,7 @@ beforeEach(() => {
   peerScreens = new Map();
   foreground = [];
   foregrounds = new Map();
+  onRequest = undefined;
   socketBefore = process.env["HERDR_SOCKET"];
   const socket = join(root, "herdr.sock");
   process.env["HERDR_SOCKET"] = socket;
@@ -80,6 +83,7 @@ beforeEach(() => {
         socket.data.buffer += chunk.toString();
         if (!socket.data.buffer.includes("\n")) return;
         const request = JSON.parse(socket.data.buffer) as { id: string; method: string; params?: { pane_id?: string } };
+        onRequest?.(request.method, request.params?.pane_id);
         const peerScreen = peerScreens.get(request.params?.pane_id ?? "");
         if (request.method === "agent.get" && unlabelled) {
           socket.end(`${JSON.stringify({ id: request.id, error: { code: "agent_not_found", message: "outer shell" } })}\n`);
@@ -4235,6 +4239,19 @@ describe("a Codex pane recovered by its saved thread name (#3442)", () => {
     title = "Investigate a restored conversation | project";
     screen = toolScreen;
     expect(await resolve()).toBe(file);
+  }, 20_000);
+
+  it("reads the thread while Codex works, its title's spinner moving on between reads", async () => {
+    const file = namedThread("Investigate a restored conversation");
+    screen = toolScreen;
+    const frames = ["\u280b", "\u2819", "\u2839", "\u2838"];
+    let frame = 0;
+    // each time herdr is asked about the pane, Codex has drawn the next frame ahead of the same title
+    onRequest = (method) => {
+      if (method === "agent.get") title = `${frames[frame++ % frames.length]} Investigate a restored conversation | project`;
+    };
+    expect(await resolve()).toBe(file);
+    expect(frame).toBeGreaterThan(1);
   }, 20_000);
 
   it("takes no thread named like the folder, which a title without a thread name shows", async () => {

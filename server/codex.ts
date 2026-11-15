@@ -2380,6 +2380,9 @@ function titledCandidate(agent: Pick<AgentInfo, "terminal_title" | "terminal_tit
   return rows.length === 1 ? codexRolloutPath(rows[0]!.rollout_path, home) : null;
 }
 
+/** A title as Codex writes it, without the activity spinner it puts first while a turn runs (and animates). */
+const titleWithoutSpinner = (title: string): string => asCodexTitle(title).replace(/^[\u2800-\u28ff]\s+/, "");
+
 /** A unique current session-index name in the terminal title; names alone never authorize a read. */
 export function namedCodexThread(title: string, index: string, eligible?: ReadonlySet<string>): string | null {
   const names = new Map<string, string>();
@@ -2394,7 +2397,7 @@ export function namedCodexThread(title: string, index: string, eligible?: Readon
       else names.delete(id);
     }
   } catch { return null; }
-  const shown = asCodexTitle(title).replace(/^[\u2800-\u28ff]\s+/, "");
+  const shown = titleWithoutSpinner(title);
   const ids = [...names].filter(([, name]) => name.length >= 4 && (shown === name || shown.startsWith(`${name} | `))).map(([id]) => id);
   // unique among every saved name, not only this folder's: a namesake elsewhere may be the thread a picker resumed here
   return ids.length === 1 && (eligible === undefined || eligible.has(ids[0]!)) ? ids[0]! : null;
@@ -2490,7 +2493,7 @@ async function namedConversation(paneId: string, cwd: string, home: string, titl
   let opened: ReturnType<typeof openCodexStore> | undefined;
   try {
     const indexPath = join(home, "session_index.jsonl");
-    const titled = asCodexTitle(title).replace(/^[\u2800-\u28ff]\s+/, "");
+    const titled = titleWithoutSpinner(title);
     /** the title up to each " | ": a folder's own name may hold the separator Codex puts between items */
     const leads = titled.split(" | ").map((_, at, items) => items.slice(0, at + 1).join(" | "));
     const folderTitle = (folder: unknown) => typeof folder === "string"
@@ -2520,7 +2523,8 @@ async function namedConversation(paneId: string, cwd: string, home: string, titl
     // the same 1 MiB the screen match reads: this runs on every poll while nothing binds the pane
     if (!namedCodexAnswerShown(screen.text, codexHistoryTail(path, 1024 * 1024, home))) return null;
     const after = await codexAgentInfo(paneId);
-    if (asCodexTitle(after.terminal_title_stripped ?? after.terminal_title ?? "") !== asCodexTitle(title)) return null;
+    // the spinner moves on between reads while Codex works: the title it is ahead of is what must stay
+    if (titleWithoutSpinner(after.terminal_title_stripped ?? after.terminal_title ?? "") !== titled) return null;
     const current = await openRollouts(paneId, home, after.processRead?.info);
     if (current.codexProcesses.length === 0 || current.processes !== processes || processes === "") return null;
     const shown = await paneRead({ paneId, source: "recent", lines: 400, stripAnsi: true });
