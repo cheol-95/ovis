@@ -4261,6 +4261,17 @@ describe("a Codex pane recovered by its saved thread name (#3442)", () => {
     expect(frame).toBeGreaterThan(1);
   }, 20_000);
 
+  it("takes no thread for a TUI of an app server elsewhere (--remote), whose conversation this store does not hold", async () => {
+    const file = namedThread("Investigate a restored conversation");
+    title = "Investigate a restored conversation | project";
+    screen = toolScreen;
+    expect(await resolve()).toBe(file);
+    for (const remote of [["--remote", "ws://127.0.0.1:4500"], ["--remote=ws://127.0.0.1:4500"]]) {
+      foreground = [{ pid: 2147483640 - remote.length, argv: ["/usr/bin/codex", ...remote] }];
+      expect([remote, await resolve()]).toEqual([remote, null]);
+    }
+  }, 20_000);
+
   it("takes no thread another pane's Codex shows by the same name: opened through the picker or `resume --last`", async () => {
     const file = namedThread("Investigate a restored conversation");
     const panes = [fixturePane(root), fixturePane("peer", join(root, "elsewhere"))];

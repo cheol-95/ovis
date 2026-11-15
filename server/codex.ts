@@ -4142,8 +4142,10 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
       matched = retried.found;
     }
   }
+  /** a TUI of an app server elsewhere: the conversation it shows is in that server's store, not this one */
+  const remote = codexProcesses.some(({ argv = [] }) => argv.some((arg) => arg === "--remote" || arg.startsWith("--remote=")));
   // only for a pane nothing else ties to a thread: never over its binding or resumed thread, nor onto another pane's
-  if (matched === null && boundHere === undefined && resumed === null) {
+  if (matched === null && boundHere === undefined && resumed === null && !remote) {
     const named = await namedConversation({ paneId, cwd, home, title: agent.terminal_title_stripped ?? agent.terminal_title ?? "", processes, panes });
     if (named !== null) return named;
   }
@@ -4161,7 +4163,7 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   // peers may carry no label either, nor for a TUI of an app server elsewhere (--remote), whose conversation this
   // store does not hold, nor while the command line resumed a thread the store cannot show (it may be the one on screen)
   if (screen !== null && listed && candidates.length === paths.length && !agent.nestedTerminal && !agent.unlabelled && (resumed === null || resumedPath !== null)
-    && !codexProcesses.some(({ argv = [] }) => argv.some((arg) => arg === "--remote" || arg.startsWith("--remote=")))) {
+    && !remote) {
     const tied = await lastTurnConversation(paneId, processes, screen.text, candidates, resumedPath, folderRollouts, home);
     if (tied !== null) {
       // the loaded threads were read since the screen was: a pane that moved on meanwhile is answered nothing
