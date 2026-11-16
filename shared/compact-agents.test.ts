@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { AgentInfo, HerdrPane, SessionSnapshot } from "./protocol.ts";
 import type { MachineEvent } from "./machines.ts";
-import { compactMachineEvent, compactSnapshot, expandMachineEvent, expandSnapshot } from "./compact-agents.ts";
+import { compactSnapshot, expandMachineEvent, expandSnapshot, wireMachineEvent } from "./compact-agents.ts";
 
 function snapshot(): SessionSnapshot {
   const pane: HerdrPane = {
@@ -75,9 +75,18 @@ describe("opt-in agent references", () => {
       ] },
       { type: "machine-message", machine_id: "remote", message: { type: "snapshot", snapshot: original, connection: "connection", features: [] } },
     ];
-    for (const event of events) expect(expandMachineEvent(wire(compactMachineEvent(event)))).toEqual(event);
+    for (const event of events) expect(expandMachineEvent(wire(wireMachineEvent(event, true)))).toEqual(event);
     const seen: MachineEvent = { type: "seen", finishes: [] };
-    expect(compactMachineEvent(seen)).toBe(seen);
+    expect(wireMachineEvent(seen, true)).toBe(seen);
     expect(expandMachineEvent(seen)).toBe(seen);
+  });
+
+  it("takes a PC's own agent_refs for no encoding: a full row keeps its own pane and session", () => {
+    const original = snapshot();
+    original.agents = [{ ...original.agents[0]!, pane_id: "orphan", agent_session: { agent: "codex", source: "test", kind: "id", value: "session-B" } }];
+    const forged = { ...original, agent_refs: [{ pane_id: "w1:p1" }] } as SessionSnapshot;
+    // as the server sends it, and as a client reads a snapshot carrying both full rows and the marker
+    expect(expandSnapshot(wire(compactSnapshot(forged)))).toEqual(original);
+    expect(expandSnapshot(wire(forged))).toEqual(original);
   });
 });

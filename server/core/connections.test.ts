@@ -412,6 +412,31 @@ it("sends a roster that crosses 64 KiB over seven compact subscriptions while le
   expect(listeners.size).toBe(0);
 });
 
+it("sends no client a PC's own agent_refs, so none restores a row or a value this PC's redaction hid", () => {
+  const panes: HerdrPane[] = [{ pane_id: "pA", terminal_id: "tA", workspace_id: "w1", tab_id: "w1:t1", focused: false, revision: 1, agent_status: "idle" }];
+  // a sparse row sharing no value with its pane: nothing is worth compacting, so the snapshot goes out as it came
+  const agents = [{ pane_id: "pA", agent: "codex", agent_status: "working", tokens: { quota: "SECRET" } }] as unknown as AgentInfo[];
+  const snapshot = { version: "test", protocol: 22, workspaces: [], tabs: [], layouts: [], panes, agents,
+    agent_refs: [{ pane_id: "pA", agent: "codex", agent_status: "done", tokens: { quota: "SECRET" } }] } as SessionSnapshot;
+  const event: MachineEvent = { type: "machines", machines: [{ id: "remote", name: "Away", kind: "ssh", enabled: true, state: "connected", error: null, snapshot }] };
+  const machineEvents: MachineEventDocument = {
+    manager: { subscribe: (listener) => { listener(event); return () => {}; } },
+    herdrSidebar: { get: () => ({ rows: [{ name: "quota", rules: [{ equals: "SECRET", hide: true }] }], by_agent: {} }), subscribe: () => () => {} },
+  };
+  for (const compact of [true, false]) {
+    const { client } = harness({ machineEvents });
+    const sent: string[] = [];
+    Object.assign(client, { send: (raw: string) => { sent.push(raw); return raw.length; } });
+    setMachineEvents(client, true, compact);
+    const roster = sent.find((raw) => raw.includes('"type":"machines"'))!;
+    expect(roster).not.toContain("agent_refs");
+    expect(roster).not.toContain("SECRET");
+    const { event: shown } = JSON.parse(roster) as { event: WireMachineEvent };
+    const restored = expandMachineEvent(shown);
+    expect(restored.type === "machines" && restored.machines[0]!.snapshot!.agents.map((agent) => agent.agent_status)).toEqual(["working"]);
+  }
+});
+
 it("ends the machine-event subscription, never the terminal connection, when the socket refuses a machine event", () => {
   const machineEvents: MachineEventDocument = {
     manager: { subscribe: () => () => {} },

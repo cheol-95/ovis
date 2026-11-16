@@ -1,5 +1,5 @@
 import { subscribeMachineEvents, type MachineEventDocument } from "../machine-events.ts";
-import { compactMachineEvent } from "../../shared/compact-agents.ts";
+import { wireMachineEvent } from "../../shared/compact-agents.ts";
 /**
  * A browser's WebSocket connection: what the upgrade records on it, what it may do, how a frame is
  * sent to it, the presence beat it sends, and how it ends. Only this module changes a connection's
@@ -186,8 +186,8 @@ export function send(client: Client, message: ServerMessage, overflow?: () => vo
   let encoded: string;
   try {
     // Compact the redacted document before measuring the side-channel's transport budget.
-    encoded = JSON.stringify(message.type === "machine-event" && stateOf(client).compactMachineAgents
-      ? { ...message, event: compactMachineEvent(message.event) } : message);
+    encoded = JSON.stringify(message.type === "machine-event"
+      ? { ...message, event: wireMachineEvent(message.event, stateOf(client).compactMachineAgents === true) } : message);
   } catch { return 0; }
   return sendEncoded(client, encoded, overflow);
 }

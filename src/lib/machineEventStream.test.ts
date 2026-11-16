@@ -3,7 +3,7 @@ import type { ServerMessage } from "../../shared/protocol.ts";
 import type { MachineEvent } from "../../shared/machines.ts";
 import type { EventStreamHandlers } from "./eventStream.ts";
 import { keepMachineEvents, type MachineEventSocket } from "./machineEventStream.ts";
-import { compactMachineEvent } from "../../shared/compact-agents.ts";
+import { wireMachineEvent } from "../../shared/compact-agents.ts";
 
 class Socket implements MachineEventSocket {
   machineEventsAvailable: boolean | null = null;
@@ -53,7 +53,7 @@ describe("machine notifications over the existing terminal socket", () => {
       id: "local", name: "PC", kind: "local", enabled: true, state: "connected", error: null,
       snapshot: { version: "test", protocol: 22, workspaces: [], tabs: [], layouts: [], panes: [pane], agents: [{ ...pane, state_change_seq: 12 }] },
     }] };
-    const compact = JSON.parse(JSON.stringify(compactMachineEvent(full))) as MachineEvent;
+    const compact = JSON.parse(JSON.stringify(wireMachineEvent(full, true))) as MachineEvent;
     const tab = scenario(); tab.socket.offer(true);
     tab.socket.tell({ type: "machine-event", event: compact });
     expect(tab.events).toEqual([full]);

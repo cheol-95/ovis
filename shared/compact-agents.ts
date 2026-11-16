@@ -16,8 +16,16 @@ export type WireMachineEvent = MachineEvent
   | { type: "machines"; machines: WireMachine[] }
   | (Omit<SnapshotEvent, "message"> & { message: Omit<Extract<SnapshotEvent["message"], { type: "snapshot" }>, "snapshot"> & { snapshot: SessionSnapshot | CompactSnapshot } });
 
+/** `agent_refs` is this server's marker alone: one a PC put in its own snapshot is removed before any wire form. */
+function fullSnapshot(snapshot: SessionSnapshot): SessionSnapshot {
+  if (!Object.hasOwn(snapshot, "agent_refs")) return snapshot;
+  const { agent_refs: _foreign, ...full } = snapshot as SessionSnapshot & { agent_refs?: unknown };
+  return full;
+}
+
 /** Only equal values are inherited. Conflicts, agent-only fields, array order and absent fields survive. */
-export function compactSnapshot(snapshot: SessionSnapshot): SessionSnapshot | CompactSnapshot {
+export function compactSnapshot(received: SessionSnapshot): SessionSnapshot | CompactSnapshot {
+  const snapshot = fullSnapshot(received);
   const panes = new Map(snapshot.panes.map((pane) => [pane.pane_id, pane]));
   let saved = false;
   const refs = snapshot.agents.map((agent): AgentRef => {
@@ -39,9 +47,10 @@ export function compactSnapshot(snapshot: SessionSnapshot): SessionSnapshot | Co
   return { ...rest, agent_refs: refs };
 }
 
+/** Expands only the encoder's own form, its marker without full rows: a snapshot carrying both is full. */
 export function expandSnapshot(snapshot: SessionSnapshot | CompactSnapshot): SessionSnapshot {
-  if (!("agent_refs" in snapshot)) return snapshot;
-  const { agent_refs: refs, ...rest } = snapshot;
+  if (Object.hasOwn(snapshot, "agents") || !Object.hasOwn(snapshot, "agent_refs")) return fullSnapshot(snapshot as SessionSnapshot);
+  const { agent_refs: refs, ...rest } = snapshot as CompactSnapshot;
   const panes = new Map(snapshot.panes.map((pane) => [pane.pane_id, pane]));
   const agents = refs.map((ref): AgentInfo => {
     const { _omit: omit, ...overrides } = ref;
@@ -54,18 +63,22 @@ export function expandSnapshot(snapshot: SessionSnapshot | CompactSnapshot): Ses
   return { ...rest, agents };
 }
 
-export function compactMachine(machine: Machine): WireMachine {
-  return machine.snapshot ? { ...machine, snapshot: compactSnapshot(machine.snapshot) } : machine;
+/** A machine as a client takes it: compact when it asked, and never with a PC's own marker. */
+export function wireMachine(machine: Machine, compact: boolean): WireMachine {
+  if (!machine.snapshot) return machine;
+  return { ...machine, snapshot: compact ? compactSnapshot(machine.snapshot) : fullSnapshot(machine.snapshot) };
 }
 
 export function expandMachine(machine: WireMachine): Machine {
   return machine.snapshot ? { ...machine, snapshot: expandSnapshot(machine.snapshot) } : machine as Machine;
 }
 
-export function compactMachineEvent(event: MachineEvent): WireMachineEvent {
-  if (event.type === "machines") return { ...event, machines: event.machines.map(compactMachine) };
+/** A machine event as a client takes it: compact when it asked, and never with a PC's own marker. */
+export function wireMachineEvent(event: MachineEvent, compact: boolean): WireMachineEvent {
+  if (event.type === "machines") return { ...event, machines: event.machines.map((machine) => wireMachine(machine, compact)) };
   if (event.type === "machine-message" && event.message.type === "snapshot") {
-    return { ...event, message: { ...event.message, snapshot: compactSnapshot(event.message.snapshot) } };
+    const { snapshot } = event.message;
+    return { ...event, message: { ...event.message, snapshot: compact ? compactSnapshot(snapshot) : fullSnapshot(snapshot) } };
   }
   return event;
 }
