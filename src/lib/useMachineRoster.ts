@@ -163,15 +163,17 @@ export function useRosterLoader({ locked, healthFailing, rosterIn, setMachines, 
   // once the moves settle may bring that roster sooner; it proves nothing by itself.
   const loadRef = useRef<() => Promise<void>>(async () => {});
   const [reorderCoordinator] = useState(() => new ReorderCoordinator({ verify: verifySourceBoot, onSettled: () => void loadRef.current() }));
-  // PCs shown with their last snapshot because their compact one could not be read: until a full read or a
-  // readable event brings them again, no other event stands for them
-  const recovering = useRef(new Set<string>());
+  // PCs shown with their last snapshot because their compact one could not be read (`machines`): until a full
+  // read or a readable event brings them again, no other event stands for them. `told`: how many events told
+  // something newer of each PC, so a full read stands for a PC only if none came while it was out
+  const recovery = useRef({ machines: new Set<string>(), told: new Map<string, number>() });
   /** full: a PC's compact snapshot could not be read, so this read asks for full rows */
   const read = useCallback(async (full: boolean) => {
     const started = reorderCoordinator.loadStarted();
     const asked = stateWatch.asked();
     // the PC events this read starts after: a roster read later names its panes' sessions as they are now
     const readAfter = paneSessionEvents();
+    const toldBefore = new Map(recovery.current.told);
     try {
       await snapshotRequests.current.read(() => fetchMachines(undefined, full), (next) => {
         // a PC whose herdr was replaced leaves its panes' drafts and lenses before they are drawn
@@ -186,18 +188,19 @@ export function useRosterLoader({ locked, healthFailing, rosterIn, setMachines, 
           polling.current?.(false);
         }
         reorderCoordinator.roster(next, { kind: "load", started });
-        for (const machine of next) recovering.current.delete(machine.id);
+        for (const machine of next) recovery.current.machines.delete(machine.id);
         setMachines((previous) => sameData(previous, next) ? previous : next);
         rosterIn();
         stateWatch.read(asked);
         setMachineRosterLoaded(true);
         setError(null); setLocked(false);
       }, full ? (next) => {
-        // overtaken by an event: a PC still recovering takes this read's snapshot, which nothing since
-        // brought it; every other PC keeps what the events told
-        const recovered = next.filter((machine) => recovering.current.has(machine.id));
+        // overtaken by an event: a PC still recovering takes this read's snapshot only if no event told
+        // something newer of it while the read was out; every other PC keeps what the events told
+        const { machines: waiting, told } = recovery.current;
+        const recovered = next.filter((machine) => waiting.has(machine.id) && told.get(machine.id) === toldBefore.get(machine.id));
         if (recovered.length === 0) return;
-        for (const machine of recovered) recovering.current.delete(machine.id);
+        for (const machine of recovered) waiting.delete(machine.id);
         paneLifetimes.observe(recovered, displayPaneTitle);
         pruneWaitingSends(recovered);
         observePaneSessions(recovered, readAfter);
@@ -266,17 +269,17 @@ export function useRosterLoader({ locked, healthFailing, rosterIn, setMachines, 
   useEffect(() => () => {
     if (refetchTimer.current !== null) window.clearTimeout(refetchTimer.current);
   }, []);
-  return { snapshotRequests, recovering, reorderCoordinator, load, scheduleRefetch, onRosterStream, rosterConnection };
+  return { snapshotRequests, recovery, reorderCoordinator, load, scheduleRefetch, onRosterStream, rosterConnection };
 }
 
-export function useRosterEvents({ onPaneMoved, machineSessions, locked, onRosterStream, receivePreferencesRef, snapshotRequests, recovering, onRoster, reorderCoordinator, setMachines, rosterIn, setMachineRosterLoaded, machinesRef, onPaneStatus, onPaneExited, followFocusRef, selectionRef, splitShownRef, splitRef, pendingLink, selectionHint, setSelectedPaneId, setNotificationViewTarget, setTerminalPeek, setAutoSelected, scheduleRefetch, preferencesResubscribedRef, preferencesDisconnectedRef, preferencesClosedRef, dropIn, chime, setPairedNotices, setRelayPairings, setRemotePairings, setRemovedNotices, getTakeNotificationTargetRef }: {
+export function useRosterEvents({ onPaneMoved, machineSessions, locked, onRosterStream, receivePreferencesRef, snapshotRequests, recovery, onRoster, reorderCoordinator, setMachines, rosterIn, setMachineRosterLoaded, machinesRef, onPaneStatus, onPaneExited, followFocusRef, selectionRef, splitShownRef, splitRef, pendingLink, selectionHint, setSelectedPaneId, setNotificationViewTarget, setTerminalPeek, setAutoSelected, scheduleRefetch, preferencesResubscribedRef, preferencesDisconnectedRef, preferencesClosedRef, dropIn, chime, setPairedNotices, setRelayPairings, setRemotePairings, setRemovedNotices, getTakeNotificationTargetRef }: {
   machineSessions: MachineSessionRegistry;
   locked: boolean | null;
   onRosterStream: (update: RosterStreamUpdate) => void;
   receivePreferencesRef: RefObject<ReturnType<typeof usePreferencesSync>["receive"]>;
   snapshotRequests: RefObject<SnapshotRequests>;
   /** the loader's PCs waiting for a full read (useRosterLoader) */
-  recovering: RefObject<Set<string>>;
+  recovery: RefObject<{ machines: Set<string>; told: Map<string, number> }>;
   onRoster: ReturnType<typeof useAlertSignals>["onRoster"];
   reorderCoordinator: ReorderCoordinator;
   setMachines: Dispatch<SetStateAction<Machine[]>>;
@@ -333,8 +336,11 @@ export function useRosterEvents({ onPaneMoved, machineSessions, locked, onRoster
       const vouches = payload.type !== "machines" || kept.size === 0 || fresh.length > 0;
       // A poll started before this event can carry an older roster or pane status.
       if (vouches) snapshotRequests.current.invalidate();
+      // this event tells something newer of the PC than a full read already out: that read no longer stands for it
+      const tell = (machineId: string) => { const { told } = recovery.current; told.set(machineId, (told.get(machineId) ?? 0) + 1); };
       if (payload.type === "machines") {
-        for (const machine of fresh) recovering.current.delete(machine.id);
+        // a readable roster for a PC ends its recovery: its data is good
+        for (const machine of fresh) { tell(machine.id); recovery.current.machines.delete(machine.id); }
         if (vouches) onRosterStream(payload.machines);
         paneLifetimes.observe(payload.machines, displayPaneTitle);
         pruneWaitingSends(payload.machines);
@@ -346,6 +352,9 @@ export function useRosterEvents({ onPaneMoved, machineSessions, locked, onRoster
         setMachineRosterLoaded(true);
         return;
       }
+      tell(payload.machine_id);
+      // a PC still recovering: the read out now no longer stands for it, so one more is due
+      if (recovery.current.machines.has(payload.machine_id)) scheduleRefetch(true);
       const machine = machinesRef.current.find((m) => m.id === payload.machine_id);
       if (!machine) return;
       const message = payload.message;
@@ -400,7 +409,7 @@ export function useRosterEvents({ onPaneMoved, machineSessions, locked, onRoster
       message: onMessage,
       previous: (machineId) => machinesRef.current.find((machine) => machine.id === machineId),
       unreadable: (machineIds) => {
-        for (const id of machineIds) recovering.current.add(id);
+        for (const id of machineIds) recovery.current.machines.add(id);
         scheduleRefetch(true);
       },
     });

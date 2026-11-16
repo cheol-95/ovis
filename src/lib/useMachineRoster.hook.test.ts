@@ -173,6 +173,63 @@ describe("roster and health polling beside the event stream", () => {
     expect(remoteShown()).toBe("full read");
   });
 
+  /** A PC "remote" with one pane, its full reads answering when the test says, with what `answer` holds then. */
+  function recoveryFixture() {
+    const remote = (version: string, status: "idle" | "working" = "idle") => ({ id: "remote", name: "Away", kind: "ssh", enabled: true, state: "connected", error: null,
+      snapshot: { version, protocol: 22, workspaces: [], tabs: [], layouts: [], agents: [],
+        panes: [{ pane_id: "r1", terminal_id: "t1", workspace_id: "w", tab_id: "w:t", focused: false, revision: 1, agent_status: status }] } }) as Machine;
+    const fullReads: { promise: Promise<void>; resolve: () => void }[] = [];
+    const answer = { machine: remote("full read") };
+    setTransport({ ...transport, openEventSource: () => source, async fetch(input) {
+      const path = String(input); reads.push(path);
+      if (path === "/api/machines") {
+        const gate = Promise.withResolvers<void>();
+        fullReads.push(gate);
+        await gate.promise;
+        return Response.json({ machines: [local(), answer.machine] });
+      }
+      return Response.json(path === "/api/machines?compact_agents=1" ? { machines: [local(), remote("polled")] } : { ok: true });
+    } });
+    const unreadable = { ...remote("pushed"), snapshot: { version: "unreadable", protocol: 22, workspaces: [], tabs: [], layouts: [], panes: [], agent_refs: [{ pane_id: "gone" }] } } as unknown as Machine;
+    const shownRemote = () => shown.find((machine) => machine.id === "remote")?.snapshot;
+    return { remote, fullReads, answer, unreadable, shownRemote };
+  }
+
+  it("keeps a newer readable roster for a PC over the full read that was out when it came", async () => {
+    const { remote, fullReads, unreadable, shownRemote } = recoveryFixture();
+    await stream("opened");
+    await stream([local(), remote("pushed")]);
+    await stream([local(), unreadable]);
+    await advance(500);
+    expect(fullReads).toHaveLength(1);
+    // newer than the read out: then the PC's compact snapshot cannot be read again, which keeps this one
+    await stream([local(), remote("newer")]);
+    await stream([local(), unreadable]);
+    expect(shownRemote()?.version).toBe("newer");
+    await act(async () => { fullReads[0]!.resolve(); });
+    expect(shownRemote()?.version).toBe("newer");
+  });
+
+  it("keeps a pane status that came while a PC's full read was out, and reads that PC in full again", async () => {
+    const { remote, fullReads, answer, unreadable, shownRemote } = recoveryFixture();
+    await stream("opened");
+    await stream([local(), remote("pushed")]);
+    await stream([local(), unreadable]);
+    await advance(500);
+    expect(fullReads).toHaveLength(1);
+    await act(async () => { source.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ type: "machine-message", machine_id: "remote",
+      message: { type: "pane-status", pane_id: "r1", agent_status: "working", finish_epoch: "e", finish_id: 1 } }) })); });
+    expect(shownRemote()?.panes[0]?.agent_status).toBe("working");
+    // the read out answers with the pane as it was before that status
+    await act(async () => { fullReads[0]!.resolve(); });
+    expect(shownRemote()?.panes[0]?.agent_status).toBe("working");
+    await advance(500);
+    expect(fullReads).toHaveLength(2);
+    answer.machine = remote("read again", "working");
+    await act(async () => { fullReads[1]!.resolve(); });
+    expect(shownRemote()?.version).toBe("read again");
+  });
+
   it("reduces an idle minute from 36 GETs to 6 only after an open stream pushes a connected local PC", async () => {
     await advance(60_000);
     expect(counts()).toEqual([12, 12, 12]);
