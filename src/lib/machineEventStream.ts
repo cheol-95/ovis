@@ -5,11 +5,12 @@ import type { HerdrSocket } from "./ws.ts";
 import { keepEventStream, type EventStreamHandlers } from "./eventStream.ts";
 
 type MachineEventHandlers = Omit<EventStreamHandlers, "message"> & {
-  message(event: MachineEvent): void;
+  /** kept: the PCs in a roster whose snapshot is the roster's own (previous), as the event's could not be read */
+  message(event: MachineEvent, kept: ReadonlySet<string>): void;
   /** the PC as the roster has it now: it stands in for one whose compact snapshot cannot be read */
   previous(machineId: string): Machine | undefined;
-  /** a PC's compact snapshot could not be read, after the event that kept its last one: read the roster in full */
-  unreadable(): void;
+  /** these PCs' compact snapshots could not be read, after the event that kept their last ones: read them in full */
+  unreadable(machineIds: readonly string[]): void;
 };
 export type MachineEventSocket = Pick<HerdrSocket, "on" | "onDisconnect" | "connect" | "machineEventsAvailable" | "outputStopped" | "setMachineEvents">;
 
@@ -36,20 +37,20 @@ export function keepMachineEvents(socket: MachineEventSocket, handlers: MachineE
   const settled = () => { stopWaiting?.(); stopWaiting = undefined; };
   // either transport: a PC whose compact snapshot cannot be read keeps its last one, and the others go on
   const deliver = (event: WireMachineEvent) => {
-    let unreadable = false;
-    const read = <T>(expand: () => T, kept: () => T): T => {
+    const kept = new Set<string>();
+    const read = <T>(machineId: string, expand: () => T, previous: () => T): T => {
       try { return expand(); } catch (error) {
         if (!(error instanceof CompactAgentsError)) throw error;
-        unreadable = true;
-        return kept();
+        kept.add(machineId);
+        return previous();
       }
     };
     const payload = event.type === "machines"
-      ? { ...event, machines: event.machines.map((machine) => read(() => expandMachine(machine), () => ({ ...machine, snapshot: handlers.previous(machine.id)?.snapshot ?? null }))) }
+      ? { ...event, machines: event.machines.map((machine) => read(machine.id, () => expandMachine(machine), () => ({ ...machine, snapshot: handlers.previous(machine.id)?.snapshot ?? null }))) }
       // the roster reads no pushed snapshot (it takes rosters): one that cannot be read is left out
-      : read((): MachineEvent | null => expandMachineEvent(event), () => null);
-    if (payload) handlers.message(payload);
-    if (unreadable) handlers.unreadable();
+      : read(event.type === "machine-message" ? event.machine_id : "", (): MachineEvent | null => expandMachineEvent(event), () => null);
+    if (payload) handlers.message(payload, kept);
+    if (kept.size > 0) handlers.unreadable([...kept]);
   };
   const openFallback = () => {
     settled();

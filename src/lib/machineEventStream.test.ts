@@ -42,7 +42,7 @@ function scenario(socket = new Socket()) {
   const stop = keepMachineEvents(socket, {
     opened: () => { heard.push("open"); }, lost: () => { heard.push("lost"); }, closed: () => { heard.push("closed"); },
     message: (event) => { events.push(event); },
-    previous: (machineId) => roster.get(machineId), unreadable: () => { heard.push("unreadable"); },
+    previous: (machineId) => roster.get(machineId), unreadable: (machineIds) => { heard.push(`unreadable ${machineIds.join(",")}`); },
   }, (handlers) => { fallback = handlers; fallbackOpens++; return () => { fallbackStops++; }; },
   (run) => { waiting.add(run); return () => { waiting.delete(run); }; });
   const settleDeadline = () => { for (const run of [...waiting]) { waiting.delete(run); run(); } };
@@ -86,12 +86,12 @@ describe("machine notifications over the existing terminal socket", () => {
     // the socket's other handlers still hear each frame: nothing was thrown out of this one
     expect(after).toEqual(["machines", "machine-message"]);
     expect(tab.events).toEqual([kept]);
-    expect(tab.heard).toEqual(["open", "unreadable", "unreadable"]);
+    expect(tab.heard).toEqual(["open", "unreadable remote", "unreadable remote"]);
     tab.socket.lose(); tab.socket.offer(false);
     tab.fallback()!.message(new MessageEvent("message", { data: JSON.stringify(broken) }));
     tab.fallback()!.message(new MessageEvent("message", { data: JSON.stringify(pushed) }));
     expect(tab.events).toEqual([kept, kept]);
-    expect(tab.heard).toEqual(["open", "unreadable", "unreadable", "lost", "unreadable", "unreadable"]);
+    expect(tab.heard).toEqual(["open", "unreadable remote", "unreadable remote", "lost", "unreadable remote", "unreadable remote"]);
     tab.stop();
   });
   it("opens no SSE for twenty browser connections and accepts initial and live events", () => {

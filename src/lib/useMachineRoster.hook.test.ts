@@ -12,6 +12,8 @@ const local = (state: Machine["state"] = "connected"): Machine => ({ id: "local"
 const noop = () => {};
 /** what the loader says of the stream, as the inbox mode's list says it */
 let said: string | null = null;
+/** the roster the probe draws */
+let shown: Machine[] = [];
 // The real loader and event hooks, with a tab's visibility and interval clock driven without sleeps.
 describe("roster and health polling beside the event stream", () => {
   const saved = new Map<string, PropertyDescriptor | undefined>();
@@ -47,11 +49,13 @@ describe("roster and health polling beside the event stream", () => {
       await getTransport().fetch("/api/health?scope=bridge");
       setHealthFailing(!(await getTransport().fetch("/api/health")).ok);
     }, []);
-    const loader = useRosterLoader({ locked, healthFailing, lockedRef, refetchTimer, loadHealth, rosterIn: noop, setMachines: noop, setMachineRosterLoaded: noop, setError: noop, setLocked: noop });
+    const [machines, setMachines] = useState<Machine[]>([]);
+    const machinesRef = useRef(machines); machinesRef.current = machines; shown = machines;
+    const loader = useRosterLoader({ locked, healthFailing, lockedRef, refetchTimer, loadHealth, rosterIn: noop, setMachines, setMachineRosterLoaded: noop, setError: noop, setLocked: noop });
     said = loader.rosterConnection;
     useRosterEvents({
       ...loader, locked, machineSessions, onPaneMoved: noop, receivePreferencesRef: { current: noop }, onRoster: noop,
-      setMachines: noop, rosterIn: noop, setMachineRosterLoaded: noop, machinesRef: { current: [] }, setRemotePairings: noop, setRemovedNotices: noop,
+      setMachines, rosterIn: noop, setMachineRosterLoaded: noop, machinesRef, setRemotePairings: noop, setRemovedNotices: noop,
       onPaneStatus: noop, onPaneExited: noop, followFocusRef: { current: false },
       selectionRef: { current: { machineId: "local", paneId: null, generation: 0 } },
       splitShownRef: { current: false }, splitRef: { current: null }, pendingLink: { current: null },
@@ -134,6 +138,33 @@ describe("roster and health polling beside the event stream", () => {
     expect(reads).not.toContain("/api/machines");
     await advance(500);
     expect(reads.filter((read) => read === "/api/machines")).toHaveLength(1);
+  });
+
+  it("shows the full read's snapshot for a PC whose compact ones cannot be read, while such events come every 100 ms for 5 s", async () => {
+    const remote = (version: string): Machine => ({ id: "remote", name: "Away", kind: "ssh", enabled: true, state: "connected", error: null,
+      snapshot: { version, protocol: 22, workspaces: [], tabs: [], layouts: [], panes: [], agents: [] } });
+    // a full read takes 250 ms of the page's clock: every one is still out when the next event comes
+    setTransport({ ...transport, openEventSource: () => source, async fetch(input) {
+      const path = String(input); reads.push(path);
+      if (path === "/api/machines") {
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+        return Response.json({ machines: [local(), remote("full read")] });
+      }
+      if (path === "/api/machines?compact_agents=1") return Response.json({ machines: [local(), remote("polled")] });
+      return Response.json({ ok: true });
+    } });
+    await stream("opened");
+    await stream([local(), remote("pushed")]);
+    const remoteShown = () => shown.find((machine) => machine.id === "remote")?.snapshot?.version;
+    expect(remoteShown()).toBe("pushed");
+    const unreadable = { ...remote("pushed"), snapshot: { version: "unreadable", protocol: 22, workspaces: [], tabs: [], layouts: [], panes: [], agent_refs: [{ pane_id: "gone" }] } };
+    for (let at = 0; at < 5_000; at += 100) {
+      await act(async () => { source.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ type: "machines", machines: [local(), unreadable] }) })); });
+      await advance(100);
+    }
+    expect(reads).not.toContain("/api/machines?compact_agents=1");
+    expect(reads.filter((read) => read === "/api/machines").length).toBeGreaterThan(0);
+    expect(remoteShown()).toBe("full read");
   });
 
   it("reduces an idle minute from 36 GETs to 6 only after an open stream pushes a connected local PC", async () => {

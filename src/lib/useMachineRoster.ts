@@ -157,6 +157,9 @@ export function useRosterLoader({ locked, healthFailing, rosterIn, setMachines, 
   // once the moves settle may bring that roster sooner; it proves nothing by itself.
   const loadRef = useRef<() => Promise<void>>(async () => {});
   const [reorderCoordinator] = useState(() => new ReorderCoordinator({ verify: verifySourceBoot, onSettled: () => void loadRef.current() }));
+  // PCs shown with their last snapshot because their compact one could not be read: until a full read or a
+  // readable event brings them again, no other event stands for them
+  const recovering = useRef(new Set<string>());
   /** full: a PC's compact snapshot could not be read, so this read asks for full rows */
   const read = useCallback(async (full: boolean) => {
     const started = reorderCoordinator.loadStarted();
@@ -177,12 +180,23 @@ export function useRosterLoader({ locked, healthFailing, rosterIn, setMachines, 
           polling.current?.(false);
         }
         reorderCoordinator.roster(next, { kind: "load", started });
+        for (const machine of next) recovering.current.delete(machine.id);
         setMachines((previous) => sameData(previous, next) ? previous : next);
         rosterIn();
         stateWatch.read(asked);
         setMachineRosterLoaded(true);
         setError(null); setLocked(false);
-      });
+      }, full ? (next) => {
+        // overtaken by an event: a PC still recovering takes this read's snapshot, which nothing since
+        // brought it; every other PC keeps what the events told
+        const recovered = next.filter((machine) => recovering.current.has(machine.id));
+        if (recovered.length === 0) return;
+        for (const machine of recovered) recovering.current.delete(machine.id);
+        paneLifetimes.observe(recovered, displayPaneTitle);
+        pruneWaitingSends(recovered);
+        observePaneSessions(recovered, readAfter);
+        setMachines((previous) => previous.map((machine) => recovered.find((read) => read.id === machine.id) ?? machine));
+      } : undefined);
     }
     catch (err) {
       if (err instanceof ApiError && err.status === 401) { setLocked(true); return; }
@@ -246,15 +260,17 @@ export function useRosterLoader({ locked, healthFailing, rosterIn, setMachines, 
   useEffect(() => () => {
     if (refetchTimer.current !== null) window.clearTimeout(refetchTimer.current);
   }, []);
-  return { snapshotRequests, reorderCoordinator, load, scheduleRefetch, onRosterStream, rosterConnection };
+  return { snapshotRequests, recovering, reorderCoordinator, load, scheduleRefetch, onRosterStream, rosterConnection };
 }
 
-export function useRosterEvents({ onPaneMoved, machineSessions, locked, onRosterStream, receivePreferencesRef, snapshotRequests, onRoster, reorderCoordinator, setMachines, rosterIn, setMachineRosterLoaded, machinesRef, onPaneStatus, onPaneExited, followFocusRef, selectionRef, splitShownRef, splitRef, pendingLink, selectionHint, setSelectedPaneId, setNotificationViewTarget, setTerminalPeek, setAutoSelected, scheduleRefetch, preferencesResubscribedRef, preferencesDisconnectedRef, preferencesClosedRef, dropIn, chime, setPairedNotices, setRelayPairings, setRemotePairings, setRemovedNotices, getTakeNotificationTargetRef }: {
+export function useRosterEvents({ onPaneMoved, machineSessions, locked, onRosterStream, receivePreferencesRef, snapshotRequests, recovering, onRoster, reorderCoordinator, setMachines, rosterIn, setMachineRosterLoaded, machinesRef, onPaneStatus, onPaneExited, followFocusRef, selectionRef, splitShownRef, splitRef, pendingLink, selectionHint, setSelectedPaneId, setNotificationViewTarget, setTerminalPeek, setAutoSelected, scheduleRefetch, preferencesResubscribedRef, preferencesDisconnectedRef, preferencesClosedRef, dropIn, chime, setPairedNotices, setRelayPairings, setRemotePairings, setRemovedNotices, getTakeNotificationTargetRef }: {
   machineSessions: MachineSessionRegistry;
   locked: boolean | null;
   onRosterStream: (update: RosterStreamUpdate) => void;
   receivePreferencesRef: RefObject<ReturnType<typeof usePreferencesSync>["receive"]>;
   snapshotRequests: RefObject<SnapshotRequests>;
+  /** the loader's PCs waiting for a full read (useRosterLoader) */
+  recovering: RefObject<Set<string>>;
   onRoster: ReturnType<typeof useAlertSignals>["onRoster"];
   reorderCoordinator: ReorderCoordinator;
   setMachines: Dispatch<SetStateAction<Machine[]>>;
@@ -294,7 +310,7 @@ export function useRosterEvents({ onPaneMoved, machineSessions, locked, onRoster
   // The local socket watches every PC, even when no terminal is selected; older servers use SSE.
   useEffect(() => {
     if (locked !== false) return;
-    const onMessage = (payload: MachineEvent) => {
+    const onMessage = (payload: MachineEvent, kept: ReadonlySet<string>) => {
       stateWatch.heard();
       const takeNotificationTargetRef = getTakeNotificationTargetRef();
       if (payload.type === "preferences") { receivePreferencesRef.current(payload.preferences); return; }
@@ -306,13 +322,17 @@ export function useRosterEvents({ onPaneMoved, machineSessions, locked, onRoster
       if (payload.type === "remote-pairings") { setRemotePairings(payload.pairings); return; }
       // a device removed from this PC: told once per removal, kept until read, the oldest giving way
       if (payload.type === "device-removed") { setRemovedNotices((list) => withPairedNotice(list, payload)); return; }
+      // a PC kept with its last snapshot (its compact one could not be read) is not told by this event
+      const fresh = payload.type === "machines" ? payload.machines.filter((machine) => !kept.has(machine.id)) : [];
+      const vouches = payload.type !== "machines" || kept.size === 0 || fresh.length > 0;
       // A poll started before this event can carry an older roster or pane status.
-      snapshotRequests.current.invalidate();
+      if (vouches) snapshotRequests.current.invalidate();
       if (payload.type === "machines") {
-        onRosterStream(payload.machines);
+        for (const machine of fresh) recovering.current.delete(machine.id);
+        if (vouches) onRosterStream(payload.machines);
         paneLifetimes.observe(payload.machines, displayPaneTitle);
         pruneWaitingSends(payload.machines);
-        observePaneSessions(payload.machines);
+        observePaneSessions(fresh);
         onRoster(payload.machines);
         reorderCoordinator.roster(payload.machines, { kind: "event" });
         setMachines((previous) => sameData(previous, payload.machines) ? previous : payload.machines);
@@ -373,7 +393,10 @@ export function useRosterEvents({ onPaneMoved, machineSessions, locked, onRoster
       closed: () => { onRosterStream("closed"); preferencesClosedRef.current(); },
       message: onMessage,
       previous: (machineId) => machinesRef.current.find((machine) => machine.id === machineId),
-      unreadable: () => scheduleRefetch(true),
+      unreadable: (machineIds) => {
+        for (const id of machineIds) recovering.current.add(id);
+        scheduleRefetch(true);
+      },
     });
     return () => { stop(); onRosterStream("closed"); };
   }, [machineSessions, locked, scheduleRefetch, dropIn, chime, reorderCoordinator, onRosterStream]);
