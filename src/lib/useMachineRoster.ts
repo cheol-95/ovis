@@ -50,9 +50,10 @@ const sortedKeys = (_key: string, value: unknown): unknown => value !== null && 
  */
 export function sameData(a: unknown, b: unknown): boolean {
   if (a === b) return true;
-  // the plain encoding first: equal data in the same key order (two rosters from one transport) ends here.
-  // Sorting every object's keys costs about ten times as much: only equal data in another key order (a row
-  // restored from a compact one beside a full read), which encodes to the same length, gets that far.
+  // the plain encoding first: equal data in the same key order (two rosters from one transport) and a change
+  // of length end here. Sorting every object's keys costs about ten times as much, and runs for any two
+  // encodings of the same length: equal data in another key order (a row restored from a compact one beside
+  // a full read), and a change that keeps the length (working to blocked, idle to done, a counter's digits).
   const plain = JSON.stringify(a);
   const other = JSON.stringify(b);
   return plain === other || (plain?.length === other?.length && JSON.stringify(a, sortedKeys) === JSON.stringify(b, sortedKeys));
