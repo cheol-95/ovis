@@ -143,11 +143,14 @@ describe("roster and health polling beside the event stream", () => {
   it("shows the full read's snapshot for a PC whose compact ones cannot be read, while such events come every 100 ms for 5 s", async () => {
     const remote = (version: string): Machine => ({ id: "remote", name: "Away", kind: "ssh", enabled: true, state: "connected", error: null,
       snapshot: { version, protocol: 22, workspaces: [], tabs: [], layouts: [], panes: [], agents: [] } });
-    // a full read takes 250 ms of the page's clock: every one is still out when the next event comes
+    // a full read answers when the test says: each one is still out when the next event comes
+    const fullReads: { promise: Promise<void>; resolve: () => void }[] = [];
     setTransport({ ...transport, openEventSource: () => source, async fetch(input) {
       const path = String(input); reads.push(path);
       if (path === "/api/machines") {
-        await new Promise((resolve) => window.setTimeout(resolve, 250));
+        const answer = Promise.withResolvers<void>();
+        fullReads.push(answer);
+        await answer.promise;
         return Response.json({ machines: [local(), remote("full read")] });
       }
       if (path === "/api/machines?compact_agents=1") return Response.json({ machines: [local(), remote("polled")] });
@@ -159,7 +162,10 @@ describe("roster and health polling beside the event stream", () => {
     expect(remoteShown()).toBe("pushed");
     const unreadable = { ...remote("pushed"), snapshot: { version: "unreadable", protocol: 22, workspaces: [], tabs: [], layouts: [], panes: [], agent_refs: [{ pane_id: "gone" }] } };
     for (let at = 0; at < 5_000; at += 100) {
+      const out = fullReads.splice(0);
       await act(async () => { source.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ type: "machines", machines: [local(), unreadable] }) })); });
+      // the reads that were out when this event came answer now
+      await act(async () => { for (const read of out) read.resolve(); });
       await advance(100);
     }
     expect(reads).not.toContain("/api/machines?compact_agents=1");
