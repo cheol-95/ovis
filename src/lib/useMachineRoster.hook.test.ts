@@ -5,7 +5,8 @@ import type { Machine, MachineEvent } from "../../shared/machines.ts";
 import type { MachineSessionRegistry } from "./machineSession.ts";
 import type { ServerMessage } from "../../shared/protocol.ts";
 import { getTransport, setTransport, type EventSourceLike } from "./transport.ts";
-import { useRosterEvents, useRosterLoader } from "./useMachineRoster.ts";
+import { sameData, useRosterEvents, useRosterLoader } from "./useMachineRoster.ts";
+import { expandMachineEvent, wireMachineEvent } from "../../shared/compact-agents.ts";
 
 const local = (state: Machine["state"] = "connected"): Machine => ({ id: "local", name: "This PC", kind: "local", enabled: true, state, error: null, snapshot: null });
 const noop = () => {};
@@ -300,5 +301,19 @@ describe("roster and health polling beside the event stream", () => {
     reads.length = 0;
     await advance(60_000);
     expect(reads).toEqual([]);
+  });
+});
+
+describe("sameData", () => {
+  it("takes a roster restored from compact rows, its keys in another order, for the full roster it equals", () => {
+    const pane = { pane_id: "w1:p1", terminal_id: "terminal", workspace_id: "w1", tab_id: "w1:t1", focused: true, revision: 1,
+      agent: "codex", agent_status: "working" as const, cwd: "/work/project/with/a/long/path", terminal_title: "An agent working on the project" };
+    const machines: Machine[] = [{ ...local(), snapshot: { version: "test", protocol: 22, workspaces: [], tabs: [], layouts: [], panes: [pane], agents: [{ ...pane, state_change_seq: 3 }] } }];
+    const event = expandMachineEvent(JSON.parse(JSON.stringify(wireMachineEvent({ type: "machines", machines }, true))));
+    const restored = event.type === "machines" ? event.machines : [];
+    expect(JSON.stringify(restored)).not.toBe(JSON.stringify(machines));
+    expect(sameData(machines, restored)).toBe(true);
+    restored[0]!.snapshot!.agents[0]!.state_change_seq = 4;
+    expect(sameData(machines, restored)).toBe(false);
   });
 });

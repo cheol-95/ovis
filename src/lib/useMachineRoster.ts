@@ -39,12 +39,17 @@ export function rosterLinkAfter(link: RosterLink, update: RosterStreamUpdate): R
   return link.open ? { open: false, before: link.before } : link;
 }
 
+/** each object's keys in one order: an agent row restored from a compact one has its keys in another */
+const sortedKeys = (_key: string, value: unknown): unknown => value !== null && typeof value === "object" && !Array.isArray(value)
+  ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, (value as Record<string, unknown>)[key]]))
+  : value;
+
 /**
  * Polls and the event stream hand over fresh objects every few seconds even when nothing
  * changed; storing them re-rendered the whole app (the chat transcript included) each time.
  */
 export function sameData(a: unknown, b: unknown): boolean {
-  return a === b || JSON.stringify(a) === JSON.stringify(b);
+  return a === b || JSON.stringify(a, sortedKeys) === JSON.stringify(b, sortedKeys);
 }
 /** trailing debounce for push-triggered refetches: bursts of events become one fetch */
 const REFETCH_DEBOUNCE_MS = 500;

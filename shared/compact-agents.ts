@@ -81,6 +81,8 @@ export function expandSnapshot(snapshot: SessionSnapshot | CompactSnapshot): Ses
 }
 
 /** A machine as a client takes it: compact when it asked, and never with a PC's own marker. */
+export function wireMachine(machine: Machine, compact: false): Machine;
+export function wireMachine(machine: Machine, compact: boolean): WireMachine;
 export function wireMachine(machine: Machine, compact: boolean): WireMachine {
   if (!machine.snapshot) return machine;
   return { ...machine, snapshot: compact ? compactSnapshot(machine.snapshot) : fullSnapshot(machine.snapshot) };

@@ -122,10 +122,12 @@ no terminal input is replayed by this subscription.
 
 New clients request `compact_agents: true` on their `machine-events` subscription and
 `compact_agents=1` on `/api/machines` and `/api/machines/events`. Only these opt-in responses
-replace a snapshot's `agents` with `agent_refs`: each row keeps its `pane_id`, agent-only fields
+replace a snapshot's `agents` with `agent_refs`, and only where that is smaller (otherwise the
+snapshot keeps its `agents`): each row keeps its `pane_id`, agent-only fields
 and overrides, and inherits matching fields from the pane in the same snapshot. `_omit` lists
 optional pane fields that were absent from that agent. Clients restore full agent rows before
-updating application state. Order, recency and completion counters, nulls, differing values and
+updating application state; a restored row equals the full one after parsing, though its keys may
+come in another order, and the roster compares rows regardless of key order. Order, recency and completion counters, nulls, differing values and
 agents without a pane are preserved: a snapshot with an agent whose pane it does not list goes out
 full. `agent_refs` is the server's marker alone: one a PC put in its own snapshot is removed from
 every response, compact or not, and clients expand only a snapshot with `agent_refs` and no
