@@ -78,7 +78,7 @@ describe("roster and health polling beside the event stream", () => {
     source = { readyState: 0, onopen: null, onmessage: null, onerror: null, addEventListener: noop, close: noop };
     setTransport({ ...transport, openEventSource: () => source, async fetch(input) {
       const path = String(input); reads.push(path);
-      if (path === "/api/machines") return Response.json({ machines: [local(readState)] });
+      if (path === "/api/machines?compact_agents=1") return Response.json({ machines: [local(readState)] });
       return path === "/api/health" && !healthUp ? Response.json({ error: { code: "down" } }, { status: 500 }) : Response.json({ ok: true });
     } });
     await act(async () => { renderer = create(createElement(Probe)); });
@@ -119,7 +119,7 @@ describe("roster and health polling beside the event stream", () => {
     });
   }
   async function healthyStream() { await stream("opened"); await stream([local()]); }
-  const counts = () => ["/api/machines", "/api/health", "/api/health?scope=bridge"].map((path) => reads.filter((read) => read === path).length);
+  const counts = () => ["/api/machines?compact_agents=1", "/api/health", "/api/health?scope=bridge"].map((path) => reads.filter((read) => read === path).length);
 
   it("reduces an idle minute from 36 GETs to 6 only after an open stream pushes a connected local PC", async () => {
     await advance(60_000);

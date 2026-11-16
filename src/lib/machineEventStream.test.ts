@@ -3,6 +3,7 @@ import type { ServerMessage } from "../../shared/protocol.ts";
 import type { MachineEvent } from "../../shared/machines.ts";
 import type { EventStreamHandlers } from "./eventStream.ts";
 import { keepMachineEvents, type MachineEventSocket } from "./machineEventStream.ts";
+import { compactMachineEvent } from "../../shared/compact-agents.ts";
 
 class Socket implements MachineEventSocket {
   machineEventsAvailable: boolean | null = null;
@@ -46,6 +47,21 @@ function scenario(socket = new Socket()) {
 }
 const event: MachineEvent = { type: "seen", finishes: [] };
 describe("machine notifications over the existing terminal socket", () => {
+  it("restores compact agent rows from either WS or SSE before notifying the roster", () => {
+    const pane = { pane_id: "w1:p1", terminal_id: "terminal", workspace_id: "w1", tab_id: "w1:t1", focused: true, revision: 1, agent_status: "working" as const, cwd: "/project" };
+    const full: MachineEvent = { type: "machines", machines: [{
+      id: "local", name: "PC", kind: "local", enabled: true, state: "connected", error: null,
+      snapshot: { version: "test", protocol: 22, workspaces: [], tabs: [], layouts: [], panes: [pane], agents: [{ ...pane, state_change_seq: 12 }] },
+    }] };
+    const compact = JSON.parse(JSON.stringify(compactMachineEvent(full))) as MachineEvent;
+    const tab = scenario(); tab.socket.offer(true);
+    tab.socket.tell({ type: "machine-event", event: compact });
+    expect(tab.events).toEqual([full]);
+    tab.socket.lose(); tab.socket.offer(false);
+    tab.fallback()!.message(new MessageEvent("message", { data: JSON.stringify(compact) }));
+    expect(tab.events).toEqual([full, full]);
+    tab.stop();
+  });
   it("opens no SSE for twenty browser connections and accepts initial and live events", () => {
     const tabs = Array.from({ length: 20 }, () => scenario());
     for (const tab of tabs) {

@@ -1,5 +1,6 @@
 /** Machine notifications reuse the local terminal socket; old servers keep their SSE transport. */
 import type { MachineEvent } from "../../shared/machines.ts";
+import { expandMachineEvent, type WireMachineEvent } from "../../shared/compact-agents.ts";
 import type { HerdrSocket } from "./ws.ts";
 import { keepEventStream, type EventStreamHandlers } from "./eventStream.ts";
 
@@ -19,7 +20,7 @@ export const MACHINE_EVENTS_SETTLE_MS = 5_000;
  * or a connection whose server ended the subscription. The next connection that offers them takes over again.
  */
 export function keepMachineEvents(socket: MachineEventSocket, handlers: MachineEventHandlers,
-  fallback: (handlers: EventStreamHandlers) => () => void = (callbacks) => keepEventStream("/api/machines/events", callbacks),
+  fallback: (handlers: EventStreamHandlers) => () => void = (callbacks) => keepEventStream("/api/machines/events?compact_agents=1", callbacks),
   wait: (run: () => void, ms: number) => () => void = (run, ms) => { const timer = setTimeout(run, ms); return () => clearTimeout(timer); }): () => void {
   let subscribed = false;
   let stopped = false;
@@ -32,7 +33,7 @@ export function keepMachineEvents(socket: MachineEventSocket, handlers: MachineE
     if (stopFallback) return;
     stopFallback = fallback({ ...handlers, message: (event) => {
       let payload: MachineEvent;
-      try { payload = JSON.parse(event.data) as MachineEvent; } catch { return; }
+      try { payload = expandMachineEvent(JSON.parse(event.data) as WireMachineEvent); } catch { return; }
       handlers.message(payload);
     } });
   };
@@ -56,7 +57,7 @@ export function keepMachineEvents(socket: MachineEventSocket, handlers: MachineE
   const offMessage = socket.on((message) => {
     if (stopped) return;
     if (message.type === "features" || message.type === "snapshot") choose();
-    else if (message.type === "machine-event" && subscribed) handlers.message(message.event);
+    else if (message.type === "machine-event" && subscribed) handlers.message(expandMachineEvent(message.event));
     else if (message.type === "machine-events-ended") { endedByServer = true; lose(); choose(); }
     // output stopped (4008): the socket waits for an attach, the sidebar does not
     else if (message.type === "error" && message.code === "output_stalled") choose();

@@ -120,6 +120,17 @@ Removing that override and restarting restores the WebSocket transport. The SSE 
 available to older clients and bridge/relay consumers. A reconnect negotiates the transport again;
 no terminal input is replayed by this subscription.
 
+New clients request `compact_agents: true` on their `machine-events` subscription and
+`compact_agents=1` on `/api/machines` and `/api/machines/events`. Only these opt-in responses
+replace a snapshot's `agents` with `agent_refs`: each row keeps its `pane_id`, agent-only fields
+and overrides, and inherits matching fields from the pane in the same snapshot. `_omit` lists
+optional pane fields that were absent from that agent. Clients restore full agent rows before
+updating application state. Order, recency and completion counters, nulls, differing values and
+agents without a pane are preserved. Redaction happens before compaction, and WebSocket size
+limits measure the compact frame. Legacy responses and the bridge protocol do not change;
+new clients also accept full rows from older servers. This reduces duplicate data without raising
+the machine-event backlog limit; an even larger roster can still fall back to SSE.
+
 A page takes machine events over SSE whenever its socket does not carry them: a connection that
 has not said whether it does within five seconds, a socket stopped for output (4008, which only
 reconnects on an attach), or a connection whose server sent `machine-events-ended`. Machine events

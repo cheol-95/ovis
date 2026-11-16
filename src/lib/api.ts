@@ -1,4 +1,5 @@
 import { apiFetch } from "./api-request-id.ts";
+import { expandMachine, type WireMachine } from "../../shared/compact-agents.ts";
 import type { PreferencesChange, SharedPreferences } from "../../shared/preferences.ts";
 import type { AlertWebhookSave, AlertWebhookView } from "../../shared/alert-webhook.ts";
 import type { SeenFinish, SeenPresentation } from "../../shared/seen.ts";
@@ -1628,9 +1629,9 @@ export async function fetchPushSubscriptionStatus(subscription: PushSubscription
 
 export function fetchBridgeHealth(): Promise<BridgeHealth> { return getJson("/api/health?scope=bridge"); }
 export async function fetchMachines(signal?: AbortSignal): Promise<Machine[]> {
-  const response = await apiFetch("/api/machines", { signal });
+  const response = await apiFetch("/api/machines?compact_agents=1", { signal });
   if (!response.ok) throw await errorFrom("/api/machines", response);
-  return ((await response.json()) as { machines: Machine[] }).machines;
+  return ((await response.json()) as { machines: WireMachine[] }).machines.map(expandMachine);
 }
 /**
  * GET /api/machines?verify_source_boot: the roster, and the boot id of the server behind `machineId`
