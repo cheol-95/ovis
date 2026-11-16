@@ -49,7 +49,13 @@ const sortedKeys = (_key: string, value: unknown): unknown => value !== null && 
  * changed; storing them re-rendered the whole app (the chat transcript included) each time.
  */
 export function sameData(a: unknown, b: unknown): boolean {
-  return a === b || JSON.stringify(a, sortedKeys) === JSON.stringify(b, sortedKeys);
+  if (a === b) return true;
+  // the plain encoding first: equal data in the same key order (two rosters from one transport) ends here.
+  // Sorting every object's keys costs about ten times as much: only equal data in another key order (a row
+  // restored from a compact one beside a full read), which encodes to the same length, gets that far.
+  const plain = JSON.stringify(a);
+  const other = JSON.stringify(b);
+  return plain === other || (plain?.length === other?.length && JSON.stringify(a, sortedKeys) === JSON.stringify(b, sortedKeys));
 }
 /** trailing debounce for push-triggered refetches: bursts of events become one fetch */
 const REFETCH_DEBOUNCE_MS = 500;
