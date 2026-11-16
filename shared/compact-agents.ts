@@ -26,11 +26,23 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
 const namedRow = (row: unknown): row is { pane_id: string } =>
   isRecord(row) && typeof row.pane_id === "string" && !Object.hasOwn(row, "__proto__") && !Object.hasOwn(row, "constructor");
 
-/** `agent_refs` is this server's marker alone: one a PC put in its own snapshot is removed before any wire form. */
+const ownOmit = (row: unknown): row is Record<string, unknown> => isRecord(row) && Object.hasOwn(row, "_omit");
+
+/**
+ * `agent_refs` and a row's `_omit` are this server's alone: those a PC put in its own snapshot are removed
+ * before any wire form, or the decoder would read them as the encoder's.
+ */
 function fullSnapshot(snapshot: SessionSnapshot): SessionSnapshot {
-  if (!Object.hasOwn(snapshot, "agent_refs")) return snapshot;
+  const { agents }: { agents: unknown } = snapshot;
+  const omitted = Array.isArray(agents) && agents.some(ownOmit);
+  if (!Object.hasOwn(snapshot, "agent_refs") && !omitted) return snapshot;
   const { agent_refs: _foreign, ...full } = snapshot as SessionSnapshot & { agent_refs?: unknown };
-  return full;
+  if (!omitted) return full;
+  return { ...full, agents: full.agents.map((agent: unknown) => {
+    if (!ownOmit(agent)) return agent;
+    const { _omit: _foreignOmit, ...row } = agent;
+    return row;
+  }) as AgentInfo[] };
 }
 
 /** Only equal values are inherited. Conflicts, agent-only fields, array order and absent fields survive. */

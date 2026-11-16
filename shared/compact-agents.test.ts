@@ -112,4 +112,17 @@ describe("opt-in agent references", () => {
       expect(expandSnapshot(wire(value))).toEqual(wire(value));
     }
   });
+
+  it("takes a PC's own _omit for no encoding: its row stays readable and keeps its own fields, compact or full", () => {
+    for (const omit of [5, ["cwd", "agent_session"]]) {
+      const sent = snapshot();
+      (sent.agents[0] as unknown as Record<string, unknown>)._omit = omit;
+      const machine = { id: "remote", name: "Away", kind: "ssh", enabled: true, state: "connected", error: null } as const;
+      const event: MachineEvent = { type: "machines", machines: [{ ...machine, snapshot: sent }] };
+      for (const compact of [true, false]) {
+        expect({ omit, compact, shown: expandMachineEvent(wire(wireMachineEvent(event, compact))) })
+          .toEqual({ omit, compact, shown: { type: "machines", machines: [{ ...machine, snapshot: snapshot() }] } });
+      }
+    }
+  });
 });
