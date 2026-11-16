@@ -230,6 +230,32 @@ describe("roster and health polling beside the event stream", () => {
     expect(shownRemote()?.version).toBe("read again");
   });
 
+  it("ends a PC's recovery when a pane status comes during every full read: the third is shown, the newest status on top", async () => {
+    const { remote, fullReads, answer, unreadable, shownRemote } = recoveryFixture();
+    const status = (agent_status: string, finish_id: number) => act(async () => {
+      source.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ type: "machine-message", machine_id: "remote",
+        message: { type: "pane-status", pane_id: "r1", agent_status, finish_epoch: "e", finish_id } }) }));
+    });
+    await stream("opened");
+    await stream([local(), remote("pushed")]);
+    await stream([local(), unreadable]);
+    for (const [index, agentStatus] of ["working", "blocked", "done"].entries()) {
+      await advance(500);
+      expect(fullReads).toHaveLength(index + 1);
+      // a status for the PC while its read is out; the read answers with the pane as it was before it
+      await status(agentStatus, index + 1);
+      answer.machine = remote(`read ${index + 1}`);
+      await act(async () => { fullReads[index]!.resolve(); });
+    }
+    expect(shownRemote()?.version).toBe("read 3");
+    expect(shownRemote()?.panes[0]?.agent_status).toBe("done");
+    // the recovery has ended: a later status is shown as it comes and asks for no full read
+    await status("idle", 4);
+    await advance(5_000);
+    expect(fullReads).toHaveLength(3);
+    expect(shownRemote()?.panes[0]?.agent_status).toBe("idle");
+  });
+
   it("reduces an idle minute from 36 GETs to 6 only after an open stream pushes a connected local PC", async () => {
     await advance(60_000);
     expect(counts()).toEqual([12, 12, 12]);
