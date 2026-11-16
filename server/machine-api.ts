@@ -173,10 +173,11 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
     if (!parts.length && request.method === "GET") {
       setRequestRoute("/api/machines");
       const asked = url.searchParams.getAll("verify_source_boot");
-      // as the machine events tell it: without the token values herdr's rows hide (withoutHiddenTokens)
-      const shown = () => withoutHiddenTokens(herdrSidebar?.get() ?? null, manager.list());
+      // as the machine events tell it, for every answer below: without the token values herdr's rows hide
+      // (withoutHiddenTokens), and without a PC's own agent_refs (wireMachine)
+      const shown = () => withoutHiddenTokens(herdrSidebar?.get() ?? null, manager.list()).map((machine) => wireMachine(machine, false));
       if (asked.length === 0) {
-        if (url.searchParams.get("compact_agents") !== "1") return jsonResponse({ machines: shown().map((machine) => wireMachine(machine, false)) } satisfies MachineRoster);
+        if (url.searchParams.get("compact_agents") !== "1") return jsonResponse({ machines: shown() } satisfies MachineRoster);
         return jsonResponse({ machines: shown().map((machine) => wireMachine(machine, true)) } satisfies { machines: WireMachine[] });
       }
       if (asked.length > 1 || asked[0] === "") return fail("invalid_query", "verify_source_boot names one PC", 400);
