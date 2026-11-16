@@ -437,6 +437,17 @@ it("sends no client a PC's own agent_refs, so none restores a row or a value thi
   }
 });
 
+it("sends a PC's snapshot without agents to a compact client as it came, rather than nothing", () => {
+  const { agents: _agents, ...partial }: SessionSnapshot = { version: "test", protocol: 22, workspaces: [], tabs: [], layouts: [], panes: [], agents: [] };
+  const event = { type: "machines", machines: [{ id: "remote", name: "Away", kind: "ssh", enabled: true, state: "connected", error: null, snapshot: partial }] } as unknown as MachineEvent;
+  const machineEvents: MachineEventDocument = { manager: { subscribe: (listener) => { listener(event); return () => {}; } } };
+  const { client } = harness({ machineEvents });
+  const sent: string[] = [];
+  Object.assign(client, { send: (raw: string) => { sent.push(raw); return raw.length; } });
+  setMachineEvents(client, true, true);
+  expect(sent.map((raw) => JSON.parse(raw))).toEqual([{ type: "machine-event", event }]);
+});
+
 it("ends the machine-event subscription, never the terminal connection, when the socket refuses a machine event", () => {
   const machineEvents: MachineEventDocument = {
     manager: { subscribe: () => () => {} },

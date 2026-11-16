@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { AgentInfo, HerdrPane, SessionSnapshot } from "./protocol.ts";
 import type { MachineEvent } from "./machines.ts";
-import { compactSnapshot, expandMachineEvent, expandSnapshot, wireMachineEvent } from "./compact-agents.ts";
+import { CompactAgentsError, compactSnapshot, expandMachineEvent, expandSnapshot, wireMachineEvent, type CompactSnapshot } from "./compact-agents.ts";
 
 function snapshot(): SessionSnapshot {
   const pane: HerdrPane = {
@@ -88,5 +88,28 @@ describe("opt-in agent references", () => {
     // as the server sends it, and as a client reads a snapshot carrying both full rows and the marker
     expect(expandSnapshot(wire(compactSnapshot(forged)))).toEqual(original);
     expect(expandSnapshot(wire(forged))).toEqual(original);
+  });
+
+  it("refuses a compact snapshot the encoder cannot have written", () => {
+    const compact = wire(compactSnapshot(snapshot())) as CompactSnapshot;
+    const refs = (...agent_refs: unknown[]) => ({ ...compact, agent_refs }) as unknown as CompactSnapshot;
+    const broken = [
+      { ...compact, agent_refs: null } as unknown as CompactSnapshot, refs(null), refs({ state_change_seq: 1 }), refs({ pane_id: "elsewhere" }),
+      refs({ pane_id: "w1:p1", _omit: 12 }), refs({ pane_id: "w1:p1", _omit: {} }), refs({ pane_id: "w1:p1", _omit: [1] }),
+      refs(JSON.parse('{"pane_id":"w1:p1","__proto__":{"agent_status":"done"}}')), refs({ pane_id: "w1:p1", constructor: "x" }),
+      { ...compact, panes: null } as unknown as CompactSnapshot, { ...compact, panes: [null] } as unknown as CompactSnapshot,
+    ];
+    for (const value of broken) expect(() => expandSnapshot(value)).toThrow(CompactAgentsError);
+  });
+
+  it("sends what it cannot compact whole as it came: no agents, a row that is no object, an agent without its pane, a key read as a prototype", () => {
+    const { agents: _agents, ...noAgents } = snapshot();
+    const nullRow = { ...snapshot(), agents: [null] } as unknown as SessionSnapshot;
+    const orphan = snapshot(); orphan.agents.push({ ...orphan.agents[0]!, pane_id: "orphan" });
+    const prototypeKey = snapshot(); prototypeKey.agents[0] = { ...JSON.parse('{"__proto__":{}}'), ...prototypeKey.agents[0]! };
+    for (const value of [noAgents as SessionSnapshot, nullRow, orphan, prototypeKey]) {
+      expect(compactSnapshot(value)).toBe(value);
+      expect(expandSnapshot(wire(value))).toEqual(wire(value));
+    }
   });
 });

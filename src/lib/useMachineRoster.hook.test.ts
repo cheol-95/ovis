@@ -70,6 +70,9 @@ describe("roster and health polling beside the event stream", () => {
       location: { hash: "" },
       setInterval(run: () => void, every: number) { const id = next++; timers.set(id, { at: now + every, every, run }); return id; },
       clearInterval(id: number) { timers.delete(id); },
+      // a one-shot timer: `every` 0 runs it once
+      setTimeout(run: () => void, ms: number) { const id = next++; timers.set(id, { at: now + ms, every: 0, run }); return id; },
+      clearTimeout(id: number) { timers.delete(id); },
     } });
     Object.defineProperty(globalThis, "document", { configurable: true, value: {
       get visibilityState() { return visibility; },
@@ -78,7 +81,7 @@ describe("roster and health polling beside the event stream", () => {
     source = { readyState: 0, onopen: null, onmessage: null, onerror: null, addEventListener: noop, close: noop };
     setTransport({ ...transport, openEventSource: () => source, async fetch(input) {
       const path = String(input); reads.push(path);
-      if (path === "/api/machines?compact_agents=1") return Response.json({ machines: [local(readState)] });
+      if (path === "/api/machines?compact_agents=1" || path === "/api/machines") return Response.json({ machines: [local(readState)] });
       return path === "/api/health" && !healthUp ? Response.json({ error: { code: "down" } }, { status: 500 }) : Response.json({ ok: true });
     } });
     await act(async () => { renderer = create(createElement(Probe)); });
@@ -100,7 +103,8 @@ describe("roster and health polling beside the event stream", () => {
       const due = [...timers.entries()].filter(([, timer]) => timer.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
       if (!due) break;
       now = due[1].at;
-      due[1].at += due[1].every;
+      if (due[1].every === 0) timers.delete(due[0]);
+      else due[1].at += due[1].every;
       await act(async () => { due[1].run(); });
     }
     now = end;
@@ -120,6 +124,16 @@ describe("roster and health polling beside the event stream", () => {
   }
   async function healthyStream() { await stream("opened"); await stream([local()]); }
   const counts = () => ["/api/machines?compact_agents=1", "/api/health", "/api/health?scope=bridge"].map((path) => reads.filter((read) => read === path).length);
+
+  it("reads the roster in full, once, after a pushed compact snapshot that cannot be read", async () => {
+    await stream("opened");
+    const unreadable = { ...local(), snapshot: { version: "test", protocol: 22, workspaces: [], tabs: [], layouts: [], panes: [], agent_refs: [{ pane_id: "gone" }] } };
+    await act(async () => { source.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ type: "machines", machines: [unreadable] }) })); });
+    await act(async () => { source.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ type: "machines", machines: [unreadable] }) })); });
+    expect(reads).not.toContain("/api/machines");
+    await advance(500);
+    expect(reads.filter((read) => read === "/api/machines")).toHaveLength(1);
+  });
 
   it("reduces an idle minute from 36 GETs to 6 only after an open stream pushes a connected local PC", async () => {
     await advance(60_000);

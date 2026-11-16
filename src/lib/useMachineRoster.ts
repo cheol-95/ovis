@@ -152,13 +152,14 @@ export function useRosterLoader({ locked, healthFailing, rosterIn, setMachines, 
   // once the moves settle may bring that roster sooner; it proves nothing by itself.
   const loadRef = useRef<() => Promise<void>>(async () => {});
   const [reorderCoordinator] = useState(() => new ReorderCoordinator({ verify: verifySourceBoot, onSettled: () => void loadRef.current() }));
-  const load = useCallback(async () => {
+  /** full: a PC's compact snapshot could not be read, so this read asks for full rows */
+  const read = useCallback(async (full: boolean) => {
     const started = reorderCoordinator.loadStarted();
     const asked = stateWatch.asked();
     // the PC events this read starts after: a roster read later names its panes' sessions as they are now
     const readAfter = paneSessionEvents();
     try {
-      await snapshotRequests.current.read(fetchMachines, (next) => {
+      await snapshotRequests.current.read(() => fetchMachines(undefined, full), (next) => {
         // a PC whose herdr was replaced leaves its panes' drafts and lenses before they are drawn
         paneLifetimes.observe(next, displayPaneTitle);
         pruneWaitingSends(next);
@@ -183,6 +184,7 @@ export function useRosterLoader({ locked, healthFailing, rosterIn, setMachines, 
       setError(err instanceof Error ? err.message : String(err));
     }
   }, [rosterIn, reorderCoordinator]);
+  const load = useCallback(() => read(false), [read]);
   loadRef.current = load;
 
   useEffect(() => {
@@ -223,14 +225,18 @@ export function useRosterLoader({ locked, healthFailing, rosterIn, setMachines, 
     };
   }, [load, loadHealth]);
 
-  // push-triggered refetches are debounced so an event burst becomes one fetch
-  const scheduleRefetch = useCallback(() => {
+  // push-triggered refetches are debounced so an event burst becomes one fetch, a full one when any asked for it
+  const fullRefetch = useRef(false);
+  const scheduleRefetch = useCallback((full = false) => {
+    if (full) fullRefetch.current = true;
     if (refetchTimer.current !== null) return;
     refetchTimer.current = window.setTimeout(() => {
       refetchTimer.current = null;
-      if (lockedRef.current !== true) void load();
+      const fullRead = fullRefetch.current;
+      fullRefetch.current = false;
+      if (lockedRef.current !== true) void read(fullRead);
     }, REFETCH_DEBOUNCE_MS);
-  }, [load]);
+  }, [read]);
 
   useEffect(() => () => {
     if (refetchTimer.current !== null) window.clearTimeout(refetchTimer.current);
@@ -264,7 +270,7 @@ export function useRosterEvents({ onPaneMoved, machineSessions, locked, onRoster
   setNotificationViewTarget: Dispatch<SetStateAction<NotificationTarget | null>>;
   setTerminalPeek: Dispatch<SetStateAction<TerminalPeek | null>>;
   setAutoSelected: Dispatch<SetStateAction<boolean>>;
-  scheduleRefetch: () => void;
+  scheduleRefetch: (full?: boolean) => void;
   preferencesResubscribedRef: RefObject<ReturnType<typeof usePreferencesSync>["resubscribed"]>;
   preferencesDisconnectedRef: RefObject<ReturnType<typeof usePreferencesSync>["disconnected"]>;
   preferencesClosedRef: RefObject<ReturnType<typeof usePreferencesSync>["closed"]>;
@@ -361,6 +367,8 @@ export function useRosterEvents({ onPaneMoved, machineSessions, locked, onRoster
       // the next poll locks the app, which ends this effect and its wait)
       closed: () => { onRosterStream("closed"); preferencesClosedRef.current(); },
       message: onMessage,
+      previous: (machineId) => machinesRef.current.find((machine) => machine.id === machineId),
+      unreadable: () => scheduleRefetch(true),
     });
     return () => { stop(); onRosterStream("closed"); };
   }, [machineSessions, locked, scheduleRefetch, dropIn, chime, reorderCoordinator, onRosterStream]);

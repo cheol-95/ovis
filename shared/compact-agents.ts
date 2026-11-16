@@ -16,6 +16,16 @@ export type WireMachineEvent = MachineEvent
   | { type: "machines"; machines: WireMachine[] }
   | (Omit<SnapshotEvent, "message"> & { message: Omit<Extract<SnapshotEvent["message"], { type: "snapshot" }>, "snapshot"> & { snapshot: SessionSnapshot | CompactSnapshot } });
 
+/** A compact snapshot the encoder cannot have written: its PC keeps the last roster read until a full read. */
+export class CompactAgentsError extends Error {
+  override name = "CompactAgentsError";
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+/** A row that names its pane, with no key a plain object would read as its prototype. */
+const namedRow = (row: unknown): row is { pane_id: string } =>
+  isRecord(row) && typeof row.pane_id === "string" && !Object.hasOwn(row, "__proto__") && !Object.hasOwn(row, "constructor");
+
 /** `agent_refs` is this server's marker alone: one a PC put in its own snapshot is removed before any wire form. */
 function fullSnapshot(snapshot: SessionSnapshot): SessionSnapshot {
   if (!Object.hasOwn(snapshot, "agent_refs")) return snapshot;
@@ -26,11 +36,14 @@ function fullSnapshot(snapshot: SessionSnapshot): SessionSnapshot {
 /** Only equal values are inherited. Conflicts, agent-only fields, array order and absent fields survive. */
 export function compactSnapshot(received: SessionSnapshot): SessionSnapshot | CompactSnapshot {
   const snapshot = fullSnapshot(received);
+  // A PC's snapshot is not shape-checked: one the decoder could not take whole goes on full, as it came.
+  const { panes: paneList, agents }: { panes: unknown; agents: unknown } = snapshot;
+  if (!Array.isArray(paneList) || !Array.isArray(agents) || !paneList.every(isRecord)) return snapshot;
   const panes = new Map(snapshot.panes.map((pane) => [pane.pane_id, pane]));
+  if (!agents.every((agent) => namedRow(agent) && panes.has(agent.pane_id))) return snapshot;
   let saved = false;
   const refs = snapshot.agents.map((agent): AgentRef => {
-    const pane = panes.get(agent.pane_id);
-    if (!pane) return agent;
+    const pane = panes.get(agent.pane_id)!;
     const ref: AgentRef = { ...agent };
     const omit: SharedField[] = [];
     for (const key of SHARED_FIELDS) {
@@ -51,13 +64,17 @@ export function compactSnapshot(received: SessionSnapshot): SessionSnapshot | Co
 export function expandSnapshot(snapshot: SessionSnapshot | CompactSnapshot): SessionSnapshot {
   if (Object.hasOwn(snapshot, "agents") || !Object.hasOwn(snapshot, "agent_refs")) return fullSnapshot(snapshot as SessionSnapshot);
   const { agent_refs: refs, ...rest } = snapshot as CompactSnapshot;
+  const { panes: paneList }: { panes: unknown } = snapshot;
+  if (!Array.isArray(paneList) || !paneList.every(isRecord) || !Array.isArray(refs)) throw new CompactAgentsError("compact snapshot without panes or agent_refs");
   const panes = new Map(snapshot.panes.map((pane) => [pane.pane_id, pane]));
-  const agents = refs.map((ref): AgentInfo => {
-    const { _omit: omit, ...overrides } = ref;
-    const pane = panes.get(ref.pane_id);
-    const inherited = Object.fromEntries(SHARED_FIELDS.filter((key) => pane && Object.hasOwn(pane, key)).map((key) => [key, pane![key]]));
+  const agents = refs.map((ref: unknown): AgentInfo => {
+    // every reference the encoder writes names a pane of the same snapshot
+    if (!namedRow(ref) || !panes.has(ref.pane_id)) throw new CompactAgentsError("agent_refs row names no pane of its snapshot");
+    const { _omit: omit, ...overrides } = ref as AgentRef;
+    if (omit !== undefined && !(Array.isArray(omit) && omit.every((key) => typeof key === "string"))) throw new CompactAgentsError("_omit is not a list of field names");
+    const pane = panes.get(ref.pane_id)!;
     // Never inherit a value the agent did not have, including optional titles and token fields.
-    for (const key of omit ?? []) if (SHARED_FIELDS.includes(key)) delete inherited[key];
+    const inherited = Object.fromEntries(SHARED_FIELDS.filter((key) => Object.hasOwn(pane, key) && !omit?.includes(key)).map((key) => [key, pane[key]]));
     return { ...inherited, ...overrides } as AgentInfo;
   });
   return { ...rest, agents };

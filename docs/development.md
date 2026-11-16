@@ -126,7 +126,12 @@ replace a snapshot's `agents` with `agent_refs`: each row keeps its `pane_id`, a
 and overrides, and inherits matching fields from the pane in the same snapshot. `_omit` lists
 optional pane fields that were absent from that agent. Clients restore full agent rows before
 updating application state. Order, recency and completion counters, nulls, differing values and
-agents without a pane are preserved. Redaction happens before compaction, and WebSocket size
+agents without a pane are preserved: a snapshot with an agent whose pane it does not list goes out
+full. `agent_refs` is the server's marker alone: one a PC put in its own snapshot is removed from
+every response, compact or not, and clients expand only a snapshot with `agent_refs` and no
+`agents`. A compact snapshot a client cannot read (a reference naming no pane of its snapshot, a
+malformed `_omit`) keeps that PC's last roster, and the client reads the roster again without
+`compact_agents`. Redaction happens before compaction, and WebSocket size
 limits measure the compact frame. Legacy responses and the bridge protocol do not change;
 new clients also accept full rows from older servers. This reduces duplicate data without raising
 the machine-event backlog limit; an even larger roster can still fall back to SSE.

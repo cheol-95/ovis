@@ -1,10 +1,16 @@
 /** Machine notifications reuse the local terminal socket; old servers keep their SSE transport. */
-import type { MachineEvent } from "../../shared/machines.ts";
-import { expandMachineEvent, type WireMachineEvent } from "../../shared/compact-agents.ts";
+import type { Machine, MachineEvent } from "../../shared/machines.ts";
+import { CompactAgentsError, expandMachine, expandMachineEvent, type WireMachineEvent } from "../../shared/compact-agents.ts";
 import type { HerdrSocket } from "./ws.ts";
 import { keepEventStream, type EventStreamHandlers } from "./eventStream.ts";
 
-type MachineEventHandlers = Omit<EventStreamHandlers, "message"> & { message(event: MachineEvent): void };
+type MachineEventHandlers = Omit<EventStreamHandlers, "message"> & {
+  message(event: MachineEvent): void;
+  /** the PC as the roster has it now: it stands in for one whose compact snapshot cannot be read */
+  previous(machineId: string): Machine | undefined;
+  /** a PC's compact snapshot could not be read, after the event that kept its last one: read the roster in full */
+  unreadable(): void;
+};
 export type MachineEventSocket = Pick<HerdrSocket, "on" | "onDisconnect" | "connect" | "machineEventsAvailable" | "outputStopped" | "setMachineEvents">;
 
 /**
@@ -28,13 +34,30 @@ export function keepMachineEvents(socket: MachineEventSocket, handlers: MachineE
   let stopFallback: (() => void) | undefined;
   let stopWaiting: (() => void) | undefined;
   const settled = () => { stopWaiting?.(); stopWaiting = undefined; };
+  // either transport: a PC whose compact snapshot cannot be read keeps its last one, and the others go on
+  const deliver = (event: WireMachineEvent) => {
+    let unreadable = false;
+    const read = <T>(expand: () => T, kept: () => T): T => {
+      try { return expand(); } catch (error) {
+        if (!(error instanceof CompactAgentsError)) throw error;
+        unreadable = true;
+        return kept();
+      }
+    };
+    const payload = event.type === "machines"
+      ? { ...event, machines: event.machines.map((machine) => read(() => expandMachine(machine), () => ({ ...machine, snapshot: handlers.previous(machine.id)?.snapshot ?? null }))) }
+      // the roster reads no pushed snapshot (it takes rosters): one that cannot be read is left out
+      : read((): MachineEvent | null => expandMachineEvent(event), () => null);
+    if (payload) handlers.message(payload);
+    if (unreadable) handlers.unreadable();
+  };
   const openFallback = () => {
     settled();
     if (stopFallback) return;
     stopFallback = fallback({ ...handlers, message: (event) => {
-      let payload: MachineEvent;
-      try { payload = expandMachineEvent(JSON.parse(event.data) as WireMachineEvent); } catch { return; }
-      handlers.message(payload);
+      let wire: WireMachineEvent;
+      try { wire = JSON.parse(event.data) as WireMachineEvent; } catch { return; }
+      deliver(wire);
     } });
   };
   const choose = () => {
@@ -57,7 +80,7 @@ export function keepMachineEvents(socket: MachineEventSocket, handlers: MachineE
   const offMessage = socket.on((message) => {
     if (stopped) return;
     if (message.type === "features" || message.type === "snapshot") choose();
-    else if (message.type === "machine-event" && subscribed) handlers.message(expandMachineEvent(message.event));
+    else if (message.type === "machine-event" && subscribed) deliver(message.event);
     else if (message.type === "machine-events-ended") { endedByServer = true; lose(); choose(); }
     // output stopped (4008): the socket waits for an attach, the sidebar does not
     else if (message.type === "error" && message.code === "output_stalled") choose();
